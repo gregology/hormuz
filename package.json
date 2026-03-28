@@ -1,0 +1,19 @@
+{
+  "name": "hormuz",
+  "private": true,
+  "pnpm": {
+    "onlyBuiltDependencies": ["@biomejs/biome", "esbuild"]
+  },
+  "scripts": {
+    "dev:client": "pnpm --filter client dev",
+    "dev:playground": "pnpm --filter playground dev",
+    "dev:server": "cd server && uv run uvicorn hormuz.main:app --reload --host 0.0.0.0 --port 8000",
+    "build:client": "pnpm --filter client build",
+    "build:playground": "pnpm --filter playground build",
+    "generate": "cd shared && uv run python scripts/generate.py",
+    "lint:client": "pnpm --filter client lint",
+    "lint:playground": "pnpm --filter playground lint",
+    "lint:server": "cd server && uv run ruff check .",
+    "format:server": "cd server && uv run ruff format ."
+  }
+}

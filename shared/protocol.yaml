@@ -1,0 +1,54 @@
+# Network protocol message definitions — single source of truth
+# Defines messages between server and client over WebSocket (MessagePack encoded)
+
+client_messages:
+  input:
+    description: Player input state sent each frame
+    fields:
+      keys: uint8          # bitmask of pressed keys
+      mouse_x: float32
+      mouse_y: float32
+      action: uint8        # 0=none, 1=fire, 2=deploy, etc.
+
+  heartbeat:
+    description: Keepalive ping
+    fields: {}
+
+  spectate_toggle:
+    description: Switch between playing and spectating
+    fields: {}
+
+server_messages:
+  snapshot_delta:
+    description: Incremental world state update
+    fields:
+      tick: uint32
+      entities: array      # [{id, components_changed}]
+      removed: array       # [entity_ids]
+
+  full_snapshot:
+    description: Complete world state (on connect or resync)
+    fields:
+      tick: uint32
+      entities: array
+
+  event:
+    description: One-off visual event (explosion, oil spill, etc.)
+    fields:
+      type: string
+      x: float32
+      y: float32
+      data: object
+
+  assign_vehicle:
+    description: Tells client which entity they control
+    fields:
+      entity_id: uint32
+      vehicle_type: string
+
+  war_cost:
+    description: Updated war cost counter
+    fields:
+      total_usd: uint64
+      tankers_delivered: uint32
+      tankers_sunk: uint32

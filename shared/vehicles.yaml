@@ -1,0 +1,79 @@
+# Vehicle definitions — single source of truth
+# Run `pnpm generate` to emit Python + TypeScript from this file
+
+vehicles:
+  oil_tanker:
+    name: Oil Tanker
+    faction: civilian
+    based_on: Generic VLCC
+    role: Transit the strait
+    cost_usd: 150_000_000
+    components:
+      health:
+        hp: 100
+        max_hp: 100
+      naval_physics:
+        max_speed: 3.5
+        turn_radius: 80
+        acceleration: 0.5
+        drag: 0.97
+      collidable:
+        radius: 75
+      oil_cargo:
+        loaded: true
+        spill_on_death: true
+    ai_behavior: tanker_transit
+    sprite: oil_tanker
+
+  speedboat:
+    name: Speedboat
+    faction: iran
+    based_on: Taregh-class
+    role: Fast attack craft
+    cost_usd: 500_000
+    components:
+      health:
+        hp: 30
+        max_hp: 30
+      naval_physics:
+        max_speed: 11
+        turn_radius: 5
+        acceleration: 5
+        drag: 0.9
+      weapon:
+        type: direct_fire
+        damage: 10
+        range: 150
+        cooldown: 0.5
+      collidable:
+        radius: 5
+    ai_behavior: swarm_attack
+    sprite: speedboat_iran
+
+  frigate:
+    name: Frigate
+    faction: us
+    based_on: US Navy frigate
+    role: Convoy escort
+    cost_usd: 1_000_000_000
+    components:
+      health:
+        hp: 300
+        max_hp: 300
+      naval_physics:
+        max_speed: 7
+        turn_radius: 30
+        acceleration: 2
+        drag: 0.95
+      weapon:
+        type: direct_fire
+        damage: 40
+        range: 400
+        cooldown: 1.5
+      rf_jammer:
+        jam_radius: 200
+        active: true
+      collidable:
+        radius: 40
+    ai_behavior: escort
+    sprite: frigate_us

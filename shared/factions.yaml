@@ -1,0 +1,17 @@
+# Faction definitions — single source of truth
+
+factions:
+  civilian:
+    name: Civilian
+    color: "#f39c12"
+    description: Oil tankers transiting the strait
+
+  iran:
+    name: Iran
+    color: "#27ae60"
+    description: Iranian military forces
+
+  us:
+    name: United States
+    color: "#2980b9"
+    description: US military forces

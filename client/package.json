@@ -1,0 +1,21 @@
+{
+  "name": "@hormuz/client",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "lint": "biome check src/",
+    "format": "biome format --write src/"
+  },
+  "dependencies": {
+    "pixi.js": "^8.6.6"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "typescript": "^5.7.3",
+    "vite": "^6.3.2"
+  }
+}
