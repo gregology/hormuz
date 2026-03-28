@@ -696,6 +696,151 @@ function oilTankerModel(): VehicleModel {
 	};
 }
 
+function truckModel(): VehicleModel {
+	const chassis: LP[] = [
+		[0.42, -0.16],
+		[0.42, 0.16],
+		[-0.46, 0.16],
+		[-0.46, -0.16],
+	];
+
+	const cab: LP[] = [
+		[0.44, -0.17],
+		[0.44, 0.17],
+		[0.1, 0.17],
+		[0.1, -0.17],
+	];
+
+	const cargoBox: LP[] = [
+		[0.07, -0.18],
+		[0.07, 0.18],
+		[-0.48, 0.18],
+		[-0.48, -0.18],
+	];
+
+	return {
+		blocks: [
+			// Chassis / undercarriage
+			{
+				outline: chassis,
+				baseHeight: 0,
+				topHeight: 0.1,
+				topColor: 0x333333,
+			},
+			// Cab
+			{
+				outline: cab,
+				baseHeight: 0.1,
+				topHeight: 0.5,
+			},
+			// Cargo box (taller than cab)
+			{
+				outline: cargoBox,
+				baseHeight: 0.1,
+				topHeight: 0.6,
+			},
+		],
+		details: [
+			// Windshield
+			{
+				kind: "line",
+				height: 0.5,
+				x1: 0.44,
+				y1: -0.14,
+				x2: 0.44,
+				y2: 0.14,
+				color: GLASS,
+				width: 2,
+				alpha: 0.8,
+			},
+			// Front bumper
+			{
+				kind: "line",
+				height: 0.06,
+				x1: 0.46,
+				y1: -0.15,
+				x2: 0.46,
+				y2: 0.15,
+				color: 0x444444,
+				width: 1.5,
+				alpha: 0.7,
+			},
+			// Rear bumper
+			{
+				kind: "line",
+				height: 0.06,
+				x1: -0.49,
+				y1: -0.15,
+				x2: -0.49,
+				y2: 0.15,
+				color: 0x444444,
+				width: 1.5,
+				alpha: 0.7,
+			},
+			// Front-left wheel
+			{
+				kind: "circle",
+				height: 0.04,
+				cx: 0.3,
+				cy: -0.17,
+				r: 0.04,
+				color: 0x222222,
+				alpha: 0.8,
+			},
+			// Front-right wheel
+			{
+				kind: "circle",
+				height: 0.04,
+				cx: 0.3,
+				cy: 0.17,
+				r: 0.04,
+				color: 0x222222,
+				alpha: 0.8,
+			},
+			// Rear-left wheel
+			{
+				kind: "circle",
+				height: 0.04,
+				cx: -0.3,
+				cy: -0.17,
+				r: 0.04,
+				color: 0x222222,
+				alpha: 0.8,
+			},
+			// Rear-right wheel
+			{
+				kind: "circle",
+				height: 0.04,
+				cx: -0.3,
+				cy: 0.17,
+				r: 0.04,
+				color: 0x222222,
+				alpha: 0.8,
+			},
+			// Headlight left
+			{
+				kind: "circle",
+				height: 0.2,
+				cx: 0.45,
+				cy: -0.12,
+				r: 0.015,
+				color: 0xffffcc,
+				alpha: 0.9,
+			},
+			// Headlight right
+			{
+				kind: "circle",
+				height: 0.2,
+				cx: 0.45,
+				cy: 0.12,
+				r: 0.015,
+				color: 0xffffcc,
+				alpha: 0.9,
+			},
+		],
+	};
+}
+
 // ---------------------------------------------------------------------------
 // Model cache
 // ---------------------------------------------------------------------------
@@ -714,6 +859,9 @@ function getModel(type: VehicleType): VehicleModel {
 				break;
 			case "oil_tanker":
 				model = oilTankerModel();
+				break;
+			case "truck":
+				model = truckModel();
 				break;
 		}
 		modelCache.set(type, model);
@@ -743,7 +891,9 @@ export function renderVehicle(
 	);
 
 	// Wake (behind everything — drawn at water level, not terrain height)
-	drawWake(g, cam, vehicle, cos, sin);
+	if (vehicle.vehicleType !== "truck") {
+		drawWake(g, cam, vehicle, cos, sin);
+	}
 
 	// 3D blocks (elevated + pitched)
 	const model = getModel(vehicle.vehicleType);

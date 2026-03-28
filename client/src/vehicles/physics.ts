@@ -15,7 +15,7 @@
 
 import { getTerrainGradient } from "../map/heightmap";
 
-export type VehicleType = "speedboat" | "frigate" | "oil_tanker";
+export type VehicleType = "speedboat" | "frigate" | "oil_tanker" | "truck";
 
 export interface NavalVehicle {
 	vehicleType: VehicleType;
@@ -46,6 +46,12 @@ export interface NavalVehicle {
 	/** Lateral drag per second. Lower = drift damps faster. Higher = drift persists. */
 	lateralDrag: number;
 
+	/**
+	 * Minimum steering effectiveness at zero speed (0–1).
+	 * Ships: 0 (rudder needs water flow). Wheeled vehicles: >0 (can steer while crawling).
+	 */
+	minTurnFraction: number;
+
 	// Visual scale (game units)
 	size: number;
 }
@@ -64,6 +70,7 @@ export function createSpeedboat(x: number, y: number): NavalVehicle {
 		turnRate: 2.0,
 		driftFactor: 0.04,
 		lateralDrag: 0.12,
+		minTurnFraction: 0,
 		size: 10,
 	};
 }
@@ -83,6 +90,7 @@ export function createFrigate(x: number, y: number): NavalVehicle {
 		turnRate: 0.15,
 		driftFactor: 0.1,
 		lateralDrag: 0.2,
+		minTurnFraction: 0,
 		size: 100,
 	};
 }
@@ -102,7 +110,28 @@ export function createOilTanker(x: number, y: number): NavalVehicle {
 		turnRate: 0.05,
 		driftFactor: 0.25,
 		lateralDrag: 0.45,
+		minTurnFraction: 0,
 		size: 220,
+	};
+}
+
+export function createTruck(x: number, y: number): NavalVehicle {
+	// ~7m box truck (about half a speedboat's length)
+	return {
+		vehicleType: "truck",
+		x,
+		y,
+		heading: 0,
+		speed: 0,
+		drift: 0,
+		maxSpeed: 18,
+		acceleration: 8,
+		drag: 0.85,
+		turnRate: 0.8,
+		driftFactor: 0.015,
+		lateralDrag: 0.04,
+		minTurnFraction: 0.6,
+		size: 5,
 	};
 }
 
@@ -119,12 +148,19 @@ export function updateVehicle(
 	input: VehicleInput,
 	dt: number,
 ): void {
-	// --- Rudder-based turning ---
-	// Turn rate is proportional to speed. No speed = no turning.
+	// --- Steering ---
+	// Ships (minTurnFraction=0): pure rudder, turn rate scales with speed.
+	// Wheeled vehicles (minTurnFraction>0): can steer at low speed.
 	const speedRatio = Math.min(Math.abs(v.speed) / v.maxSpeed, 1);
-	// Dead zone: rudder is useless below 5% speed
-	const rudderEffect = speedRatio < 0.05 ? 0 : speedRatio;
-	const turnAmount = input.rudder * v.turnRate * rudderEffect * dt;
+	const rudderEffect =
+		v.minTurnFraction > 0
+			? Math.max(v.minTurnFraction, speedRatio)
+			: speedRatio < 0.05
+				? 0
+				: speedRatio;
+	// Flip steering in reverse so left input always turns the nose left
+	const steerSign = v.speed < 0 ? -1 : 1;
+	const turnAmount = input.rudder * v.turnRate * rudderEffect * steerSign * dt;
 	v.heading += turnAmount;
 
 	// Normalize heading

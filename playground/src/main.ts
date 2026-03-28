@@ -23,6 +23,7 @@ import {
 	createFrigate,
 	createOilTanker,
 	createSpeedboat,
+	createTruck,
 	updateVehicle,
 } from "../../client/src/vehicles/physics";
 
@@ -30,6 +31,7 @@ const FACTION_COLORS: Record<string, number> = {
 	speedboat: COLORS.spawnIran,
 	frigate: COLORS.spawnUS,
 	tanker: COLORS.spawnTanker,
+	truck: 0xeeeeee,
 };
 
 interface PlayableVehicle {
@@ -68,20 +70,26 @@ async function init() {
 		{
 			key: "speedboat",
 			label: "Speedboat",
-			vehicle: createSpeedboat(85900, 42500),
+			vehicle: createSpeedboat(75746, 42781),
 			color: FACTION_COLORS.speedboat,
 		},
 		{
 			key: "frigate",
 			label: "Frigate",
-			vehicle: createFrigate(85400, 43000),
+			vehicle: createFrigate(75540, 43226),
 			color: FACTION_COLORS.frigate,
 		},
 		{
 			key: "tanker",
 			label: "Oil Tanker",
-			vehicle: createOilTanker(83900, 42700),
+			vehicle: createOilTanker(75500, 43000),
 			color: FACTION_COLORS.tanker,
+		},
+		{
+			key: "truck",
+			label: "Box Truck",
+			vehicle: createTruck(75698, 42649),
+			color: FACTION_COLORS.truck,
 		},
 	];
 
@@ -89,6 +97,7 @@ async function init() {
 	vehicles[0].vehicle.heading = Math.PI;
 	vehicles[1].vehicle.heading = Math.PI;
 	vehicles[2].vehicle.heading = Math.PI;
+	vehicles[3].vehicle.heading = Math.PI;
 
 	let activeIndex = 0;
 
@@ -182,18 +191,22 @@ async function init() {
 			cam.zoom = 0.3;
 		},
 		"Reset All"() {
-			vehicles[0].vehicle.x = 85900;
-			vehicles[0].vehicle.y = 42500;
+			vehicles[0].vehicle.x = 75746;
+			vehicles[0].vehicle.y = 42781;
 			vehicles[0].vehicle.heading = Math.PI;
 			vehicles[0].vehicle.speed = 0;
-			vehicles[1].vehicle.x = 85400;
-			vehicles[1].vehicle.y = 43000;
+			vehicles[1].vehicle.x = 75540;
+			vehicles[1].vehicle.y = 43226;
 			vehicles[1].vehicle.heading = Math.PI;
 			vehicles[1].vehicle.speed = 0;
-			vehicles[2].vehicle.x = 83900;
-			vehicles[2].vehicle.y = 42700;
+			vehicles[2].vehicle.x = 75500;
+			vehicles[2].vehicle.y = 43000;
 			vehicles[2].vehicle.heading = Math.PI;
 			vehicles[2].vehicle.speed = 0;
+			vehicles[3].vehicle.x = 75698;
+			vehicles[3].vehicle.y = 42649;
+			vehicles[3].vehicle.heading = Math.PI;
+			vehicles[3].vehicle.speed = 0;
 			mode.freeCamera = false;
 			mode.cameraFollow = true;
 			cam.zoom = 0.3;
@@ -274,8 +287,8 @@ async function init() {
 			mode.cameraFollow = !mode.freeCamera;
 		}
 
-		// 1/2/3: switch active vehicle
-		if (e.key === "1" || e.key === "2" || e.key === "3") {
+		// 1/2/3/4: switch active vehicle
+		if (e.key === "1" || e.key === "2" || e.key === "3" || e.key === "4") {
 			const idx = Number.parseInt(e.key) - 1;
 			if (idx < vehicles.length) {
 				activeIndex = idx;
@@ -358,7 +371,7 @@ async function init() {
 	});
 
 	console.log(
-		"Hormuz playground — WASD to drive, 1/2/3 to switch vehicle, Tab for free camera, scroll to zoom",
+		"Hormuz playground — WASD to drive, 1/2/3/4 to switch vehicle, Tab for free camera, scroll to zoom",
 	);
 }
 
