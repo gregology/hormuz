@@ -44,3 +44,4 @@ shared/scripts/.cache/
 # AI
 .claude/
 .pi/
+**CLAUDE.md
