@@ -1,10 +1,11 @@
-import { Application, Graphics, Text, TextStyle } from "pixi.js";
+import { Application, Container, Graphics, Text, TextStyle } from "pixi.js";
 import GUI from "lil-gui";
 import { createCamera, screenToWorld, type Camera } from "../../client/src/render/camera";
 import { renderMap, DEFAULT_LAYERS, type MapLayers } from "../../client/src/render/map-renderer";
 import { renderVehicle } from "../../client/src/render/vehicle-renderer";
 import { COLORS } from "../../client/src/render/colors";
 import { MAP } from "../../client/src/map/data";
+import { getElevation, getSlopeAlongHeading } from "../../client/src/map/heightmap";
 import {
   createSpeedboat,
   createFrigate,
@@ -43,9 +44,9 @@ async function init() {
   cam.zoom = 0.04;
 
   // ---- Graphics layers ----
-  const mapGfx = new Graphics();
+  const mapContainer = new Container();
   const vehicleGfx = new Graphics();
-  app.stage.addChild(mapGfx);
+  app.stage.addChild(mapContainer);
   app.stage.addChild(vehicleGfx);
 
   // ---- Map layers ----
@@ -191,6 +192,7 @@ async function init() {
   layersFolder.add(layers, "showShippingLanes").name("Shipping Lanes").onChange(() => { mapNeedsRedraw = true; });
   layersFolder.add(layers, "showHazards").name("Hazards").onChange(() => { mapNeedsRedraw = true; });
   layersFolder.add(layers, "showSpawnPoints").name("Spawn Points").onChange(() => { mapNeedsRedraw = true; });
+  layersFolder.add(layers, "showTerrain").name("Terrain Hillshade").onChange(() => { mapNeedsRedraw = true; });
   layersFolder.add(layers, "showGrid").name("Grid").onChange(() => { mapNeedsRedraw = true; });
   layersFolder.add(layers, "gridSize", { "10 units": 10, "100 units": 100, "1000 units": 1000 }).name("Grid Size").onChange(() => { mapNeedsRedraw = true; });
 
@@ -296,7 +298,7 @@ async function init() {
 
     // -- Redraw map --
     if (mapNeedsRedraw) {
-      renderMap(mapGfx, cam, layers);
+      renderMap(mapContainer, cam, layers);
       mapNeedsRedraw = false;
     }
 
@@ -311,8 +313,10 @@ async function init() {
     const world = screenToWorld(cam, mouseScreenX, mouseScreenY);
     const v = activeVehicle();
     const label = vehicles[activeIndex].label;
-    coordText.text = `Cursor: (${Math.round(world.x)}, ${Math.round(world.y)})  Zoom: ${cam.zoom.toFixed(3)}  ${mode.freeCamera ? "[FREE CAM]" : "[FOLLOW]"}`;
-    boatText.text = `${label}: Speed: ${v.speed.toFixed(1)} u/s  Drift: ${v.drift.toFixed(2)}  Heading: ${((v.heading * 180) / Math.PI).toFixed(0)}°  [1] Speedboat [2] Frigate [3] Tanker`;
+    const elev = getElevation(v.x, v.y);
+    const slope = getSlopeAlongHeading(v.x, v.y, v.heading);
+    coordText.text = `Cursor: (${Math.round(world.x)}, ${Math.round(world.y)})  Elev: ${getElevation(world.x, world.y).toFixed(0)}  Zoom: ${cam.zoom.toFixed(3)}  ${mode.freeCamera ? "[FREE CAM]" : "[FOLLOW]"}`;
+    boatText.text = `${label}: Speed: ${v.speed.toFixed(1)}  Drift: ${v.drift.toFixed(2)}  Heading: ${((v.heading * 180) / Math.PI).toFixed(0)}°  Elev: ${elev.toFixed(0)}  Slope: ${slope.toFixed(3)}  [1/2/3]`;
   });
 
   console.log(

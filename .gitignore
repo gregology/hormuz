@@ -33,6 +33,7 @@ Thumbs.db
 # Generated code
 client/src/generated/
 client/src/map/coastlines.ts
+client/src/map/heightmap-data.ts
 server/src/hormuz/generated/
 
 # Script caches

@@ -62,7 +62,7 @@ hormuz/
 
 **Coastline data:** `shared/scripts/generate_coastlines.py` -> `client/src/map/coastlines.ts` (auto-generated from Natural Earth 10m data, do not edit by hand)
 
-**Key rule:** Generated files are never edited manually. Change the source YAML or the generator script, then run `pnpm generate` or `uv run shared/scripts/generate_coastlines.py`.
+**Key rule:** Generated files are never edited manually. Change the source YAML or the generator script, then run `pnpm generate`, `pnpm generate:coastlines`, or `pnpm generate:heightmap`.
 
 ## Code Style
 
