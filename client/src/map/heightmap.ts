@@ -195,6 +195,35 @@ export function createHillshadePixels(): {
 }
 
 // ---------------------------------------------------------------------------
+// Heightmap texture (for GPU shader consumption)
+// ---------------------------------------------------------------------------
+
+/**
+ * Create RGBA pixel data encoding elevation in RG channels (16-bit).
+ * R = low byte, G = high byte. Bilinear interpolation of both channels
+ * independently produces correct linear interpolation of elevation values.
+ */
+export function createHeightmapPixels(): {
+	data: Uint8Array;
+	width: number;
+	height: number;
+} {
+	const w = HEIGHTMAP_WIDTH;
+	const h = HEIGHTMAP_HEIGHT;
+	const pixels = new Uint8Array(w * h * 4);
+
+	for (let i = 0; i < w * h; i++) {
+		const v = HEIGHTMAP_DATA[i];
+		pixels[i * 4] = v & 0xff;
+		pixels[i * 4 + 1] = (v >> 8) & 0xff;
+		pixels[i * 4 + 2] = 0;
+		pixels[i * 4 + 3] = 255;
+	}
+
+	return { data: pixels, width: w, height: h };
+}
+
+// ---------------------------------------------------------------------------
 // Grid metadata re-exports
 // ---------------------------------------------------------------------------
 

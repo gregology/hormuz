@@ -1,17 +1,27 @@
 /**
  * Renders the Strait of Hormuz map using PixiJS.
  *
- * The map is drawn into a Container with three layers:
- *   1. baseGfx (Graphics) — water, depth zones, land fills, island fills
- *   2. hillshadeSprite (Sprite) — GPU-interpolated terrain shading texture
- *   3. overlayGfx (Graphics) — borders, hazards, lanes, grid, bases, spawns
+ * The map is drawn into a Container with four layers:
+ *   1. waterMesh (Mesh) — animated water surface via custom fragment shader
+ *   2. landGfx (Graphics) — coastline polygon fills (precise Natural Earth boundaries)
+ *   3. terrainMesh (Mesh) — terrain coloring + hillshade via custom fragment shader
+ *   4. overlayGfx (Graphics) — borders, hazards, lanes, grid, bases, spawns
  *
- * The hillshade is rendered as a texture sprite with bilinear filtering,
- * projected into isometric space via skew transform. This gives smooth,
- * pixel-perfect terrain shading in a single draw call.
+ * Both Mesh objects use the same isometric projection (skew + scale + position)
+ * as the rest of the map. The water shader animates procedurally; the terrain
+ * shader samples the heightmap texture for elevation-based biome coloring and
+ * real-time hillshade lighting.
  */
 
-import { type Container, Graphics, Sprite, Texture } from "pixi.js";
+import {
+	type Container,
+	Graphics,
+	Mesh,
+	MeshGeometry,
+	Shader,
+	Texture,
+	UniformGroup,
+} from "pixi.js";
 import { ARABIAN_COAST_POLYS, IRAN_COAST_POLYS } from "../map/coastlines";
 import {
 	DEEP_WATER_ROUTE,
@@ -30,9 +40,19 @@ import {
 	US_SPAWNS,
 	VERY_SHALLOW,
 } from "../map/data";
-import { HEIGHTMAP_CELL_SIZE, createHillshadePixels } from "../map/heightmap";
+import {
+	HEIGHTMAP_CELL_SIZE,
+	HEIGHTMAP_HEIGHT,
+	HEIGHTMAP_WIDTH,
+	createHeightmapPixels,
+} from "../map/heightmap";
+import { HEIGHTMAP_MAX_ELEVATION } from "../map/heightmap-data";
 import { type Camera, worldToScreen } from "./camera";
 import { COLORS } from "./colors";
+
+import mapVert from "./shaders/map.vert?raw";
+import terrainFrag from "./shaders/terrain.frag?raw";
+import waterFrag from "./shaders/water.frag?raw";
 
 export interface MapLayers {
 	showDepthZones: boolean;
@@ -58,9 +78,96 @@ export const DEFAULT_LAYERS: MapLayers = {
 // Internal state — lazily initialized on first renderMap call
 // ---------------------------------------------------------------------------
 
-let baseGfx: Graphics | null = null;
-let overlayGfx: Graphics | null = null;
-let hillshadeSprite: Sprite | null = null;
+interface MapState {
+	waterMesh: Mesh<MeshGeometry, Shader>;
+	waterUniforms: UniformGroup;
+	landGfx: Graphics;
+	coastlineMask: Graphics;
+	terrainMesh: Mesh<MeshGeometry, Shader>;
+	overlayGfx: Graphics;
+}
+
+let state: MapState | null = null;
+
+// ---------------------------------------------------------------------------
+// Mesh creation helpers
+// ---------------------------------------------------------------------------
+
+/** Quad geometry covering the heightmap grid (positions in grid-pixel space). */
+function createMapQuadGeometry(): MeshGeometry {
+	const w = HEIGHTMAP_WIDTH;
+	const h = HEIGHTMAP_HEIGHT;
+	return new MeshGeometry({
+		positions: new Float32Array([0, 0, w, 0, w, h, 0, h]),
+		uvs: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
+		indices: new Uint32Array([0, 1, 2, 0, 2, 3]),
+	});
+}
+
+function createWaterMesh(): {
+	mesh: Mesh<MeshGeometry, Shader>;
+	uniforms: UniformGroup;
+} {
+	const geometry = createMapQuadGeometry();
+	const uniforms = new UniformGroup({
+		uTime: { value: 0, type: "f32" },
+		uZoom: { value: 1, type: "f32" },
+	});
+
+	const shader = Shader.from({
+		gl: { vertex: mapVert, fragment: waterFrag, name: "water-shader" },
+		resources: {
+			waterUniforms: uniforms,
+		},
+	});
+
+	const mesh = new Mesh({ geometry, shader });
+	return { mesh, uniforms };
+}
+
+function createTerrainMesh(): Mesh<MeshGeometry, Shader> {
+	const geometry = createMapQuadGeometry();
+
+	// Encode heightmap as RGBA texture (elevation in RG channels)
+	const { data, width, height } = createHeightmapPixels();
+	const canvas = document.createElement("canvas");
+	canvas.width = width;
+	canvas.height = height;
+	// biome-ignore lint/style/noNonNullAssertion: canvas 2d context is always available
+	const ctx = canvas.getContext("2d")!;
+	const imageData = ctx.createImageData(width, height);
+	imageData.data.set(data);
+	ctx.putImageData(imageData, 0, 0);
+
+	const heightmapTexture = Texture.from(canvas);
+	heightmapTexture.source.scaleMode = "linear";
+
+	const terrainUniforms = new UniformGroup({
+		uGradientScale: { value: 3.0, type: "f32" },
+		uMaxElevation: { value: HEIGHTMAP_MAX_ELEVATION, type: "f32" },
+	});
+
+	const shader = Shader.from({
+		gl: { vertex: mapVert, fragment: terrainFrag, name: "terrain-shader" },
+		resources: {
+			terrainUniforms,
+			uTexture: heightmapTexture.source,
+			uTextureSampler: heightmapTexture.source.style,
+		},
+	});
+
+	const mesh = new Mesh({ geometry, shader });
+	return mesh;
+}
+
+/** Apply isometric transform to a Mesh (same math as the old hillshade sprite). */
+function updateMeshTransform(mesh: Mesh<MeshGeometry, Shader>, cam: Camera) {
+	const k = HEIGHTMAP_CELL_SIZE * cam.zoom;
+	mesh.skew.set(-Math.PI / 3, Math.PI / 6);
+	mesh.scale.set(k, k);
+	const origin = worldToScreen(cam, 0, 0);
+	mesh.position.set(origin.x, origin.y);
+}
 
 // ---------------------------------------------------------------------------
 // Polygon drawing helpers
@@ -139,43 +246,6 @@ function drawDashedPolyline(
 }
 
 // ---------------------------------------------------------------------------
-// Hillshade sprite setup
-// ---------------------------------------------------------------------------
-
-function createHillshadeSprite(): Sprite {
-	const { data, width, height } = createHillshadePixels();
-
-	// Paint RGBA data onto a canvas, then create a PixiJS texture
-	const canvas = document.createElement("canvas");
-	canvas.width = width;
-	canvas.height = height;
-	const ctx = canvas.getContext("2d")!;
-	const imageData = ctx.createImageData(width, height);
-	imageData.data.set(data);
-	ctx.putImageData(imageData, 0, 0);
-
-	const texture = Texture.from(canvas);
-	// Bilinear filtering — the GPU smoothly interpolates between pixels
-	texture.source.scaleMode = "linear";
-
-	return new Sprite(texture);
-}
-
-function updateHillshadeTransform(sprite: Sprite, cam: Camera) {
-	const k = HEIGHTMAP_CELL_SIZE * cam.zoom;
-
-	// Isometric projection via skew: maps pixel (col, row) in the texture
-	// to the correct isometric screen position for world (col*CS, row*CS).
-	// Decomposition: rotation=0, skew=(-60°, 30°), scale=(k, k)
-	sprite.skew.set(-Math.PI / 3, Math.PI / 6);
-	sprite.scale.set(k, k);
-
-	// Position: screen position of world origin (0, 0)
-	const origin = worldToScreen(cam, 0, 0);
-	sprite.position.set(origin.x, origin.y);
-}
-
-// ---------------------------------------------------------------------------
 // Main render function
 // ---------------------------------------------------------------------------
 
@@ -183,74 +253,107 @@ function updateHillshadeTransform(sprite: Sprite, cam: Camera) {
  * Draw the full map into the given Container.
  * Call this each frame when the camera changes.
  *
- * On first call, creates internal Graphics + Sprite children.
- * Subsequent calls reuse them (clear + redraw).
+ * On first call, creates internal children (Meshes + Graphics).
+ * Subsequent calls reuse them (clear + redraw Graphics, update Mesh transforms).
+ *
+ * @param time — elapsed time in seconds, used for water animation
  */
 export function renderMap(
 	container: Container,
 	cam: Camera,
 	layers: MapLayers = DEFAULT_LAYERS,
+	time = 0,
 ) {
 	// Lazy init: create children on first call
-	if (!baseGfx) {
-		baseGfx = new Graphics();
-		hillshadeSprite = createHillshadeSprite();
-		overlayGfx = new Graphics();
-		container.addChild(baseGfx);
-		container.addChild(hillshadeSprite);
+	if (!state) {
+		const water = createWaterMesh();
+		const landGfx = new Graphics();
+		const coastlineMask = new Graphics();
+		const terrainMesh = createTerrainMesh();
+		const overlayGfx = new Graphics();
+
+		// Mask terrain to precise coastline boundaries
+		terrainMesh.mask = coastlineMask;
+
+		container.addChild(water.mesh);
+		container.addChild(landGfx);
+		container.addChild(coastlineMask);
+		container.addChild(terrainMesh);
 		container.addChild(overlayGfx);
+
+		state = {
+			waterMesh: water.mesh,
+			waterUniforms: water.uniforms,
+			landGfx,
+			coastlineMask,
+			terrainMesh,
+			overlayGfx,
+		};
 	}
 
-	// --- Base layer: water, depth zones, land fills, island fills ---
-	baseGfx.clear();
+	const {
+		waterMesh,
+		waterUniforms,
+		landGfx,
+		coastlineMask,
+		terrainMesh,
+		overlayGfx,
+	} = state;
 
-	// 1. Water background
-	const tl = worldToScreen(cam, 0, 0);
-	const tr = worldToScreen(cam, MAP.width, 0);
-	const br = worldToScreen(cam, MAP.width, MAP.height);
-	const bl = worldToScreen(cam, 0, MAP.height);
-	const pad = 200;
-	baseGfx.moveTo(tl.x - pad, tl.y - pad);
-	baseGfx.lineTo(tr.x + pad, tr.y - pad);
-	baseGfx.lineTo(br.x + pad, br.y + pad);
-	baseGfx.lineTo(bl.x - pad, bl.y + pad);
-	baseGfx.closePath();
-	baseGfx.fill({ color: COLORS.water });
+	// --- Water mesh: animated water surface ---
+	waterUniforms.uniforms.uTime = time;
+	waterUniforms.uniforms.uZoom = cam.zoom;
+	updateMeshTransform(waterMesh, cam);
 
-	// 2. Depth zones
+	// --- Land fills: precise coastline polygons ---
+	landGfx.clear();
+
+	// Depth zones (drawn on top of water, under land)
 	if (layers.showDepthZones) {
 		for (const zone of SHALLOW_WATER) {
-			drawFilledPolygon(baseGfx, cam, zone, COLORS.shallowWater, 0.4);
+			drawFilledPolygon(landGfx, cam, zone, COLORS.shallowWater, 0.4);
 		}
 		for (const zone of VERY_SHALLOW) {
-			drawFilledPolygon(baseGfx, cam, zone, COLORS.veryShallowWater, 0.5);
+			drawFilledPolygon(landGfx, cam, zone, COLORS.veryShallowWater, 0.5);
 		}
 	}
 
-	// 3. Land fills
+	// Land fills
 	for (const poly of IRAN_COAST_POLYS) {
-		drawFilledPolygon(baseGfx, cam, poly, COLORS.land);
+		drawFilledPolygon(landGfx, cam, poly, COLORS.land);
 	}
 	for (const poly of ARABIAN_COAST_POLYS) {
-		drawFilledPolygon(baseGfx, cam, poly, COLORS.land);
+		drawFilledPolygon(landGfx, cam, poly, COLORS.land);
 	}
 
-	// 4. Island fills
+	// Island fills
 	for (const island of ISLAND_POLYGONS) {
-		drawFilledPolygon(baseGfx, cam, island.polygon, COLORS.island);
+		drawFilledPolygon(landGfx, cam, island.polygon, COLORS.island);
 	}
 
-	// --- Hillshade sprite (between fills and borders) ---
-	hillshadeSprite!.visible = layers.showTerrain;
+	// --- Coastline mask: clips terrain to precise Natural Earth boundaries ---
+	coastlineMask.clear();
+	for (const poly of IRAN_COAST_POLYS) {
+		drawFilledPolygon(coastlineMask, cam, poly, 0xffffff);
+	}
+	for (const poly of ARABIAN_COAST_POLYS) {
+		drawFilledPolygon(coastlineMask, cam, poly, 0xffffff);
+	}
+	for (const island of ISLAND_POLYGONS) {
+		drawFilledPolygon(coastlineMask, cam, island.polygon, 0xffffff);
+	}
+
+	// --- Terrain mesh: elevation coloring + hillshade ---
+	terrainMesh.visible = layers.showTerrain;
 	if (layers.showTerrain) {
-		updateHillshadeTransform(hillshadeSprite!, cam);
+		updateMeshTransform(terrainMesh, cam);
 	}
 
 	// --- Overlay layer: borders, hazards, lanes, grid, bases, spawns ---
-	overlayGfx!.clear();
-	const g = overlayGfx!;
+	overlayGfx.clear();
+	const g = overlayGfx;
 
-	// 5. Land borders
+	// Land borders
 	for (const poly of IRAN_COAST_POLYS) {
 		drawPolygonBorder(g, cam, poly, COLORS.landBorder, 2);
 	}
@@ -261,7 +364,7 @@ export function renderMap(
 		drawPolygonBorder(g, cam, island.polygon, COLORS.islandBorder, 2);
 	}
 
-	// 6. Hazards
+	// Hazards
 	if (layers.showHazards) {
 		for (const shoal of SHOALS) {
 			drawFilledPolygon(g, cam, shoal, COLORS.shoal, 0.6);
@@ -277,7 +380,7 @@ export function renderMap(
 		}
 	}
 
-	// 7. Shipping lanes
+	// Shipping lanes
 	if (layers.showShippingLanes) {
 		drawDashedPolyline(
 			g,
@@ -292,7 +395,7 @@ export function renderMap(
 		drawDashedPolyline(g, cam, LANE_OUTBOUND, COLORS.laneOutbound, 2);
 	}
 
-	// 8. Grid
+	// Grid
 	if (layers.showGrid) {
 		const gs = layers.gridSize;
 		for (let wx = 0; wx <= MAP.width; wx += gs) {
@@ -310,7 +413,7 @@ export function renderMap(
 		g.stroke({ color: COLORS.grid, width: 1, alpha: 0.3 });
 	}
 
-	// 9. US bases
+	// US bases
 	for (const base of US_BASES) {
 		const p = worldToScreen(cam, base.position[0], base.position[1]);
 		const bs = 12;
@@ -322,7 +425,7 @@ export function renderMap(
 		g.fill({ color: 0xffffff, alpha: 0.8 });
 	}
 
-	// 10. Spawn points
+	// Spawn points
 	if (layers.showSpawnPoints) {
 		const markerSize = 8;
 		for (const sp of IRAN_SPAWNS) {
