@@ -187,6 +187,7 @@ async function init() {
 
   // Layers
   const layersFolder = gui.addFolder("Layers");
+  layersFolder.add(layers, "showDepthZones").name("Depth Zones").onChange(() => { mapNeedsRedraw = true; });
   layersFolder.add(layers, "showShippingLanes").name("Shipping Lanes").onChange(() => { mapNeedsRedraw = true; });
   layersFolder.add(layers, "showHazards").name("Hazards").onChange(() => { mapNeedsRedraw = true; });
   layersFolder.add(layers, "showSpawnPoints").name("Spawn Points").onChange(() => { mapNeedsRedraw = true; });

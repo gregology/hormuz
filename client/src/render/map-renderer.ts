@@ -19,10 +19,13 @@ import {
   type Polyline,
   MAP,
   ISLAND_POLYGONS,
+  VERY_SHALLOW,
+  SHALLOW_WATER,
   SHOALS,
   ROCKS,
   LANE_INBOUND,
   LANE_OUTBOUND,
+  DEEP_WATER_ROUTE,
   IRAN_SPAWNS,
   US_SPAWNS,
   US_BASES,
@@ -34,6 +37,7 @@ import {
 } from "../map/coastlines";
 
 export interface MapLayers {
+  showDepthZones: boolean;
   showShippingLanes: boolean;
   showHazards: boolean;
   showSpawnPoints: boolean;
@@ -42,6 +46,7 @@ export interface MapLayers {
 }
 
 export const DEFAULT_LAYERS: MapLayers = {
+  showDepthZones: true,
   showShippingLanes: true,
   showHazards: true,
   showSpawnPoints: true,
@@ -155,7 +160,19 @@ export function renderMap(
   g.closePath();
   g.fill({ color: COLORS.water });
 
-  // 2. Land masses
+  // 2. Depth zones (drawn on water, before land)
+  if (layers.showDepthZones) {
+    // Shallow water (10-30m) — broad southern shelf
+    for (const zone of SHALLOW_WATER) {
+      drawFilledPolygon(g, cam, zone, COLORS.shallowWater, 0.4);
+    }
+    // Very shallow (<10m) — dangerous areas
+    for (const zone of VERY_SHALLOW) {
+      drawFilledPolygon(g, cam, zone, COLORS.veryShallowWater, 0.5);
+    }
+  }
+
+  // 3. Land masses
   for (const poly of IRAN_COAST_POLYS) {
     drawFilledPolygon(g, cam, poly, COLORS.land);
     drawPolygonBorder(g, cam, poly, COLORS.landBorder, 2);
@@ -165,30 +182,38 @@ export function renderMap(
     drawPolygonBorder(g, cam, poly, COLORS.landBorder, 2);
   }
 
-  // 3. Islands
+  // 4. Islands
   for (const island of ISLAND_POLYGONS) {
     drawFilledPolygon(g, cam, island.polygon, COLORS.island);
     drawPolygonBorder(g, cam, island.polygon, COLORS.islandBorder, 2);
   }
 
-  // 4. Hazards
+  // 5. Hazards
   if (layers.showHazards) {
-    // Shoals
+    // Shoal/reef zones
     for (const shoal of SHOALS) {
-      drawFilledPolygon(g, cam, shoal, COLORS.shoal, 0.5);
+      drawFilledPolygon(g, cam, shoal, COLORS.shoal, 0.6);
+      drawPolygonBorder(g, cam, shoal, COLORS.shoalBorder, 1);
     }
 
-    // Rocks
+    // Rock/reef point hazards
     for (const rock of ROCKS) {
       const p = worldToScreen(cam, rock.position[0], rock.position[1]);
       const r = rock.radius * cam.zoom;
       g.circle(p.x, p.y, r);
       g.fill({ color: COLORS.rock, alpha: 0.8 });
+      // Danger ring
+      g.circle(p.x, p.y, r * 1.5);
+      g.stroke({ color: COLORS.shoalBorder, width: 1, alpha: 0.4 });
     }
   }
 
-  // 5. Shipping lanes
+  // 6. Shipping lanes and deep-water route
   if (layers.showShippingLanes) {
+    // Deep-water route (subtle, behind TSS lanes)
+    drawDashedPolyline(g, cam, DEEP_WATER_ROUTE, COLORS.deepWaterRoute, 1.5, 30, 20);
+
+    // TSS lanes
     drawDashedPolyline(g, cam, LANE_INBOUND, COLORS.laneInbound, 2);
     drawDashedPolyline(g, cam, LANE_OUTBOUND, COLORS.laneOutbound, 2);
   }
