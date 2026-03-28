@@ -62,6 +62,8 @@ hormuz/
 
 **Coastline data:** `shared/scripts/generate_coastlines.py` -> `client/src/map/coastlines.ts` (auto-generated from Natural Earth 10m data, do not edit by hand)
 
+**Heightmap data:** `shared/scripts/generate_heightmap.py` -> `client/src/map/heightmap-data.ts` + `server/src/hormuz/generated/heightmap.py` (auto-generated from NOAA ETOPO1 elevation data, do not edit by hand)
+
 **Key rule:** Generated files are never edited manually. Change the source YAML or the generator script, then run `pnpm generate`, `pnpm generate:coastlines`, or `pnpm generate:heightmap`.
 
 ## Code Style
@@ -155,7 +157,8 @@ Follow the Arrange-Act-Assert pattern. One behavior per test. Name tests by the 
 
 **Code generation:**
 - `pnpm generate` — regenerate Python + TypeScript from YAML definitions
-- `uv run shared/scripts/generate_coastlines.py` — regenerate coastline data from Natural Earth
+- `pnpm generate:coastlines` — regenerate coastline data from Natural Earth
+- `pnpm generate:heightmap` — regenerate terrain heightmap from NOAA ETOPO1 data
 
 **Linting:**
 - `pnpm lint:client` / `pnpm lint:playground` — Biome
@@ -175,6 +178,7 @@ Decisions that have already been made (do not revisit without explicit request):
 - **Vehicle physics:** Rudder-based naval simulation (turn rate proportional to speed, lateral drift)
 - **Hosting:** Self-hosted via Cloudflare Tunnel, fallback VPS + Docker
 - **Coastlines:** Generated from Natural Earth 10m data (not hand-traced)
+- **Terrain elevation:** Grid heightmap from NOAA ETOPO1 data, gameplay-scaled (non-linear compression + smoothing). Hillshade rendered as GPU-interpolated texture sprite. Vehicles gain height offset + pitch on slopes. Physics applies gradient force (uphill deceleration, downhill acceleration).
 
 ## Conventions
 
@@ -182,3 +186,4 @@ Decisions that have already been made (do not revisit without explicit request):
 - **The playground is the primary development tool.** Build and test features there before integrating into the game client.
 - **Vehicle definitions live in YAML.** Adding a vehicle means editing `shared/vehicles.yaml` and running codegen — not writing TypeScript or Python by hand.
 - **Coordinate system:** Origin (0,0) = top-left (northwest). X = east, Y = south. Geo conversion: `game_x = (lon - 47.5) * 9708`, `game_y = (30.5 - lat) * 10800`.
+- **Map renderer uses a Container** (not a single Graphics). `renderMap()` manages three internal children: base Graphics (fills), hillshade Sprite (terrain texture), overlay Graphics (borders, markers). Callers pass a Container.
