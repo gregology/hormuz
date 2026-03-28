@@ -15,7 +15,13 @@
 
 import { getTerrainGradient } from "../map/heightmap";
 
-export type VehicleType = "speedboat" | "frigate" | "oil_tanker" | "truck";
+export type VehicleType =
+	| "speedboat"
+	| "frigate"
+	| "oil_tanker"
+	| "truck"
+	| "quadcopter"
+	| "shahed";
 
 export interface NavalVehicle {
 	vehicleType: VehicleType;
@@ -52,6 +58,15 @@ export interface NavalVehicle {
 	 */
 	minTurnFraction: number;
 
+	/**
+	 * Fixed forward speed (0 = manual throttle control).
+	 * When > 0, the vehicle always flies at this speed — throttle input is ignored.
+	 */
+	cruiseSpeed: number;
+
+	/** Airborne vehicles ignore terrain slopes and don't produce wakes. */
+	airborne: boolean;
+
 	// Visual scale (game units)
 	size: number;
 }
@@ -71,6 +86,8 @@ export function createSpeedboat(x: number, y: number): NavalVehicle {
 		driftFactor: 0.04,
 		lateralDrag: 0.12,
 		minTurnFraction: 0,
+		cruiseSpeed: 0,
+		airborne: false,
 		size: 10,
 	};
 }
@@ -91,6 +108,8 @@ export function createFrigate(x: number, y: number): NavalVehicle {
 		driftFactor: 0.1,
 		lateralDrag: 0.2,
 		minTurnFraction: 0,
+		cruiseSpeed: 0,
+		airborne: false,
 		size: 100,
 	};
 }
@@ -111,6 +130,8 @@ export function createOilTanker(x: number, y: number): NavalVehicle {
 		driftFactor: 0.25,
 		lateralDrag: 0.45,
 		minTurnFraction: 0,
+		cruiseSpeed: 0,
+		airborne: false,
 		size: 220,
 	};
 }
@@ -131,7 +152,52 @@ export function createTruck(x: number, y: number): NavalVehicle {
 		driftFactor: 0.015,
 		lateralDrag: 0.04,
 		minTurnFraction: 0.6,
+		cruiseSpeed: 0,
+		airborne: false,
 		size: 5,
+	};
+}
+
+export function createQuadcopter(x: number, y: number): NavalVehicle {
+	return {
+		vehicleType: "quadcopter",
+		x,
+		y,
+		heading: 0,
+		speed: 0,
+		drift: 0,
+		maxSpeed: 22,
+		acceleration: 18,
+		drag: 0.75,
+		turnRate: 4.0,
+		driftFactor: 0.01,
+		lateralDrag: 0.05,
+		minTurnFraction: 1.0,
+		cruiseSpeed: 0,
+		airborne: true,
+		size: 2,
+	};
+}
+
+export function createShahed(x: number, y: number): NavalVehicle {
+	// Shahed-136 style loitering munition — fixed-wing, always moving forward
+	return {
+		vehicleType: "shahed",
+		x,
+		y,
+		heading: 0,
+		speed: 0,
+		drift: 0,
+		maxSpeed: 40,
+		acceleration: 5,
+		drag: 0.95,
+		turnRate: 0.5,
+		driftFactor: 0.02,
+		lateralDrag: 0.1,
+		minTurnFraction: 1.0,
+		cruiseSpeed: 34,
+		airborne: true,
+		size: 4,
 	};
 }
 
@@ -186,22 +252,30 @@ export function updateVehicle(
 	// Lateral drag (hull resists sideways movement — damps drift)
 	v.drift *= v.lateralDrag ** dt;
 
-	// --- Slope force ---
-	// Gravity component along the terrain gradient projected onto heading.
-	// Uphill (positive slope along heading) decelerates, downhill accelerates.
-	const grad = getTerrainGradient(v.x, v.y);
-	const SLOPE_GRAVITY = 5.0; // tunable — how strongly slopes affect speed
-	const slopeForceAlongHeading =
-		-(grad.dx * Math.cos(v.heading) + grad.dy * Math.sin(v.heading)) *
-		SLOPE_GRAVITY;
-	v.speed += slopeForceAlongHeading * dt;
+	// --- Slope force (ground/water vehicles only) ---
+	let slopeForceAlongHeading = 0;
+	if (!v.airborne) {
+		// Gravity component along the terrain gradient projected onto heading.
+		// Uphill (positive slope along heading) decelerates, downhill accelerates.
+		const grad = getTerrainGradient(v.x, v.y);
+		const SLOPE_GRAVITY = 5.0; // tunable — how strongly slopes affect speed
+		slopeForceAlongHeading =
+			-(grad.dx * Math.cos(v.heading) + grad.dy * Math.sin(v.heading)) *
+			SLOPE_GRAVITY;
+		v.speed += slopeForceAlongHeading * dt;
 
-	// Lateral slope force (vehicle slides sideways on cross-slopes)
-	const slopeForceLateral =
-		-(grad.dx * -Math.sin(v.heading) + grad.dy * Math.cos(v.heading)) *
-		SLOPE_GRAVITY *
-		0.3;
-	v.drift += slopeForceLateral * dt;
+		// Lateral slope force (vehicle slides sideways on cross-slopes)
+		const slopeForceLateral =
+			-(grad.dx * -Math.sin(v.heading) + grad.dy * Math.cos(v.heading)) *
+			SLOPE_GRAVITY *
+			0.3;
+		v.drift += slopeForceLateral * dt;
+	}
+
+	// --- Cruise speed (fixed-wing drones — always fly at this speed) ---
+	if (v.cruiseSpeed > 0) {
+		v.speed = v.cruiseSpeed;
+	}
 
 	// --- Clamp ---
 	v.speed = Math.max(-v.maxSpeed * 0.2, Math.min(v.maxSpeed, v.speed));

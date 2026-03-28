@@ -22,6 +22,8 @@ import {
 	type VehicleInput,
 	createFrigate,
 	createOilTanker,
+	createQuadcopter,
+	createShahed,
 	createSpeedboat,
 	createTruck,
 	updateVehicle,
@@ -32,6 +34,8 @@ const FACTION_COLORS: Record<string, number> = {
 	frigate: COLORS.spawnUS,
 	tanker: COLORS.spawnTanker,
 	truck: 0xeeeeee,
+	quadcopter: 0x44cc44,
+	shahed: 0xcc4444,
 };
 
 interface PlayableVehicle {
@@ -91,13 +95,24 @@ async function init() {
 			vehicle: createTruck(75698, 42649),
 			color: FACTION_COLORS.truck,
 		},
+		{
+			key: "quadcopter",
+			label: "Quadcopter",
+			vehicle: createQuadcopter(75700, 42900),
+			color: FACTION_COLORS.quadcopter,
+		},
+		{
+			key: "shahed",
+			label: "Shahed Drone",
+			vehicle: createShahed(75600, 42850),
+			color: FACTION_COLORS.shahed,
+		},
 	];
 
 	// Set initial headings (all heading west through the strait)
-	vehicles[0].vehicle.heading = Math.PI;
-	vehicles[1].vehicle.heading = Math.PI;
-	vehicles[2].vehicle.heading = Math.PI;
-	vehicles[3].vehicle.heading = Math.PI;
+	for (const pv of vehicles) {
+		pv.vehicle.heading = Math.PI;
+	}
 
 	let activeIndex = 0;
 
@@ -153,7 +168,8 @@ async function init() {
 		vehicleFolder.add(v, "turnRate", 0.05, 6).name("Turn Rate");
 		vehicleFolder.add(v, "driftFactor", 0, 0.5).name("Drift Factor");
 		vehicleFolder.add(v, "lateralDrag", 0.01, 0.8).name("Lateral Drag");
-		vehicleFolder.add(v, "size", 2, 300).name("Visual Size");
+		vehicleFolder.add(v, "cruiseSpeed", 0, 50).name("Cruise Speed");
+		vehicleFolder.add(v, "size", 0.5, 300).name("Visual Size");
 	}
 
 	rebuildVehicleFolder();
@@ -191,22 +207,22 @@ async function init() {
 			cam.zoom = 0.3;
 		},
 		"Reset All"() {
-			vehicles[0].vehicle.x = 75746;
-			vehicles[0].vehicle.y = 42781;
-			vehicles[0].vehicle.heading = Math.PI;
-			vehicles[0].vehicle.speed = 0;
-			vehicles[1].vehicle.x = 75540;
-			vehicles[1].vehicle.y = 43226;
-			vehicles[1].vehicle.heading = Math.PI;
-			vehicles[1].vehicle.speed = 0;
-			vehicles[2].vehicle.x = 75500;
-			vehicles[2].vehicle.y = 43000;
-			vehicles[2].vehicle.heading = Math.PI;
-			vehicles[2].vehicle.speed = 0;
-			vehicles[3].vehicle.x = 75698;
-			vehicles[3].vehicle.y = 42649;
-			vehicles[3].vehicle.heading = Math.PI;
-			vehicles[3].vehicle.speed = 0;
+			const spawns = [
+				[75746, 42781],
+				[75540, 43226],
+				[75500, 43000],
+				[75698, 42649],
+				[75700, 42900],
+				[75600, 42850],
+			];
+			for (let i = 0; i < vehicles.length; i++) {
+				const v = vehicles[i].vehicle;
+				v.x = spawns[i][0];
+				v.y = spawns[i][1];
+				v.heading = Math.PI;
+				v.speed = 0;
+				v.drift = 0;
+			}
 			mode.freeCamera = false;
 			mode.cameraFollow = true;
 			cam.zoom = 0.3;
@@ -287,15 +303,13 @@ async function init() {
 			mode.cameraFollow = !mode.freeCamera;
 		}
 
-		// 1/2/3/4: switch active vehicle
-		if (e.key === "1" || e.key === "2" || e.key === "3" || e.key === "4") {
-			const idx = Number.parseInt(e.key) - 1;
-			if (idx < vehicles.length) {
-				activeIndex = idx;
-				mode.freeCamera = false;
-				mode.cameraFollow = true;
-				rebuildVehicleFolder();
-			}
+		// 1-6: switch active vehicle
+		const digit = Number.parseInt(e.key);
+		if (digit >= 1 && digit <= 9 && digit - 1 < vehicles.length) {
+			activeIndex = digit - 1;
+			mode.freeCamera = false;
+			mode.cameraFollow = true;
+			rebuildVehicleFolder();
 		}
 	});
 
@@ -345,8 +359,13 @@ async function init() {
 		if (mode.cameraFollow) {
 			const v = activeVehicle();
 			const followSpeed = 5;
-			cam.worldX += (v.x - cam.worldX) * followSpeed * dt;
-			cam.worldY += (v.y - cam.worldY) * followSpeed * dt;
+			// Airborne vehicles render above their world position;
+			// shift camera target so they stay screen-centered.
+			// In isometric projection, subtracting d from both worldX and worldY
+			// shifts the camera iso-Y by d, matching the visual altitude offset.
+			const altOffset = v.airborne ? 30 : 0;
+			cam.worldX += (v.x - altOffset - cam.worldX) * followSpeed * dt;
+			cam.worldY += (v.y - altOffset - cam.worldY) * followSpeed * dt;
 		}
 
 		// -- Redraw map (always: water shader is animated) --
@@ -367,11 +386,11 @@ async function init() {
 		const elev = getElevation(v.x, v.y);
 		const slope = getSlopeAlongHeading(v.x, v.y, v.heading);
 		coordText.text = `Cursor: (${Math.round(world.x)}, ${Math.round(world.y)})  Elev: ${getElevation(world.x, world.y).toFixed(0)}  Zoom: ${cam.zoom.toFixed(3)}  ${mode.freeCamera ? "[FREE CAM]" : "[FOLLOW]"}`;
-		boatText.text = `${label}: Speed: ${v.speed.toFixed(1)}  Drift: ${v.drift.toFixed(2)}  Heading: ${((v.heading * 180) / Math.PI).toFixed(0)}°  Elev: ${elev.toFixed(0)}  Slope: ${slope.toFixed(3)}  [1/2/3]`;
+		boatText.text = `${label}: Speed: ${v.speed.toFixed(1)}  Drift: ${v.drift.toFixed(2)}  Heading: ${((v.heading * 180) / Math.PI).toFixed(0)}°  Elev: ${elev.toFixed(0)}  Slope: ${slope.toFixed(3)}  [1-6]`;
 	});
 
 	console.log(
-		"Hormuz playground — WASD to drive, 1/2/3/4 to switch vehicle, Tab for free camera, scroll to zoom",
+		"Hormuz playground — WASD to drive, 1-6 to switch vehicle, Tab for free camera, scroll to zoom",
 	);
 }
 

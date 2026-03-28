@@ -841,6 +841,204 @@ function truckModel(): VehicleModel {
 	};
 }
 
+function quadcopterModel(): VehicleModel {
+	const body: LP[] = [
+		[0.15, -0.1],
+		[0.15, 0.1],
+		[-0.15, 0.1],
+		[-0.15, -0.1],
+	];
+
+	return {
+		blocks: [{ outline: body, baseHeight: 0.2, topHeight: 0.35 }],
+		details: [
+			// Arms
+			{
+				kind: "line",
+				height: 0.28,
+				x1: 0.12,
+				y1: -0.08,
+				x2: 0.38,
+				y2: -0.38,
+				color: 0x444444,
+				width: 2,
+				alpha: 0.8,
+			},
+			{
+				kind: "line",
+				height: 0.28,
+				x1: 0.12,
+				y1: 0.08,
+				x2: 0.38,
+				y2: 0.38,
+				color: 0x444444,
+				width: 2,
+				alpha: 0.8,
+			},
+			{
+				kind: "line",
+				height: 0.28,
+				x1: -0.12,
+				y1: -0.08,
+				x2: -0.38,
+				y2: -0.38,
+				color: 0x444444,
+				width: 2,
+				alpha: 0.8,
+			},
+			{
+				kind: "line",
+				height: 0.28,
+				x1: -0.12,
+				y1: 0.08,
+				x2: -0.38,
+				y2: 0.38,
+				color: 0x444444,
+				width: 2,
+				alpha: 0.8,
+			},
+			// Motor mounts
+			{
+				kind: "circle",
+				height: 0.3,
+				cx: 0.38,
+				cy: -0.38,
+				r: 0.04,
+				color: 0x333333,
+				alpha: 0.8,
+			},
+			{
+				kind: "circle",
+				height: 0.3,
+				cx: 0.38,
+				cy: 0.38,
+				r: 0.04,
+				color: 0x333333,
+				alpha: 0.8,
+			},
+			{
+				kind: "circle",
+				height: 0.3,
+				cx: -0.38,
+				cy: -0.38,
+				r: 0.04,
+				color: 0x333333,
+				alpha: 0.8,
+			},
+			{
+				kind: "circle",
+				height: 0.3,
+				cx: -0.38,
+				cy: 0.38,
+				r: 0.04,
+				color: 0x333333,
+				alpha: 0.8,
+			},
+			// Rotor discs
+			{
+				kind: "circle",
+				height: 0.35,
+				cx: 0.38,
+				cy: -0.38,
+				r: 0.15,
+				color: 0xaaaaaa,
+				alpha: 0.15,
+			},
+			{
+				kind: "circle",
+				height: 0.35,
+				cx: 0.38,
+				cy: 0.38,
+				r: 0.15,
+				color: 0xaaaaaa,
+				alpha: 0.15,
+			},
+			{
+				kind: "circle",
+				height: 0.35,
+				cx: -0.38,
+				cy: -0.38,
+				r: 0.15,
+				color: 0xaaaaaa,
+				alpha: 0.15,
+			},
+			{
+				kind: "circle",
+				height: 0.35,
+				cx: -0.38,
+				cy: 0.38,
+				r: 0.15,
+				color: 0xaaaaaa,
+				alpha: 0.15,
+			},
+			// Camera/sensor underneath
+			{
+				kind: "circle",
+				height: 0.2,
+				cx: 0.05,
+				cy: 0,
+				r: 0.025,
+				color: 0x222222,
+				alpha: 0.8,
+			},
+		],
+	};
+}
+
+function shahedModel(): VehicleModel {
+	// Delta wing planform — Shahed-136 style loitering munition
+	const wing: LP[] = [
+		[0.5, 0],
+		[0.2, -0.06],
+		[-0.15, -0.35],
+		[-0.25, -0.35],
+		[-0.35, -0.06],
+		[-0.4, 0],
+		[-0.35, 0.06],
+		[-0.25, 0.35],
+		[-0.15, 0.35],
+		[0.2, 0.06],
+	];
+
+	const fuselage: LP[] = [
+		[0.45, -0.04],
+		[0.45, 0.04],
+		[-0.35, 0.05],
+		[-0.35, -0.05],
+	];
+
+	return {
+		blocks: [
+			// Wing (thin, low profile)
+			{ outline: wing, baseHeight: 0.15, topHeight: 0.2 },
+			// Fuselage (raised central body)
+			{ outline: fuselage, baseHeight: 0.15, topHeight: 0.3 },
+		],
+		details: [
+			// Warhead nose cone
+			{
+				kind: "circle",
+				height: 0.25,
+				cx: 0.48,
+				cy: 0,
+				r: 0.025,
+				color: 0x555555,
+				alpha: 0.8,
+			},
+			// Pusher propeller hub at rear
+			{
+				kind: "circle",
+				height: 0.22,
+				cx: -0.42,
+				cy: 0,
+				r: 0.03,
+				color: 0x444444,
+				alpha: 0.7,
+			},
+		],
+	};
+}
+
 // ---------------------------------------------------------------------------
 // Model cache
 // ---------------------------------------------------------------------------
@@ -863,6 +1061,12 @@ function getModel(type: VehicleType): VehicleModel {
 			case "truck":
 				model = truckModel();
 				break;
+			case "quadcopter":
+				model = quadcopterModel();
+				break;
+			case "shahed":
+				model = shahedModel();
+				break;
 		}
 		modelCache.set(type, model);
 	}
@@ -883,15 +1087,17 @@ export function renderVehicle(
 	const sin = Math.sin(vehicle.heading);
 
 	// Terrain elevation and pitch at vehicle position
-	const terrainElevation = getElevation(vehicle.x, vehicle.y);
-	const pitchSlope = getSlopeAlongHeading(
-		vehicle.x,
-		vehicle.y,
-		vehicle.heading,
-	);
+	let terrainElevation = getElevation(vehicle.x, vehicle.y);
+	let pitchSlope = getSlopeAlongHeading(vehicle.x, vehicle.y, vehicle.heading);
 
-	// Wake (behind everything — drawn at water level, not terrain height)
-	if (vehicle.vehicleType !== "truck") {
+	// Airborne vehicles hover above terrain and don't pitch with slopes
+	if (vehicle.airborne) {
+		terrainElevation += 30;
+		pitchSlope = 0;
+	}
+
+	// Wake (behind everything — only for water vehicles)
+	if (!vehicle.airborne && vehicle.vehicleType !== "truck") {
 		drawWake(g, cam, vehicle, cos, sin);
 	}
 
