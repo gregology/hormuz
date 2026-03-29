@@ -131,9 +131,7 @@ Follow the Arrange-Act-Assert pattern. One behavior per test. Name tests by the 
 
 **TypeScript:** Vitest (shares Vite's config and transform pipeline). Property-based testing with `@fast-check/vitest`.
 
-**Python:** pytest with pytest-asyncio (`asyncio_mode = "auto"`). Property-based testing with Hypothesis. API testing with httpx AsyncClient.
-
-**Cross-language protocol tests:** Golden file fixtures in `shared/test_fixtures/`. The codegen script produces MessagePack binary files with known values; both Python and TypeScript test suites verify they deserialize identically. This catches serialization drift between languages.
+**Python:** pytest with pytest-asyncio (`asyncio_mode = "auto"`).
 
 ### When to add tests
 
