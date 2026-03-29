@@ -54,7 +54,23 @@ Examples of when to propose:
 hormuz/
   shared/              # Source of truth (YAML definitions, codegen scripts)
   server/              # Python backend (FastAPI, ECS, game loop)
-  client/              # TypeScript frontend (PixiJS renderer, physics)
+    src/hormuz/
+      main.py          # FastAPI app, WebSocket, game loop, entity spawning
+      components.py    # ECS components (Transform, VehiclePhysics, Health, etc.)
+      protocol.py      # MessagePack message encoding/decoding
+      map_data.py      # Spawn points, shipping lanes, exits (ported from client)
+      systems/         # esper Processors (physics, bot_ai, collision, combat, spawn)
+      generated/       # Auto-generated from YAML (vehicles, factions, heightmap)
+    tests/             # pytest tests for server systems
+  client/              # TypeScript frontend (PixiJS renderer, networking)
+    src/
+      render/          # PixiJS rendering (vehicles, map, camera, shaders)
+      vehicles/        # Physics engine + collision (reference implementation)
+      map/             # Geographic data, terrain, heightmap, coastlines
+      net/             # WebSocket connection + MessagePack protocol
+      game/            # Entity state store + snapshot interpolation
+      input/           # Keyboard input manager
+      generated/       # Auto-generated from YAML
   playground/          # Dev sandbox (same renderer, lil-gui controls)
 ```
 
@@ -161,6 +177,7 @@ Follow the Arrange-Act-Assert pattern. One behavior per test. Name tests by the 
 **Testing:**
 - `pnpm test` — run all client tests (Vitest)
 - `pnpm --filter client test:watch` — watch mode
+- `cd server && uv run --extra dev pytest tests/ -v` — run server tests (pytest)
 
 **Linting:**
 - `pnpm lint:client` / `pnpm lint:playground` — Biome
@@ -183,6 +200,9 @@ Decisions that have already been made (do not revisit without explicit request):
 - **Terrain elevation:** Grid heightmap from NOAA ETOPO1 data, gameplay-scaled (non-linear compression + smoothing). Hillshade rendered as GPU-interpolated texture sprite. Vehicles gain height offset + pitch on slopes. Physics applies gradient force (uphill deceleration, downhill acceleration).
 - **Terrain classification (land/water):** Ray-casting point-in-polygon against coastline polygons (`client/src/map/terrain.ts`), not the heightmap grid. The heightmap is too coarse (500-unit cells) for terrain type detection — coastline polygons are the visual ground truth.
 - **Collision:** Ships bounce off land, trucks bounce off water (using polygon terrain classifier). Airborne vehicles ignore terrain. Vehicle-vehicle collisions use circle-circle overlap with mass-weighted pushback.
+- **Server-authoritative simulation:** Server runs all physics at 20Hz. Clients send input and render interpolated state. Client physics code (`vehicles/physics.ts`) is the reference implementation; server physics (`systems/physics.py`) is the authoritative port. Client-side prediction may be added later as a layer on top — the server code won't change.
+- **ECS processor order:** BotAI (priority 5) → Physics (4) → Collision (3) → Combat (2) → Spawn (1). Network broadcast happens after `esper.process()` in the async game loop. Higher priority = runs first.
+- **Snapshot protocol:** Full snapshots sent at 20Hz to all clients (msgpack arrays, ~600 bytes for 20 entities). Delta snapshots deferred until entity count requires it.
 
 ## Conventions
 
@@ -192,3 +212,6 @@ Decisions that have already been made (do not revisit without explicit request):
 - **Coordinate system:** Origin (0,0) = top-left (northwest). X = east, Y = south. Geo conversion: `game_x = (lon - 47.5) * 9708`, `game_y = (30.5 - lat) * 10800`.
 - **Map renderer uses a Container** (not a single Graphics). `renderMap()` manages internal children: water Mesh (animated shader), land Graphics (coastline fills), terrain Mesh (elevation shader, masked to coastlines), overlay Graphics (borders, markers). Callers pass a Container.
 - **Heightmap vs coastlines:** The heightmap (`heightmap.ts`) is for elevation, slopes, hillshade, and physics forces. The coastline polygons (`terrain.ts`) are for land/water classification. Do not use the heightmap to determine whether a point is on land or water — the 500-unit grid resolution does not match the visual coastline.
+- **esper `try_remove_component` is broken.** It raises `KeyError` when the entity doesn't have the component but another entity does. Always guard with `has_component` before `remove_component`. Never use `try_remove_component`.
+- **Server ECS tests must use isolated worlds.** esper processors persist across tests. Use `esper.switch_world()` / `esper.delete_world()` in a pytest fixture (see `tests/conftest.py`) to give each test a clean world.
+- **Physics params must stay in sync.** The server's vehicle physics dicts (`OIL_TANKER_PHYSICS`, `SHAHED_PHYSICS` in `main.py`) must match the client's factory functions (`createOilTanker`, `createShahed` in `vehicles/physics.ts`). When changing physics tuning, update both.
