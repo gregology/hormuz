@@ -20,6 +20,19 @@ let hillshadeCache: Float32Array | null = null;
 // Elevation query
 // ---------------------------------------------------------------------------
 
+/** Raw elevation at the nearest heightmap cell (no interpolation). */
+export function getRawElevation(x: number, y: number): number {
+	const col = Math.max(
+		0,
+		Math.min(Math.round(x / HEIGHTMAP_CELL_SIZE - 0.5), HEIGHTMAP_WIDTH - 1),
+	);
+	const row = Math.max(
+		0,
+		Math.min(Math.round(y / HEIGHTMAP_CELL_SIZE - 0.5), HEIGHTMAP_HEIGHT - 1),
+	);
+	return HEIGHTMAP_DATA[row * HEIGHTMAP_WIDTH + col];
+}
+
 /** Get interpolated terrain elevation at a world position (game units). */
 export function getElevation(x: number, y: number): number {
 	const gx = x / HEIGHTMAP_CELL_SIZE - 0.5;

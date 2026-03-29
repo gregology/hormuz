@@ -13,6 +13,7 @@
     "generate": "cd shared && uv run python scripts/generate.py",
     "generate:heightmap": "uv run shared/scripts/generate_heightmap.py",
     "generate:coastlines": "uv run shared/scripts/generate_coastlines.py",
+    "test": "pnpm --filter client test",
     "lint:client": "pnpm --filter client lint",
     "lint:playground": "pnpm --filter playground lint",
     "lint:server": "cd server && uv run ruff check .",

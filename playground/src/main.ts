@@ -18,6 +18,10 @@ import {
 } from "../../client/src/render/map-renderer";
 import { renderVehicle } from "../../client/src/render/vehicle-renderer";
 import {
+	resolveTerrainCollision,
+	resolveVehicleCollisions,
+} from "../../client/src/vehicles/collision";
+import {
 	type NavalVehicle,
 	type VehicleInput,
 	createFrigate,
@@ -352,8 +356,29 @@ async function init() {
 			}
 		}
 
-		// -- Update active vehicle --
+		// -- Update all vehicles (save positions for collision rollback) --
+		const prevPositions: { x: number; y: number }[] = [];
+		for (const pv of vehicles) {
+			prevPositions.push({ x: pv.vehicle.x, y: pv.vehicle.y });
+		}
+
+		// Active vehicle gets player input; others drift with no input
 		updateVehicle(activeVehicle(), input, dt);
+		for (let i = 0; i < vehicles.length; i++) {
+			if (i !== activeIndex) {
+				updateVehicle(vehicles[i].vehicle, { throttle: 0, rudder: 0 }, dt);
+			}
+		}
+
+		// -- Collisions --
+		for (let i = 0; i < vehicles.length; i++) {
+			resolveTerrainCollision(
+				vehicles[i].vehicle,
+				prevPositions[i].x,
+				prevPositions[i].y,
+			);
+		}
+		resolveVehicleCollisions(vehicles.map((pv) => pv.vehicle));
 
 		// -- Camera follow --
 		if (mode.cameraFollow) {
