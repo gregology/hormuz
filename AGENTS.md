@@ -160,6 +160,10 @@ Follow the Arrange-Act-Assert pattern. One behavior per test. Name tests by the 
 - `pnpm generate:coastlines` — regenerate coastline data from Natural Earth
 - `pnpm generate:heightmap` — regenerate terrain heightmap from NOAA ETOPO1 data
 
+**Testing:**
+- `pnpm test` — run all client tests (Vitest)
+- `pnpm --filter client test:watch` — watch mode
+
 **Linting:**
 - `pnpm lint:client` / `pnpm lint:playground` — Biome
 - `pnpm lint:server` — Ruff
@@ -179,6 +183,8 @@ Decisions that have already been made (do not revisit without explicit request):
 - **Hosting:** Self-hosted via Cloudflare Tunnel, fallback VPS + Docker
 - **Coastlines:** Generated from Natural Earth 10m data (not hand-traced)
 - **Terrain elevation:** Grid heightmap from NOAA ETOPO1 data, gameplay-scaled (non-linear compression + smoothing). Hillshade rendered as GPU-interpolated texture sprite. Vehicles gain height offset + pitch on slopes. Physics applies gradient force (uphill deceleration, downhill acceleration).
+- **Terrain classification (land/water):** Ray-casting point-in-polygon against coastline polygons (`client/src/map/terrain.ts`), not the heightmap grid. The heightmap is too coarse (500-unit cells) for terrain type detection — coastline polygons are the visual ground truth.
+- **Collision:** Ships bounce off land, trucks bounce off water (using polygon terrain classifier). Airborne vehicles ignore terrain. Vehicle-vehicle collisions use circle-circle overlap with mass-weighted pushback.
 
 ## Conventions
 
@@ -186,4 +192,5 @@ Decisions that have already been made (do not revisit without explicit request):
 - **The playground is the primary development tool.** Build and test features there before integrating into the game client.
 - **Vehicle definitions live in YAML.** Adding a vehicle means editing `shared/vehicles.yaml` and running codegen — not writing TypeScript or Python by hand.
 - **Coordinate system:** Origin (0,0) = top-left (northwest). X = east, Y = south. Geo conversion: `game_x = (lon - 47.5) * 9708`, `game_y = (30.5 - lat) * 10800`.
-- **Map renderer uses a Container** (not a single Graphics). `renderMap()` manages three internal children: base Graphics (fills), hillshade Sprite (terrain texture), overlay Graphics (borders, markers). Callers pass a Container.
+- **Map renderer uses a Container** (not a single Graphics). `renderMap()` manages internal children: water Mesh (animated shader), land Graphics (coastline fills), terrain Mesh (elevation shader, masked to coastlines), overlay Graphics (borders, markers). Callers pass a Container.
+- **Heightmap vs coastlines:** The heightmap (`heightmap.ts`) is for elevation, slopes, hillshade, and physics forces. The coastline polygons (`terrain.ts`) are for land/water classification. Do not use the heightmap to determine whether a point is on land or water — the 500-unit grid resolution does not match the visual coastline.
