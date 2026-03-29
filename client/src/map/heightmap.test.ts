@@ -1,5 +1,5 @@
-import { describe, expect } from "vitest";
 import { fc, it, test } from "@fast-check/vitest";
+import { describe, expect } from "vitest";
 import {
 	HEIGHTMAP_CELL_SIZE,
 	HEIGHTMAP_HEIGHT,
@@ -72,8 +72,16 @@ describe("getElevation (bilinear interpolation)", () => {
 
 	test.prop(
 		[
-			fc.double({ min: 0, max: HEIGHTMAP_WIDTH * HEIGHTMAP_CELL_SIZE, noNaN: true }),
-			fc.double({ min: 0, max: HEIGHTMAP_HEIGHT * HEIGHTMAP_CELL_SIZE, noNaN: true }),
+			fc.double({
+				min: 0,
+				max: HEIGHTMAP_WIDTH * HEIGHTMAP_CELL_SIZE,
+				noNaN: true,
+			}),
+			fc.double({
+				min: 0,
+				max: HEIGHTMAP_HEIGHT * HEIGHTMAP_CELL_SIZE,
+				noNaN: true,
+			}),
 		],
 		{ numRuns: 50 },
 	)("never returns NaN for any in-bounds position", (x, y) => {

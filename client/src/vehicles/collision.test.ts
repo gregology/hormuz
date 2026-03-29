@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { isLand, isWater } from "../map/terrain";
-import {
-	resolveTerrainCollision,
-	resolveVehicleCollisions,
-} from "./collision";
+import { resolveTerrainCollision, resolveVehicleCollisions } from "./collision";
 import {
 	type NavalVehicle,
 	type VehicleInput,

@@ -77,3 +77,24 @@ vehicles:
         radius: 40
     ai_behavior: escort
     sprite: frigate_us
+
+  shahed:
+    name: Shahed-136
+    faction: iran
+    based_on: Shahed-136 loitering munition
+    role: One-way strike drone
+    cost_usd: 50_000
+    components:
+      health:
+        hp: 10
+        max_hp: 10
+      naval_physics:
+        max_speed: 40
+        cruise_speed: 34
+        turn_rate: 0.5
+        acceleration: 5
+        drag: 0.95
+      collidable:
+        radius: 4
+    ai_behavior: shahed_intercept
+    sprite: shahed

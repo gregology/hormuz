@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { isLand, isWater } from "./terrain";
 import {
 	IRAN_SPAWNS,
 	LANE_INBOUND,
@@ -9,6 +8,7 @@ import {
 	US_BASES,
 	US_SPAWNS,
 } from "./data";
+import { isLand, isWater } from "./terrain";
 
 // ---------------------------------------------------------------------------
 // Map bounds
@@ -33,7 +33,12 @@ describe("map dimensions", () => {
 // ---------------------------------------------------------------------------
 
 describe("spawn points are within map bounds", () => {
-	const allSpawns = [...US_SPAWNS, ...IRAN_SPAWNS, ...TANKER_SPAWNS, ...US_BASES];
+	const allSpawns = [
+		...US_SPAWNS,
+		...IRAN_SPAWNS,
+		...TANKER_SPAWNS,
+		...US_BASES,
+	];
 	for (const spawn of allSpawns) {
 		it(`"${spawn.label}" is within map bounds`, () => {
 			const [x, y] = spawn.position;
@@ -100,7 +105,12 @@ describe("shipping lanes are in water", () => {
 // ---------------------------------------------------------------------------
 
 describe("spawn headings are valid", () => {
-	const allSpawns = [...US_SPAWNS, ...IRAN_SPAWNS, ...TANKER_SPAWNS, ...US_BASES];
+	const allSpawns = [
+		...US_SPAWNS,
+		...IRAN_SPAWNS,
+		...TANKER_SPAWNS,
+		...US_BASES,
+	];
 	for (const spawn of allSpawns) {
 		it(`"${spawn.label}" heading is a finite number`, () => {
 			expect(Number.isFinite(spawn.heading)).toBe(true);

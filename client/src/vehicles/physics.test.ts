@@ -1,5 +1,5 @@
-import { describe, expect } from "vitest";
 import { fc, it, test } from "@fast-check/vitest";
+import { describe, expect } from "vitest";
 import {
 	type NavalVehicle,
 	type VehicleInput,
@@ -80,7 +80,9 @@ describe("throttle and acceleration", () => {
 	it("reverse speed limited to 20% of maxSpeed", () => {
 		const boat = createSpeedboat(FLAT_X, FLAT_Y);
 		step(boat, FULL_REVERSE, 600);
-		expect(Math.abs(boat.speed)).toBeLessThanOrEqual(boat.maxSpeed * 0.2 + 0.01);
+		expect(Math.abs(boat.speed)).toBeLessThanOrEqual(
+			boat.maxSpeed * 0.2 + 0.01,
+		);
 	});
 });
 
@@ -117,22 +119,22 @@ describe("drag and deceleration", () => {
 		expect(boat.drift).toBe(0);
 	});
 
-	test.prop(
-		[fc.constantFrom(...VEHICLE_FACTORIES)],
-		{ numRuns: 6 },
-	)("all vehicle types lose speed with no input", ({ create }) => {
-		const v = create(FLAT_X, FLAT_Y);
-		v.speed = v.maxSpeed * 0.5;
-		const initial = v.speed;
-		step(v, IDLE, 600);
-		if (v.cruiseSpeed > 0) {
-			expect(v.speed).toBeCloseTo(v.cruiseSpeed, 0);
-		} else {
-			// All vehicles should lose speed — high-drag vehicles (frigate 0.95)
-			// lose less per second than low-drag vehicles (quadcopter 0.75)
-			expect(v.speed).toBeLessThan(initial);
-		}
-	});
+	test.prop([fc.constantFrom(...VEHICLE_FACTORIES)], { numRuns: 6 })(
+		"all vehicle types lose speed with no input",
+		({ create }) => {
+			const v = create(FLAT_X, FLAT_Y);
+			v.speed = v.maxSpeed * 0.5;
+			const initial = v.speed;
+			step(v, IDLE, 600);
+			if (v.cruiseSpeed > 0) {
+				expect(v.speed).toBeCloseTo(v.cruiseSpeed, 0);
+			} else {
+				// All vehicles should lose speed — high-drag vehicles (frigate 0.95)
+				// lose less per second than low-drag vehicles (quadcopter 0.75)
+				expect(v.speed).toBeLessThan(initial);
+			}
+		},
+	);
 });
 
 // ---------------------------------------------------------------------------
@@ -213,7 +215,8 @@ describe("rudder-based steering", () => {
 		// reverse + same rudder should turn the opposite way
 		// (nose still goes in the direction the rudder points)
 		const fwdDelta = fwd.heading;
-		const revDelta = rev.heading > Math.PI ? rev.heading - 2 * Math.PI : rev.heading;
+		const revDelta =
+			rev.heading > Math.PI ? rev.heading - 2 * Math.PI : rev.heading;
 		expect(Math.sign(fwdDelta)).not.toBe(Math.sign(revDelta));
 	});
 });
@@ -223,16 +226,17 @@ describe("rudder-based steering", () => {
 // ---------------------------------------------------------------------------
 
 describe("heading normalization", () => {
-	test.prop(
-		[fc.double({ min: -100, max: 100, noNaN: true })],
-	)("heading stays in [0, 2π) after any initial heading", (startHeading) => {
-		const boat = createSpeedboat(FLAT_X, FLAT_Y);
-		boat.heading = startHeading;
-		boat.speed = 10;
-		step(boat, HARD_STARBOARD, 10);
-		expect(boat.heading).toBeGreaterThanOrEqual(0);
-		expect(boat.heading).toBeLessThan(Math.PI * 2);
-	});
+	test.prop([fc.double({ min: -100, max: 100, noNaN: true })])(
+		"heading stays in [0, 2π) after any initial heading",
+		(startHeading) => {
+			const boat = createSpeedboat(FLAT_X, FLAT_Y);
+			boat.heading = startHeading;
+			boat.speed = 10;
+			step(boat, HARD_STARBOARD, 10);
+			expect(boat.heading).toBeGreaterThanOrEqual(0);
+			expect(boat.heading).toBeLessThan(Math.PI * 2);
+		},
+	);
 });
 
 // ---------------------------------------------------------------------------

@@ -7,12 +7,12 @@
  * or island polygon.
  */
 
-import type { Polygon } from "./data";
 import {
 	ARABIAN_COAST_POLYS,
 	IRAN_COAST_POLYS,
 	ISLAND_POLYGONS,
 } from "./coastlines";
+import type { Polygon } from "./data";
 
 // Collect all land polygons once at module load
 const LAND_POLYS: Polygon[] = [
@@ -30,10 +30,10 @@ interface BBox {
 }
 
 const BBOXES: BBox[] = LAND_POLYS.map((poly) => {
-	let minX = Infinity;
-	let maxX = -Infinity;
-	let minY = Infinity;
-	let maxY = -Infinity;
+	let minX = Number.POSITIVE_INFINITY;
+	let maxX = Number.NEGATIVE_INFINITY;
+	let minY = Number.POSITIVE_INFINITY;
+	let maxY = Number.NEGATIVE_INFINITY;
 	for (const [x, y] of poly) {
 		if (x < minX) minX = x;
 		if (x > maxX) maxX = x;

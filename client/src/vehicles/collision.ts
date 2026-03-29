@@ -90,10 +90,7 @@ export function resolveVehicleCollisions(vehicles: NavalVehicle[]): void {
 				a.size <= b.size
 					? 0.3 + sizeRatio * 0.55 // light: 0.3 (tiny vs huge) to 0.85 (equal)
 					: 0.85;
-			const dampB =
-				b.size <= a.size
-					? 0.3 + sizeRatio * 0.55
-					: 0.85;
+			const dampB = b.size <= a.size ? 0.3 + sizeRatio * 0.55 : 0.85;
 
 			a.speed *= dampA;
 			b.speed *= dampB;

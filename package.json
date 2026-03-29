@@ -10,7 +10,7 @@
     "dev:server": "cd server && uv run uvicorn hormuz.main:app --reload --host 0.0.0.0 --port 8000",
     "build:client": "pnpm --filter client build",
     "build:playground": "pnpm --filter playground build",
-    "generate": "cd shared && uv run python scripts/generate.py",
+    "generate": "cd server && uv run python ../shared/scripts/generate.py",
     "generate:heightmap": "uv run shared/scripts/generate_heightmap.py",
     "generate:coastlines": "uv run shared/scripts/generate_coastlines.py",
     "test": "pnpm --filter client test",

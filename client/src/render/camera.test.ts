@@ -1,5 +1,5 @@
-import { describe, expect } from "vitest";
 import { fc, it, test } from "@fast-check/vitest";
+import { describe, expect } from "vitest";
 import {
 	ISO_COS,
 	ISO_SIN,
@@ -13,12 +13,10 @@ import {
 // ---------------------------------------------------------------------------
 
 describe("world ↔ screen round-trip", () => {
-	test.prop(
-		[
-			fc.double({ min: -50000, max: 150000, noNaN: true }),
-			fc.double({ min: -50000, max: 150000, noNaN: true }),
-		],
-	)("screenToWorld inverts worldToScreen", (wx, wy) => {
+	test.prop([
+		fc.double({ min: -50000, max: 150000, noNaN: true }),
+		fc.double({ min: -50000, max: 150000, noNaN: true }),
+	])("screenToWorld inverts worldToScreen", (wx, wy) => {
 		const cam = createCamera(1920, 1080);
 		cam.worldX = 75000;
 		cam.worldY = 43000;
@@ -31,13 +29,11 @@ describe("world ↔ screen round-trip", () => {
 		expect(world.y).toBeCloseTo(wy, 4);
 	});
 
-	test.prop(
-		[
-			fc.double({ min: -50000, max: 150000, noNaN: true }),
-			fc.double({ min: -50000, max: 150000, noNaN: true }),
-			fc.double({ min: 0.1, max: 10, noNaN: true }),
-		],
-	)("round-trip works at any zoom level", (wx, wy, zoom) => {
+	test.prop([
+		fc.double({ min: -50000, max: 150000, noNaN: true }),
+		fc.double({ min: -50000, max: 150000, noNaN: true }),
+		fc.double({ min: 0.1, max: 10, noNaN: true }),
+	])("round-trip works at any zoom level", (wx, wy, zoom) => {
 		const cam = createCamera(1920, 1080);
 		cam.worldX = 50000;
 		cam.worldY = 40000;
@@ -50,12 +46,10 @@ describe("world ↔ screen round-trip", () => {
 		expect(world.y).toBeCloseTo(wy, 3);
 	});
 
-	test.prop(
-		[
-			fc.double({ min: 0, max: 1920, noNaN: true }),
-			fc.double({ min: 0, max: 1080, noNaN: true }),
-		],
-	)("worldToScreen inverts screenToWorld", (sx, sy) => {
+	test.prop([
+		fc.double({ min: 0, max: 1920, noNaN: true }),
+		fc.double({ min: 0, max: 1080, noNaN: true }),
+	])("worldToScreen inverts screenToWorld", (sx, sy) => {
 		const cam = createCamera(1920, 1080);
 		cam.worldX = 75000;
 		cam.worldY = 43000;

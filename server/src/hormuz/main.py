@@ -1,26 +1,213 @@
 import asyncio
+import logging
 import time
+from pathlib import Path
 
+import esper
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+
+from hormuz.components import (
+    BotControl,
+    Collidable,
+    Faction,
+    Health,
+    PlayerControl,
+    Transform,
+    VehiclePhysics,
+)
+from hormuz.map_data import IRAN_SPAWNS, random_tanker_spawn
+from hormuz.protocol import (
+    MSG_INPUT,
+    decode_client_message,
+    encode_assign_vehicle,
+    encode_event,
+    encode_full_snapshot,
+    encode_war_cost,
+)
+from hormuz.systems.bot_ai import BotAIProcessor
+from hormuz.systems.collision import CollisionProcessor
+from hormuz.systems.combat import CombatProcessor
+from hormuz.systems.physics import PhysicsProcessor
+from hormuz.systems.spawn import SpawnProcessor
+
+logger = logging.getLogger("hormuz")
 
 app = FastAPI(title="Hormuz", version="0.0.1")
 
 TICK_RATE = 20
 TICK_INTERVAL = 1.0 / TICK_RATE
 
-# Connected clients
-connections: set[WebSocket] = set()
+# --- Player connection tracking ---
 
-# Game state placeholder
+connections: dict[int, WebSocket] = {}  # connection_id -> websocket
+player_entities: dict[int, int] = {}  # connection_id -> entity_id
+_next_conn_id = 0
+
+# Game state
 game_state = {
     "tick": 0,
     "war_cost_usd": 0,
-    "entities": 0,
+    "tankers_delivered": 0,
+    "tankers_sunk": 0,
     "uptime_seconds": 0.0,
 }
 
 start_time = time.monotonic()
+
+# --- Vehicle physics params (match client factory functions exactly) ---
+
+OIL_TANKER_PHYSICS = dict(
+    vehicle_type="oil_tanker",
+    max_speed=7.5,
+    acceleration=1.0,
+    drag=0.97,
+    turn_rate=0.05,
+    drift_factor=0.25,
+    lateral_drag=0.45,
+    min_turn_fraction=0.0,
+    cruise_speed=0.0,
+    airborne=False,
+    size=220.0,
+)
+
+SHAHED_PHYSICS = dict(
+    vehicle_type="shahed",
+    max_speed=40.0,
+    acceleration=5.0,
+    drag=0.95,
+    turn_rate=0.5,
+    drift_factor=0.02,
+    lateral_drag=0.1,
+    min_turn_fraction=1.0,
+    cruise_speed=34.0,
+    airborne=True,
+    size=4.0,
+)
+
+
+def setup_world() -> None:
+    """Create all entities and register ECS processors."""
+    esper.add_processor(BotAIProcessor(), priority=5)
+    esper.add_processor(PhysicsProcessor(), priority=4)
+    esper.add_processor(CollisionProcessor(), priority=3)
+    esper.add_processor(CombatProcessor(), priority=2)
+    esper.add_processor(SpawnProcessor(), priority=1)
+
+    # Spawn 10 oil tankers scattered near the strait
+    for i in range(10):
+        x, y, heading = random_tanker_spawn()
+        esper.create_entity(
+            Transform(x=x, y=y, heading=heading),
+            VehiclePhysics(**OIL_TANKER_PHYSICS),
+            Faction("civilian"),
+            Health(100, 100),
+            Collidable(88.0),
+            BotControl("tanker_transit"),
+        )
+
+    # Spawn 10 shaheds
+    for i in range(10):
+        spawn = IRAN_SPAWNS[i % len(IRAN_SPAWNS)]
+        x, y = spawn["position"]
+        esper.create_entity(
+            Transform(x=float(x), y=float(y), heading=spawn["heading"]),
+            VehiclePhysics(**SHAHED_PHYSICS),
+            Faction("iran"),
+            Health(10, 10),
+            Collidable(4.0),
+            BotControl("shahed_intercept"),
+        )
+
+
+# --- Networking helpers ---
+
+
+def build_snapshot() -> bytes:
+    """Build a full snapshot of all alive entities."""
+    entities = []
+    for ent, (tf, phys, health, faction) in esper.get_components(
+        Transform, VehiclePhysics, Health, Faction
+    ):
+        entities.append(
+            (
+                ent,
+                phys.vehicle_type,
+                faction.name,
+                tf.x,
+                tf.y,
+                tf.heading,
+                tf.speed,
+                tf.drift,
+                health.hp,
+            )
+        )
+    return encode_full_snapshot(game_state["tick"], entities)
+
+
+def assign_vehicle_to_player(conn_id: int) -> int | None:
+    """Find a bot-controlled entity and assign it to a human player."""
+    for ent, (bot, phys, health) in esper.get_components(BotControl, VehiclePhysics, Health):
+        if health.hp <= 0:
+            continue
+        # Remove bot control, add player control
+        esper.remove_component(ent, BotControl)
+        esper.add_component(ent, PlayerControl(connection_id=conn_id))
+        player_entities[conn_id] = ent
+        return ent
+    return None
+
+
+def release_vehicle(conn_id: int) -> None:
+    """Return a player's vehicle to bot control."""
+    ent = player_entities.pop(conn_id, None)
+    if ent is None or not esper.entity_exists(ent):
+        return
+    if esper.has_component(ent, PlayerControl):
+        esper.remove_component(ent, PlayerControl)
+    if not esper.has_component(ent, BotControl):
+        phys = esper.component_for_entity(ent, VehiclePhysics)
+        behavior = "tanker_transit" if phys.vehicle_type == "oil_tanker" else "shahed_intercept"
+        esper.add_component(ent, BotControl(behavior))
+
+
+def apply_input(conn_id: int, keys: int) -> None:
+    """Decode key bitmask and update player's vehicle input."""
+    ent = player_entities.get(conn_id)
+    if ent is None or not esper.entity_exists(ent):
+        return
+    pc = esper.try_component(ent, PlayerControl)
+    if pc is None:
+        return
+    # Decode bitmask: bit0=W, bit1=S, bit2=A, bit3=D
+    fwd = 1.0 if keys & 0x01 else 0.0
+    rev = 1.0 if keys & 0x02 else 0.0
+    left = 1.0 if keys & 0x04 else 0.0
+    right = 1.0 if keys & 0x08 else 0.0
+    pc.throttle = fwd - rev
+    pc.rudder = right - left
+
+
+async def broadcast(data: bytes) -> None:
+    """Send data to all connected clients, removing dead connections."""
+    if not connections:
+        return
+    dead: list[int] = []
+    tasks = []
+    for conn_id, ws in connections.items():
+        tasks.append((conn_id, ws.send_bytes(data)))
+    for conn_id, coro in tasks:
+        try:
+            await coro
+        except Exception:
+            dead.append(conn_id)
+    for conn_id in dead:
+        connections.pop(conn_id, None)
+        release_vehicle(conn_id)
+
+
+# --- Game loop ---
 
 
 async def game_loop() -> None:
@@ -28,19 +215,74 @@ async def game_loop() -> None:
     while True:
         t0 = time.monotonic()
 
-        # Update game state
         game_state["tick"] += 1
         game_state["uptime_seconds"] = round(time.monotonic() - start_time, 1)
 
-        # TODO: ECS world.tick(dt) goes here
-        # TODO: broadcast snapshot to connected clients
+        esper.process(dt=TICK_INTERVAL)
+
+        # Update war cost from processors
+        spawn_proc = esper.get_processor(SpawnProcessor)
+        combat_proc = esper.get_processor(CombatProcessor)
+        game_state["tankers_delivered"] = spawn_proc.tankers_delivered
+        game_state["tankers_sunk"] += len(
+            [e for e in combat_proc.events if e["type"] == "explosion"]
+        )
+        tanker_cost = 150_000_000
+        shahed_cost = 50_000
+        game_state["war_cost_usd"] = (
+            game_state["tankers_sunk"] * (tanker_cost + shahed_cost)
+            + spawn_proc.tankers_delivered * tanker_cost
+        )
+
+        # Reassign players whose vehicles were killed
+        for conn_id, ent in list(player_entities.items()):
+            if not esper.entity_exists(ent):
+                player_entities.pop(conn_id, None)
+                continue
+            health = esper.try_component(ent, Health)
+            if health and health.hp <= 0 and not esper.has_component(ent, PlayerControl):
+                # Vehicle was killed — reassign to another bot vehicle
+                player_entities.pop(conn_id, None)
+                new_ent = assign_vehicle_to_player(conn_id)
+                if new_ent is not None and conn_id in connections:
+                    phys = esper.component_for_entity(new_ent, VehiclePhysics)
+                    try:
+                        await connections[conn_id].send_bytes(
+                            encode_assign_vehicle(new_ent, phys.vehicle_type)
+                        )
+                    except Exception:
+                        pass
+
+        # Broadcast snapshot to all clients
+        snapshot = build_snapshot()
+        await broadcast(snapshot)
+
+        # Broadcast events (explosions, deliveries)
+        for event in combat_proc.events:
+            await broadcast(encode_event(event["type"], event["x"], event["y"]))
+        for event in spawn_proc.events:
+            await broadcast(encode_event(event["type"], event["x"], event["y"]))
+
+        # Broadcast war cost every second (every 20 ticks)
+        if game_state["tick"] % TICK_RATE == 0:
+            await broadcast(
+                encode_war_cost(
+                    game_state["war_cost_usd"],
+                    game_state["tankers_delivered"],
+                    game_state["tankers_sunk"],
+                )
+            )
 
         elapsed = time.monotonic() - t0
         await asyncio.sleep(max(0, TICK_INTERVAL - elapsed))
 
 
+# --- FastAPI endpoints ---
+
+
 @app.on_event("startup")
 async def startup() -> None:
+    setup_world()
     asyncio.create_task(game_loop())
 
 
@@ -53,20 +295,73 @@ async def status() -> JSONResponse:
             "tick_rate": TICK_RATE,
             "tick": game_state["tick"],
             "war_cost_usd": game_state["war_cost_usd"],
-            "entities": game_state["entities"],
-            "players": len(connections),
+            "tankers_delivered": game_state["tankers_delivered"],
+            "tankers_sunk": game_state["tankers_sunk"],
+            "entities": len(list(esper.get_component(Transform))),
+            "players": len(player_entities),
             "uptime_seconds": game_state["uptime_seconds"],
         }
     )
 
 
+@app.get("/api/entities")
+async def entities() -> JSONResponse:
+    """Debug endpoint — dump all entity positions."""
+    result = []
+    for ent, (tf, phys) in esper.get_components(Transform, VehiclePhysics):
+        result.append(
+            {
+                "id": ent,
+                "type": phys.vehicle_type,
+                "x": round(tf.x, 1),
+                "y": round(tf.y, 1),
+                "heading": round(tf.heading, 3),
+                "speed": round(tf.speed, 2),
+            }
+        )
+    return JSONResponse(result)
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket) -> None:
+    global _next_conn_id
     await websocket.accept()
-    connections.add(websocket)
+
+    conn_id = _next_conn_id
+    _next_conn_id += 1
+    connections[conn_id] = websocket
+
+    # Assign a vehicle to this player
+    assigned = assign_vehicle_to_player(conn_id)
+    if assigned is not None:
+        phys = esper.component_for_entity(assigned, VehiclePhysics)
+        await websocket.send_bytes(encode_assign_vehicle(assigned, phys.vehicle_type))
+
+    # Send full snapshot
+    await websocket.send_bytes(build_snapshot())
+
+    # Send current war cost
+    await websocket.send_bytes(
+        encode_war_cost(
+            game_state["war_cost_usd"],
+            game_state["tankers_delivered"],
+            game_state["tankers_sunk"],
+        )
+    )
+
     try:
         while True:
-            _data = await websocket.receive_bytes()
-            # TODO: process client input
+            data = await websocket.receive_bytes()
+            msg = decode_client_message(data)
+            if msg["type"] == MSG_INPUT:
+                apply_input(conn_id, msg["keys"])
     except WebSocketDisconnect:
-        connections.discard(websocket)
+        connections.pop(conn_id, None)
+        release_vehicle(conn_id)
+
+
+# --- Static file serving (production: serve built client) ---
+
+CLIENT_DIST = Path(__file__).parent.parent.parent.parent / "client" / "dist"
+if CLIENT_DIST.exists():
+    app.mount("/", StaticFiles(directory=str(CLIENT_DIST), html=True), name="static")
