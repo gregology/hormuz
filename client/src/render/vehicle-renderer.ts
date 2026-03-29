@@ -160,6 +160,16 @@ function drawBlock(
 	const southColor = darken(factionColor, 0.45);
 	const eastColor = darken(factionColor, 0.65);
 
+	// Detect winding direction from screen-space polygon so both CW and CCW
+	// outlines produce correct outward normals.
+	// Positive signed area → CW (normals already outward), negative → CCW (flip).
+	let twiceArea = 0;
+	for (let i = 0; i < n; i++) {
+		const j = (i + 1) % n;
+		twiceArea += topPts[i].x * topPts[j].y - topPts[j].x * topPts[i].y;
+	}
+	const winding = twiceArea > 0 ? 1 : -1;
+
 	// Draw visible side faces
 	for (let i = 0; i < n; i++) {
 		const j = (i + 1) % n;
@@ -168,13 +178,13 @@ function drawBlock(
 		const ab = botPts[i],
 			bb = botPts[j];
 
-		// Outward normal for clockwise winding: (By-Ay, Ax-Bx)
-		const nx = bt.y - at.y;
-		const ny = at.x - bt.x;
+		// Outward normal: (By-Ay, Ax-Bx) for CW, negated for CCW
+		const outNx = (bt.y - at.y) * winding;
+		const outNy = (at.x - bt.x) * winding;
 
-		if (ny > 0 || nx > 0) {
+		if (outNy > 0) {
 			// Shade: south-dominant vs east-dominant
-			const sideColor = ny > Math.abs(nx) ? southColor : eastColor;
+			const sideColor = outNy > Math.abs(outNx) ? southColor : eastColor;
 
 			g.moveTo(at.x, at.y);
 			g.lineTo(bt.x, bt.y);
@@ -543,23 +553,23 @@ function frigateModel(): VehicleModel {
 
 function oilTankerModel(): VehicleModel {
 	const hull: LP[] = [
-		[0.48, -0.02],
-		[0.5, 0],
+		[0.5, 0], // bow tip
 		[0.48, 0.02],
-		[0.44, -0.06],
-		[0.38, -0.085],
-		[0.25, -0.09],
-		[-0.3, -0.09],
-		[-0.4, -0.085],
-		[-0.44, -0.07],
-		[-0.46, -0.04],
-		[-0.46, 0.04],
-		[-0.44, 0.07],
-		[-0.4, 0.085],
-		[-0.3, 0.09],
-		[0.25, 0.09],
-		[0.38, 0.085],
 		[0.44, 0.06],
+		[0.38, 0.085],
+		[0.25, 0.09],
+		[-0.3, 0.09],
+		[-0.4, 0.085],
+		[-0.44, 0.07],
+		[-0.46, 0.04],
+		[-0.46, -0.04],
+		[-0.44, -0.07],
+		[-0.4, -0.085],
+		[-0.3, -0.09],
+		[0.25, -0.09],
+		[0.38, -0.085],
+		[0.44, -0.06],
+		[0.48, -0.02],
 	];
 
 	const forecastle: LP[] = [
