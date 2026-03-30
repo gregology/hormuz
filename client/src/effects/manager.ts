@@ -90,6 +90,9 @@ export class EffectManager {
 			if (prevHp > 0 && e.hp <= 0) {
 				const color = FACTION_COLORS[e.faction] ?? 0xcccccc;
 				this.spawnSinking(e.x, e.y, e.heading, defaults.size, color);
+				// Clear wake/churn so respawn at new position doesn't draw a line artifact
+				this.wakeTrails.delete(e.id);
+				this.sternChurns.delete(e.id);
 			}
 			this.previousHp.set(e.id, e.hp);
 

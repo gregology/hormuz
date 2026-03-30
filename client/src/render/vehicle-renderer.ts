@@ -293,58 +293,65 @@ const GUN_METAL = 0x445566;
 const PIPE = 0x887766;
 
 function speedboatModel(): VehicleModel {
-	// V-hull: narrow keel below waterline, full hull above.
+	// Iranian fast attack craft (Taregh-class inspired).
+	// Sharp deep-V hull for high speed, narrow bow tapering to knife edge.
 
 	const keel: LP[] = [
-		[0.4, 0],
-		[0.2, -0.05],
-		[-0.2, -0.06],
+		[0.42, 0],
+		[0.3, -0.02],
+		[0.0, -0.04],
+		[-0.2, -0.05],
 		[-0.38, -0.03],
 		[-0.38, 0.03],
-		[-0.2, 0.06],
-		[0.2, 0.05],
+		[-0.2, 0.05],
+		[0.0, 0.04],
+		[0.3, 0.02],
 	];
 
 	const hull: LP[] = [
-		[0.5, 0],
-		[0.3, -0.1],
-		[0.05, -0.13],
-		[-0.3, -0.14],
+		[0.5, 0], // knife-edge bow
+		[0.38, -0.04],
+		[0.2, -0.08],
+		[0.0, -0.11],
+		[-0.2, -0.13],
+		[-0.3, -0.14], // max beam well aft
 		[-0.4, -0.1],
-		[-0.42, -0.04],
-		[-0.42, 0.04],
+		[-0.42, -0.04], // transom corner
+		[-0.42, 0.04], // transom corner
 		[-0.4, 0.1],
 		[-0.3, 0.14],
-		[0.05, 0.13],
-		[0.3, 0.1],
+		[-0.2, 0.13],
+		[0.0, 0.11],
+		[0.2, 0.08],
+		[0.38, 0.04],
 	];
 
 	const cockpit: LP[] = [
-		[0.12, -0.06],
-		[-0.12, -0.07],
-		[-0.15, -0.04],
-		[-0.15, 0.04],
-		[-0.12, 0.07],
-		[0.12, 0.06],
+		[0.0, -0.06],
+		[-0.15, -0.07],
+		[-0.18, -0.04],
+		[-0.18, 0.04],
+		[-0.15, 0.07],
+		[0.0, 0.06],
 	];
 
 	return {
 		blocks: [
-			// V-hull keel (below waterline — visible as taper)
+			// Deep V-keel (below waterline)
 			{
 				outline: keel,
-				baseHeight: -0.12,
+				baseHeight: -0.15,
 				topHeight: 0,
 				topColor: darken(STEEL, 0.5),
 				sideAlpha: 0.7,
 			},
-			// Main hull (freeboard)
-			{ outline: hull, baseHeight: 0, topHeight: 0.35 },
-			// Cockpit / centre console (raised)
+			// Main hull (low freeboard)
+			{ outline: hull, baseHeight: 0, topHeight: 0.3 },
+			// Pilot house / centre console
 			{
 				outline: cockpit,
-				baseHeight: 0.35,
-				topHeight: 0.55,
+				baseHeight: 0.3,
+				topHeight: 0.5,
 				topColor: DECK_GREY,
 				topAlpha: 0.9,
 			},
@@ -353,22 +360,32 @@ function speedboatModel(): VehicleModel {
 			// Windscreen
 			{
 				kind: "line",
-				height: 0.55,
-				x1: 0.12,
+				height: 0.5,
+				x1: 0.0,
 				y1: -0.055,
-				x2: 0.12,
+				x2: 0.0,
 				y2: 0.055,
 				color: GLASS,
 				width: 1.5,
 				alpha: 0.8,
 			},
-			// Engine
+			// Port engine
 			{
 				kind: "circle",
-				height: 0.3,
+				height: 0.25,
 				cx: -0.42,
-				cy: 0,
-				r: 0.03,
+				cy: -0.03,
+				r: 0.025,
+				color: GUN_METAL,
+				alpha: 0.7,
+			},
+			// Starboard engine
+			{
+				kind: "circle",
+				height: 0.25,
+				cx: -0.42,
+				cy: 0.03,
+				r: 0.025,
 				color: GUN_METAL,
 				alpha: 0.7,
 			},
@@ -377,36 +394,43 @@ function speedboatModel(): VehicleModel {
 }
 
 function frigateModel(): VehicleModel {
-	// V-hull: narrow keel below waterline, flared hull above.
+	// Constellation-class frigate (FFG-62). Fine bow entry,
+	// max beam amidships, transom stern.
 
 	const keel: LP[] = [
-		[0.38, 0],
-		[0.25, -0.03],
-		[-0.2, -0.04],
+		[0.42, 0],
+		[0.3, -0.015],
+		[0.1, -0.025],
+		[-0.1, -0.035],
+		[-0.3, -0.04],
 		[-0.4, -0.025],
 		[-0.4, 0.025],
-		[-0.2, 0.04],
-		[0.25, 0.03],
+		[-0.3, 0.04],
+		[-0.1, 0.035],
+		[0.1, 0.025],
+		[0.3, 0.015],
 	];
 
 	const hull: LP[] = [
-		[0.5, 0], // bow
-		[0.42, -0.04],
-		[0.3, -0.065],
-		[0.15, -0.075],
-		[0.0, -0.08],
-		[-0.2, -0.08],
-		[-0.35, -0.07],
-		[-0.42, -0.055],
-		[-0.45, -0.03],
-		[-0.45, 0.03],
-		[-0.42, 0.055],
-		[-0.35, 0.07],
-		[-0.2, 0.08],
-		[0.0, 0.08],
-		[0.15, 0.075],
-		[0.3, 0.065],
-		[0.42, 0.04],
+		[0.5, 0], // bow point
+		[0.45, -0.015], // fine entry
+		[0.38, -0.03],
+		[0.28, -0.045],
+		[0.15, -0.06],
+		[0.0, -0.07],
+		[-0.15, -0.08], // max beam
+		[-0.3, -0.08],
+		[-0.4, -0.065],
+		[-0.45, -0.04], // transom corner
+		[-0.45, 0.04], // transom corner (flat stern)
+		[-0.4, 0.065],
+		[-0.3, 0.08],
+		[-0.15, 0.08], // max beam
+		[0.0, 0.07],
+		[0.15, 0.06],
+		[0.28, 0.045],
+		[0.38, 0.03],
+		[0.45, 0.015], // fine entry
 	];
 
 	const superstructure: LP[] = [

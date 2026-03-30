@@ -102,6 +102,11 @@ async function init() {
 	let warCost = { totalUsd: 0, tankersDelivered: 0, tankersSunk: 0 };
 	let elapsedTime = 0;
 
+	// Respawn delay — let the player watch their vehicle's destruction before switching
+	let pendingAssign: { entityId: number; vehicleType: string } | null = null;
+	let respawnTimer = 0;
+	const RESPAWN_DELAY = 3.0;
+
 	// Reusable NavalVehicle objects for rendering (keyed by entity ID)
 	const renderVehicles = new Map<number, NavalVehicle>();
 
@@ -154,8 +159,15 @@ async function init() {
 	});
 
 	conn.onAssign((msg) => {
-		assignedEntityId = msg.entityId;
-		assignedVehicleType = msg.vehicleType;
+		if (assignedEntityId === null) {
+			// First assignment on connect — apply immediately
+			assignedEntityId = msg.entityId;
+			assignedVehicleType = msg.vehicleType;
+		} else {
+			// Reassignment after death — delay to watch destruction animation
+			pendingAssign = { entityId: msg.entityId, vehicleType: msg.vehicleType };
+			respawnTimer = RESPAWN_DELAY;
+		}
 	});
 
 	conn.onWarCost((msg) => {
@@ -197,8 +209,18 @@ async function init() {
 		// Get interpolated entities
 		const entities = interpolator.getAllInterpolated(renderTime);
 
-		// Camera follow assigned vehicle
-		if (assignedEntityId !== null) {
+		// Process respawn timer
+		if (respawnTimer > 0) {
+			respawnTimer -= dt;
+			if (respawnTimer <= 0 && pendingAssign) {
+				assignedEntityId = pendingAssign.entityId;
+				assignedVehicleType = pendingAssign.vehicleType;
+				pendingAssign = null;
+			}
+		}
+
+		// Camera follow assigned vehicle (freeze during respawn to watch destruction)
+		if (assignedEntityId !== null && respawnTimer <= 0) {
 			const target = entities.find((e) => e.id === assignedEntityId);
 			if (target) {
 				const followSpeed = 5;
@@ -238,12 +260,17 @@ async function init() {
 
 		// HUD
 		const typeLabel =
-			assignedVehicleType === "oil_tanker"
-				? "Oil Tanker"
-				: assignedVehicleType === "shahed"
-					? "Shahed Drone"
-					: assignedVehicleType || "Spectating";
-		vehicleText.text = `You: ${typeLabel}  |  WASD to control`;
+			respawnTimer > 0
+				? `Destroyed -- respawning in ${Math.ceil(respawnTimer)}s`
+				: assignedVehicleType === "oil_tanker"
+					? "Oil Tanker"
+					: assignedVehicleType === "shahed"
+						? "Shahed Drone"
+						: assignedVehicleType || "Spectating";
+		vehicleText.text =
+			respawnTimer > 0
+				? `You: ${typeLabel}`
+				: `You: ${typeLabel}  |  WASD to control`;
 
 		const costStr = warCost.totalUsd.toLocaleString("en-US", {
 			style: "currency",
