@@ -11,6 +11,7 @@ from hormuz.components import (
     Transform,
     VehiclePhysics,
 )
+from hormuz.systems.collision import COLLISION_POLYGONS
 from hormuz.systems.combat import CombatProcessor
 
 
@@ -30,7 +31,7 @@ def _make_shahed(x: float, y: float) -> tuple:
             airborne=True,
             size=4,
         ),
-        Collidable(4.0),
+        Collidable(COLLISION_POLYGONS["shahed"]),
         Health(10, 10),
         Faction("iran"),
         BotControl("shahed_intercept"),
@@ -50,7 +51,7 @@ def _make_tanker(x: float, y: float) -> tuple:
             lateral_drag=0.45,
             size=220,
         ),
-        Collidable(88.0),
+        Collidable(COLLISION_POLYGONS["oil_tanker"]),
         Health(100, 100),
         Faction("civilian"),
         BotControl("tanker_transit"),

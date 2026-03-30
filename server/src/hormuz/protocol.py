@@ -24,11 +24,13 @@ FACTION_NAME = {v: k for k, v in FACTION_INDEX.items()}
 
 def encode_full_snapshot(
     tick: int,
-    entities: list[tuple[int, str, str, float, float, float, float, float, int]],
+    entities: list[
+        tuple[int, str, str, float, float, float, float, float, float, int]
+    ],
 ) -> bytes:
     """Encode full snapshot as msgpack array."""
     packed = []
-    for eid, vtype, faction, x, y, heading, speed, drift, hp in entities:
+    for eid, vtype, faction, x, y, heading, speed, drift, angular_velocity, hp in entities:
         packed.append(
             [
                 eid,
@@ -40,6 +42,7 @@ def encode_full_snapshot(
                 round(speed, 2),
                 round(drift, 2),
                 hp,
+                round(angular_velocity, 3),
             ]
         )
     return msgpack.packb([MSG_FULL_SNAPSHOT, tick, packed])

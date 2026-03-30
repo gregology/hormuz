@@ -3,6 +3,7 @@
  */
 
 import { Application, Container, Graphics, Text, TextStyle } from "pixi.js";
+import { EffectManager } from "./effects/manager";
 import { EntityStore } from "./game/entities";
 import { SnapshotInterpolator } from "./game/interpolation";
 import { KeyboardManager } from "./input/keyboard";
@@ -53,9 +54,11 @@ async function init() {
 
 	// --- Graphics layers ---
 	const mapContainer = new Container();
+	const effectManager = new EffectManager();
 	const vehicleGfx = new Graphics();
 	const hudContainer = new Container();
 	app.stage.addChild(mapContainer);
+	app.stage.addChild(effectManager.getContainer());
 	app.stage.addChild(vehicleGfx);
 	app.stage.addChild(hudContainer);
 
@@ -159,8 +162,10 @@ async function init() {
 		warCost = msg;
 	});
 
-	conn.onEvent((_msg) => {
-		// TODO: explosion effects (Phase 6)
+	conn.onEvent((msg) => {
+		if (msg.eventType === "explosion") {
+			effectManager.spawnExplosion(msg.x, msg.y);
+		}
 	});
 
 	// --- Connect ---
@@ -207,6 +212,10 @@ async function init() {
 
 		// Render map
 		renderMap(mapContainer, cam, layers, elapsedTime);
+
+		// Update and draw effects (wake trails, churns, explosions, sinking)
+		effectManager.update(entities, dt);
+		effectManager.draw(cam);
 
 		// Render all vehicles
 		vehicleGfx.clear();

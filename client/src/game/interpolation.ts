@@ -37,6 +37,9 @@ export class SnapshotInterpolator {
 			heading: lerpAngle(prev.heading, curr.heading, t),
 			speed: prev.speed + (curr.speed - prev.speed) * t,
 			drift: prev.drift + (curr.drift - prev.drift) * t,
+			angularVelocity:
+				prev.angularVelocity +
+				(curr.angularVelocity - prev.angularVelocity) * t,
 		};
 	}
 

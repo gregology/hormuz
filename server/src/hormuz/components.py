@@ -4,7 +4,7 @@
 class Transform:
     """Position and orientation in world space."""
 
-    __slots__ = ("x", "y", "heading", "speed", "drift")
+    __slots__ = ("x", "y", "heading", "speed", "drift", "angular_velocity")
 
     def __init__(
         self,
@@ -13,12 +13,14 @@ class Transform:
         heading: float = 0.0,
         speed: float = 0.0,
         drift: float = 0.0,
+        angular_velocity: float = 0.0,
     ) -> None:
         self.x = x
         self.y = y
         self.heading = heading
         self.speed = speed
         self.drift = drift
+        self.angular_velocity = angular_velocity
 
 
 class VehiclePhysics:
@@ -36,6 +38,7 @@ class VehiclePhysics:
         "cruise_speed",
         "airborne",
         "size",
+        "angular_drag",
     )
 
     def __init__(
@@ -51,6 +54,7 @@ class VehiclePhysics:
         cruise_speed: float = 0.0,
         airborne: bool = False,
         size: float = 10.0,
+        angular_drag: float = 0.15,
     ) -> None:
         self.vehicle_type = vehicle_type
         self.max_speed = max_speed
@@ -63,6 +67,7 @@ class VehiclePhysics:
         self.cruise_speed = cruise_speed
         self.airborne = airborne
         self.size = size
+        self.angular_drag = angular_drag
 
 
 class Faction:
@@ -85,12 +90,15 @@ class Health:
 
 
 class Collidable:
-    """Circle collision boundary."""
+    """Convex polygon collision boundary in local space."""
 
-    __slots__ = ("radius",)
+    __slots__ = ("vertices", "bounding_radius")
 
-    def __init__(self, radius: float) -> None:
-        self.radius = radius
+    def __init__(self, vertices: tuple[tuple[float, float], ...]) -> None:
+        self.vertices = vertices
+        self.bounding_radius = max(
+            (x * x + y * y) ** 0.5 for x, y in vertices
+        )
 
 
 class BotControl:

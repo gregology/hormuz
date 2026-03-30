@@ -48,7 +48,12 @@ class CombatProcessor(esper.Processor):
                 dx = t_tf.x - s_tf.x
                 dy = t_tf.y - s_tf.y
                 dist_sq = dx * dx + dy * dy
-                hit_dist = s_col.radius + t_col.radius
+                s_phys = esper.component_for_entity(s_ent, VehiclePhysics)
+                t_phys = esper.component_for_entity(t_ent, VehiclePhysics)
+                hit_dist = (
+                    s_col.bounding_radius * s_phys.size
+                    + t_col.bounding_radius * t_phys.size
+                )
                 if dist_sq < hit_dist * hit_dist:
                     self._kill(s_ent, "iran")
                     self._kill(t_ent, "tanker")

@@ -69,6 +69,12 @@ export interface NavalVehicle {
 
 	// Visual scale (game units)
 	size: number;
+
+	/** Angular velocity in radians/sec (set by collision impulse, dampened by angularDrag). */
+	angularVelocity: number;
+
+	/** Angular drag per second. Lower = angular velocity damps faster. */
+	angularDrag: number;
 }
 
 export function createSpeedboat(x: number, y: number): NavalVehicle {
@@ -89,6 +95,8 @@ export function createSpeedboat(x: number, y: number): NavalVehicle {
 		cruiseSpeed: 0,
 		airborne: false,
 		size: 10,
+		angularVelocity: 0,
+		angularDrag: 0.15,
 	};
 }
 
@@ -111,6 +119,8 @@ export function createFrigate(x: number, y: number): NavalVehicle {
 		cruiseSpeed: 0,
 		airborne: false,
 		size: 100,
+		angularVelocity: 0,
+		angularDrag: 0.25,
 	};
 }
 
@@ -133,6 +143,8 @@ export function createOilTanker(x: number, y: number): NavalVehicle {
 		cruiseSpeed: 0,
 		airborne: false,
 		size: 220,
+		angularVelocity: 0,
+		angularDrag: 0.3,
 	};
 }
 
@@ -155,6 +167,8 @@ export function createTruck(x: number, y: number): NavalVehicle {
 		cruiseSpeed: 0,
 		airborne: false,
 		size: 5,
+		angularVelocity: 0,
+		angularDrag: 0.1,
 	};
 }
 
@@ -176,6 +190,8 @@ export function createQuadcopter(x: number, y: number): NavalVehicle {
 		cruiseSpeed: 0,
 		airborne: true,
 		size: 2,
+		angularVelocity: 0,
+		angularDrag: 0.08,
 	};
 }
 
@@ -198,6 +214,8 @@ export function createShahed(x: number, y: number): NavalVehicle {
 		cruiseSpeed: 34,
 		airborne: true,
 		size: 4,
+		angularVelocity: 0,
+		angularDrag: 0.1,
 	};
 }
 
@@ -214,6 +232,11 @@ export function updateVehicle(
 	input: VehicleInput,
 	dt: number,
 ): void {
+	// --- Angular velocity from collisions ---
+	v.heading += v.angularVelocity * dt;
+	v.angularVelocity *= v.angularDrag ** dt;
+	if (Math.abs(v.angularVelocity) < 0.001) v.angularVelocity = 0;
+
 	// --- Steering ---
 	// Ships (minTurnFraction=0): pure rudder, turn rate scales with speed.
 	// Wheeled vehicles (minTurnFraction>0): can steer at low speed.

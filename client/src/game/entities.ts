@@ -14,6 +14,7 @@ export interface EntityState {
 	speed: number;
 	drift: number;
 	hp: number;
+	angularVelocity: number;
 }
 
 export class EntityStore {

@@ -283,58 +283,6 @@ function drawDetail(
 }
 
 // ---------------------------------------------------------------------------
-// Wake
-// ---------------------------------------------------------------------------
-
-function drawWake(
-	g: Graphics,
-	cam: Camera,
-	vehicle: NavalVehicle,
-	cos: number,
-	sin: number,
-) {
-	if (Math.abs(vehicle.speed) < 0.3) return;
-
-	const intensity = Math.min(Math.abs(vehicle.speed) / vehicle.maxSpeed, 1);
-	const s = vehicle.size;
-	const wakeLen = s * (0.4 + 0.8 * intensity);
-	const halfBeam = s * 0.1;
-
-	const sternX = vehicle.x - cos * s * 0.45;
-	const sternY = vehicle.y - sin * s * 0.45;
-
-	for (let side = -1; side <= 1; side += 2) {
-		const px = -sin * side;
-		const py = cos * side;
-
-		const start = worldToScreen(
-			cam,
-			sternX + px * halfBeam,
-			sternY + py * halfBeam,
-		);
-		const end = worldToScreen(
-			cam,
-			sternX - cos * wakeLen + px * halfBeam * (2.5 + intensity),
-			sternY - sin * wakeLen + py * halfBeam * (2.5 + intensity),
-		);
-		g.moveTo(start.x, start.y);
-		g.lineTo(end.x, end.y);
-	}
-	g.stroke({ color: 0xffffff, width: 1.2, alpha: 0.2 * intensity });
-
-	// Center foam
-	const cs = worldToScreen(cam, sternX, sternY);
-	const ce = worldToScreen(
-		cam,
-		sternX - cos * wakeLen * 0.5,
-		sternY - sin * wakeLen * 0.5,
-	);
-	g.moveTo(cs.x, cs.y);
-	g.lineTo(ce.x, ce.y);
-	g.stroke({ color: 0xffffff, width: 0.8, alpha: 0.12 * intensity });
-}
-
-// ---------------------------------------------------------------------------
 // Model definitions
 // ---------------------------------------------------------------------------
 
@@ -345,6 +293,18 @@ const GUN_METAL = 0x445566;
 const PIPE = 0x887766;
 
 function speedboatModel(): VehicleModel {
+	// V-hull: narrow keel below waterline, full hull above.
+
+	const keel: LP[] = [
+		[0.4, 0],
+		[0.2, -0.05],
+		[-0.2, -0.06],
+		[-0.38, -0.03],
+		[-0.38, 0.03],
+		[-0.2, 0.06],
+		[0.2, 0.05],
+	];
+
 	const hull: LP[] = [
 		[0.5, 0],
 		[0.3, -0.1],
@@ -370,7 +330,15 @@ function speedboatModel(): VehicleModel {
 
 	return {
 		blocks: [
-			// Hull (waterline to deck)
+			// V-hull keel (below waterline — visible as taper)
+			{
+				outline: keel,
+				baseHeight: -0.12,
+				topHeight: 0,
+				topColor: darken(STEEL, 0.5),
+				sideAlpha: 0.7,
+			},
+			// Main hull (freeboard)
 			{ outline: hull, baseHeight: 0, topHeight: 0.35 },
 			// Cockpit / centre console (raised)
 			{
@@ -409,6 +377,18 @@ function speedboatModel(): VehicleModel {
 }
 
 function frigateModel(): VehicleModel {
+	// V-hull: narrow keel below waterline, flared hull above.
+
+	const keel: LP[] = [
+		[0.38, 0],
+		[0.25, -0.03],
+		[-0.2, -0.04],
+		[-0.4, -0.025],
+		[-0.4, 0.025],
+		[-0.2, 0.04],
+		[0.25, 0.03],
+	];
+
 	const hull: LP[] = [
 		[0.5, 0], // bow
 		[0.42, -0.04],
@@ -458,7 +438,15 @@ function frigateModel(): VehicleModel {
 
 	return {
 		blocks: [
-			// Hull
+			// Keel (below waterline — tapered V-hull)
+			{
+				outline: keel,
+				baseHeight: -0.08,
+				topHeight: 0,
+				topColor: darken(STEEL, 0.4),
+				sideAlpha: 0.6,
+			},
+			// Main hull (freeboard)
 			{ outline: hull, baseHeight: 0, topHeight: 0.14 },
 			// Helipad (slightly raised aft deck)
 			{
@@ -640,7 +628,7 @@ function oilTankerModel(): VehicleModel {
 
 	return {
 		blocks: [
-			// Hull
+			// Hull (straight-sided, no taper — tanker style)
 			{ outline: hull, baseHeight: 0, topHeight: 0.1 },
 			// Forecastle (raised bow)
 			{
@@ -1104,11 +1092,6 @@ export function renderVehicle(
 	if (vehicle.airborne) {
 		terrainElevation += 30;
 		pitchSlope = 0;
-	}
-
-	// Wake (behind everything — only for water vehicles)
-	if (!vehicle.airborne && vehicle.vehicleType !== "truck") {
-		drawWake(g, cam, vehicle, cos, sin);
 	}
 
 	// 3D blocks (elevated + pitched)

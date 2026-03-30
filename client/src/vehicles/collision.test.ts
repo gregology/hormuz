@@ -208,15 +208,21 @@ describe("airborne vehicles ignore terrain", () => {
 // ---------------------------------------------------------------------------
 
 describe("vehicle-vehicle collisions", () => {
+	function dist(a: NavalVehicle, b: NavalVehicle): number {
+		return Math.sqrt((b.x - a.x) ** 2 + (b.y - a.y) ** 2);
+	}
+
 	it("overlapping vehicles are pushed apart", () => {
 		const a = createSpeedboat(100, 100);
 		const b = createSpeedboat(101, 100);
 		a.speed = 10;
 		b.speed = 5;
 
+		const distBefore = dist(a, b);
 		resolveVehicleCollisions([a, b]);
+		const distAfter = dist(a, b);
 
-		expect(b.x - a.x).toBeGreaterThan(1);
+		expect(distAfter).toBeGreaterThan(distBefore);
 	});
 
 	it("distant vehicles are not affected", () => {
@@ -235,20 +241,35 @@ describe("vehicle-vehicle collisions", () => {
 		const drone = createQuadcopter(100, 100);
 		const tanker = createOilTanker(101, 100);
 
-		const tankerOrigX = tanker.x;
+		const tankerBefore = { x: tanker.x, y: tanker.y };
+		const droneBefore = { x: drone.x, y: drone.y };
 		resolveVehicleCollisions([drone, tanker]);
 
-		expect(Math.abs(tanker.x - tankerOrigX)).toBeLessThan(1);
-		expect(Math.abs(drone.x - 100)).toBeGreaterThan(1);
+		// Tanker barely moves
+		const tankerMove = Math.sqrt(
+			(tanker.x - tankerBefore.x) ** 2 + (tanker.y - tankerBefore.y) ** 2,
+		);
+		// Drone pushed significantly
+		const droneMove = Math.sqrt(
+			(drone.x - droneBefore.x) ** 2 + (drone.y - droneBefore.y) ** 2,
+		);
+		expect(tankerMove).toBeLessThan(1);
+		expect(droneMove).toBeGreaterThan(1);
 	});
 
 	it("drone collides with ship within collision range", () => {
 		const drone = createQuadcopter(100, 100);
 		const frigate = createFrigate(103, 100);
 		drone.speed = 20;
+		drone.heading = 0;
 
 		resolveVehicleCollisions([drone, frigate]);
 
-		expect(drone.speed).toBeLessThan(20);
+		// Drone should be affected (speed changed or position moved)
+		const moved =
+			drone.speed !== 20 ||
+			Math.abs(drone.x - 100) > 0.1 ||
+			Math.abs(drone.y - 100) > 0.1;
+		expect(moved).toBe(true);
 	});
 });

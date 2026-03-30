@@ -27,7 +27,7 @@ from hormuz.protocol import (
     encode_war_cost,
 )
 from hormuz.systems.bot_ai import BotAIProcessor
-from hormuz.systems.collision import CollisionProcessor
+from hormuz.systems.collision import COLLISION_POLYGONS, CollisionProcessor
 from hormuz.systems.combat import CombatProcessor
 from hormuz.systems.physics import PhysicsProcessor
 from hormuz.systems.spawn import SpawnProcessor
@@ -70,6 +70,7 @@ OIL_TANKER_PHYSICS = dict(
     cruise_speed=0.0,
     airborne=False,
     size=220.0,
+    angular_drag=0.30,
 )
 
 SHAHED_PHYSICS = dict(
@@ -84,6 +85,7 @@ SHAHED_PHYSICS = dict(
     cruise_speed=34.0,
     airborne=True,
     size=4.0,
+    angular_drag=0.10,
 )
 
 
@@ -103,7 +105,7 @@ def setup_world() -> None:
             VehiclePhysics(**OIL_TANKER_PHYSICS),
             Faction("civilian"),
             Health(100, 100),
-            Collidable(88.0),
+            Collidable(COLLISION_POLYGONS["oil_tanker"]),
             BotControl("tanker_transit"),
         )
 
@@ -116,7 +118,7 @@ def setup_world() -> None:
             VehiclePhysics(**SHAHED_PHYSICS),
             Faction("iran"),
             Health(10, 10),
-            Collidable(4.0),
+            Collidable(COLLISION_POLYGONS["shahed"]),
             BotControl("shahed_intercept"),
         )
 
@@ -140,6 +142,7 @@ def build_snapshot() -> bytes:
                 tf.heading,
                 tf.speed,
                 tf.drift,
+                tf.angular_velocity,
                 health.hp,
             )
         )

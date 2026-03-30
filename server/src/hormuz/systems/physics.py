@@ -32,6 +32,12 @@ def _update_vehicle(
     rudder: float,
     dt: float,
 ) -> None:
+    # --- Angular velocity from collisions ---
+    tf.heading += tf.angular_velocity * dt
+    tf.angular_velocity *= phys.angular_drag**dt
+    if abs(tf.angular_velocity) < 0.001:
+        tf.angular_velocity = 0.0
+
     # --- Steering ---
     speed_ratio = min(abs(tf.speed) / phys.max_speed, 1.0) if phys.max_speed > 0 else 0.0
 
