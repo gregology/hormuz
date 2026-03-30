@@ -27,6 +27,10 @@ export class KeyboardManager {
 		window.addEventListener("blur", () => this.keys.clear());
 	}
 
+	isDown(key: string): boolean {
+		return this.keys.has(key);
+	}
+
 	getBitmask(): number {
 		let mask = 0;
 		if (this.keys.has("w") || this.keys.has("arrowup")) mask |= 0x01;

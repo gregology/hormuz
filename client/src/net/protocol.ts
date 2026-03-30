@@ -120,3 +120,4 @@ export function encodeInput(
 ): Uint8Array {
 	return encode([MSG_INPUT, keys, mouseX, mouseY, action]) as Uint8Array;
 }
+

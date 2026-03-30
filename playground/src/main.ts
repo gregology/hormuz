@@ -1,24 +1,22 @@
 import GUI from "lil-gui";
-import { Application, Container, Graphics, Text, TextStyle } from "pixi.js";
-import { EffectManager } from "../../client/src/effects/manager";
+import * as THREE from "three";
+import { ThreeEffectManager } from "../../client/src/effects/manager";
+import type { EntityState } from "../../client/src/game/entities";
 import { MAP } from "../../client/src/map/data";
-import {
-	getElevation,
-	getSlopeAlongHeading,
-} from "../../client/src/map/heightmap";
+import { getElevation } from "../../client/src/map/heightmap";
 import {
 	type Camera,
 	createCamera,
 	screenToWorld,
-	worldToScreen,
 } from "../../client/src/render/camera";
 import { COLORS } from "../../client/src/render/colors";
 import {
 	DEFAULT_LAYERS,
 	type MapLayers,
-	renderMap,
+	ThreeMapRenderer,
 } from "../../client/src/render/map-renderer";
-import { renderVehicle } from "../../client/src/render/vehicle-renderer";
+import { ThreeScene } from "../../client/src/render/scene";
+import { ThreeVehicleRenderer } from "../../client/src/render/vehicle-renderer";
 import {
 	COLLISION_POLYGONS,
 	resolveTerrainCollision,
@@ -54,31 +52,52 @@ interface PlayableVehicle {
 	respawnTimer: number;
 }
 
-async function init() {
-	const app = new Application();
+function init() {
+	const screenW = window.innerWidth;
+	const screenH = window.innerHeight;
 
-	await app.init({
-		resizeTo: window,
-		background: 0x0a1628,
-		antialias: true,
-	});
-
-	document.body.appendChild(app.canvas);
+	// ---- Three.js scene ----
+	const threeScene = new ThreeScene();
+	threeScene.setSize(screenW, screenH);
+	document.body.appendChild(threeScene.renderer.domElement);
 
 	// ---- Camera ----
-	const cam: Camera = createCamera(app.screen.width, app.screen.height);
+	const cam: Camera = createCamera(screenW, screenH);
 	cam.zoom = 0.04;
 
-	// ---- Graphics layers ----
-	const mapContainer = new Container();
-	const effectManager = new EffectManager();
-	const vehicleGfx = new Graphics();
-	app.stage.addChild(mapContainer);
-	app.stage.addChild(effectManager.getContainer());
-	app.stage.addChild(vehicleGfx);
-
-	// ---- Map layers ----
+	// ---- Map (Three.js) ----
 	const layers: MapLayers = { ...DEFAULT_LAYERS };
+	const threeMap = new ThreeMapRenderer(layers);
+	threeScene.scene.add(threeMap.root);
+
+	// ---- Vehicles (Three.js) ----
+	const threeVehicles = new ThreeVehicleRenderer();
+	threeScene.scene.add(threeVehicles.root);
+
+	// ---- Effects (Three.js) ----
+	const threeEffects = new ThreeEffectManager();
+	threeScene.scene.add(threeEffects.root);
+
+	// ---- Collision debug wireframes ----
+	// 6 vehicles × 8 edges max × 2 vertices per segment = 96 vertices
+	const MAX_COLLISION_VERTS = 96;
+	const collisionPositions = new Float32Array(MAX_COLLISION_VERTS * 3);
+	const collisionGeo = new THREE.BufferGeometry();
+	collisionGeo.setAttribute(
+		"position",
+		new THREE.BufferAttribute(collisionPositions, 3),
+	);
+	collisionGeo.setDrawRange(0, 0);
+	const collisionLines = new THREE.LineSegments(
+		collisionGeo,
+		new THREE.LineBasicMaterial({
+			color: 0x00ff00,
+			transparent: true,
+			opacity: 0.5,
+		}),
+	);
+	collisionLines.renderOrder = 100;
+	threeScene.scene.add(collisionLines);
 
 	// ---- Vehicles ----
 	const RESPAWN_TIME = 4.0;
@@ -158,21 +177,24 @@ async function init() {
 	cam.worldX = activeVehicle().x;
 	cam.worldY = activeVehicle().y;
 
-	// ---- HUD ----
-	const hudStyle = new TextStyle({
+	// ---- HUD (DOM overlay) ----
+	const hudEl = document.createElement("div");
+	Object.assign(hudEl.style, {
+		position: "fixed",
+		bottom: "0",
+		left: "0",
+		padding: "10px",
 		fontFamily: "monospace",
-		fontSize: 14,
-		fill: 0xaaaaaa,
-	});
-	const coordText = new Text({ text: "", style: hudStyle });
-	coordText.x = 10;
-	coordText.y = app.screen.height - 50;
-	app.stage.addChild(coordText);
-
-	const boatText = new Text({ text: "", style: hudStyle });
-	boatText.x = 10;
-	boatText.y = app.screen.height - 30;
-	app.stage.addChild(boatText);
+		fontSize: "14px",
+		color: "#aaaaaa",
+		pointerEvents: "none",
+		textShadow: "1px 1px 2px #000",
+		lineHeight: "20px",
+	} satisfies Partial<CSSStyleDeclaration>);
+	const coordEl = document.createElement("div");
+	const boatEl = document.createElement("div");
+	hudEl.append(coordEl, boatEl);
+	document.body.appendChild(hudEl);
 
 	// ---- Input state ----
 	const keysDown = new Set<string>();
@@ -199,13 +221,13 @@ async function init() {
 		const v = activeVehicle();
 		const label = vehicles[activeIndex].label;
 		vehicleFolder = gui.addFolder(`${label} [${activeIndex + 1}]`);
-		vehicleFolder.add(v, "maxSpeed", 0.5, 50).name("Max Speed");
-		vehicleFolder.add(v, "acceleration", 0.1, 20).name("Acceleration");
+		vehicleFolder.add(v, "maxSpeed", 0.5, 100).name("Max Speed");
+		vehicleFolder.add(v, "acceleration", 0.1, 25).name("Acceleration");
 		vehicleFolder.add(v, "drag", 0.5, 0.99).name("Forward Drag");
 		vehicleFolder.add(v, "turnRate", 0.05, 6).name("Turn Rate");
 		vehicleFolder.add(v, "driftFactor", 0, 0.5).name("Drift Factor");
 		vehicleFolder.add(v, "lateralDrag", 0.01, 0.8).name("Lateral Drag");
-		vehicleFolder.add(v, "cruiseSpeed", 0, 50).name("Cruise Speed");
+		vehicleFolder.add(v, "cruiseSpeed", 0, 100).name("Cruise Speed");
 		vehicleFolder.add(v, "size", 0.5, 300).name("Visual Size");
 		vehicleFolder.add(v, "angularDrag", 0.01, 0.5).name("Angular Drag");
 	}
@@ -241,7 +263,7 @@ async function init() {
 			tankerA.x = 75500;
 			tankerA.y = 43000;
 			tankerA.heading = 0; // heading east
-			tankerA.speed = 7;
+			tankerA.speed = 14;
 			tankerA.drift = 0;
 			tankerA.angularVelocity = 0;
 
@@ -249,7 +271,7 @@ async function init() {
 			tankerB.x = 75700;
 			tankerB.y = 42800;
 			tankerB.heading = Math.PI / 2; // heading south
-			tankerB.speed = 13;
+			tankerB.speed = 26;
 			tankerB.drift = 0;
 			tankerB.angularVelocity = 0;
 
@@ -266,14 +288,14 @@ async function init() {
 			a.x = 75300;
 			a.y = 43000;
 			a.heading = 0; // east
-			a.speed = 7;
+			a.speed = 14;
 			a.drift = 0;
 			a.angularVelocity = 0;
 
 			b.x = 75800;
 			b.y = 43000;
 			b.heading = Math.PI; // west
-			b.speed = 13;
+			b.speed = 26;
 			b.drift = 0;
 			b.angularVelocity = 0;
 
@@ -290,7 +312,7 @@ async function init() {
 			tanker.x = 75500;
 			tanker.y = 43000;
 			tanker.heading = 0;
-			tanker.speed = 4;
+			tanker.speed = 8;
 			tanker.drift = 0;
 			tanker.angularVelocity = 0;
 
@@ -298,7 +320,7 @@ async function init() {
 			boat.x = 75350;
 			boat.y = 42900;
 			boat.heading = Math.PI / 6; // heading ~30deg south-east
-			boat.speed = 26;
+			boat.speed = 52;
 			boat.drift = 0;
 			boat.angularVelocity = 0;
 
@@ -313,11 +335,11 @@ async function init() {
 			if (pv.hp <= 0) return;
 			pv.hp = 0;
 			pv.respawnTimer = RESPAWN_TIME;
-			effectManager.spawnExplosion(pv.vehicle.x, pv.vehicle.y);
+			threeEffects.spawnExplosion(pv.vehicle.x, pv.vehicle.y);
 		},
 		"Spawn explosion (no kill)"() {
 			const v = activeVehicle();
-			effectManager.spawnExplosion(v.x, v.y);
+			threeEffects.spawnExplosion(v.x, v.y);
 		},
 	};
 
@@ -375,22 +397,31 @@ async function init() {
 
 	// Layers
 	const layersFolder = gui.addFolder("Layers");
-	layersFolder.add(layers, "showDepthZones").name("Depth Zones");
-	layersFolder.add(layers, "showShippingLanes").name("Shipping Lanes");
-	layersFolder.add(layers, "showHazards").name("Hazards");
-	layersFolder.add(layers, "showSpawnPoints").name("Spawn Points");
-	layersFolder.add(layers, "showTerrain").name("Terrain");
-	layersFolder.add(layers, "showGrid").name("Grid");
+	const onLayerChange = () => threeMap.setLayers(layers);
 	layersFolder
-		.add(layers, "gridSize", {
-			"10 units": 10,
-			"100 units": 100,
-			"1000 units": 1000,
-		})
-		.name("Grid Size");
+		.add(layers, "showDepthZones")
+		.name("Depth Zones")
+		.onChange(onLayerChange);
+	layersFolder
+		.add(layers, "showShippingLanes")
+		.name("Shipping Lanes")
+		.onChange(onLayerChange);
+	layersFolder
+		.add(layers, "showHazards")
+		.name("Hazards")
+		.onChange(onLayerChange);
+	layersFolder
+		.add(layers, "showSpawnPoints")
+		.name("Spawn Points")
+		.onChange(onLayerChange);
+	layersFolder
+		.add(layers, "showTerrain")
+		.name("Terrain")
+		.onChange(onLayerChange);
+	layersFolder.add(layers, "showGrid").name("Grid").onChange(onLayerChange);
 
 	// ---- Mouse controls ----
-	const canvas = app.canvas;
+	const canvas = threeScene.renderer.domElement;
 
 	canvas.addEventListener("mousedown", (e: MouseEvent) => {
 		if (e.button === 0 || e.button === 1) {
@@ -457,15 +488,21 @@ async function init() {
 
 	// ---- Resize ----
 	window.addEventListener("resize", () => {
-		cam.screenWidth = window.innerWidth;
-		cam.screenHeight = window.innerHeight;
-		coordText.y = window.innerHeight - 50;
-		boatText.y = window.innerHeight - 30;
+		const w = window.innerWidth;
+		const h = window.innerHeight;
+		cam.screenWidth = w;
+		cam.screenHeight = h;
+		threeScene.setSize(w, h);
 	});
 
 	// ---- Render loop ----
-	app.ticker.add(() => {
-		const rawDt = app.ticker.deltaMS / 1000;
+	let lastTime = performance.now();
+
+	function frame(now: number) {
+		requestAnimationFrame(frame);
+
+		const rawDt = (now - lastTime) / 1000;
+		lastTime = now;
 		const dt = rawDt * simSettings.timeScale;
 
 		// -- Input --
@@ -547,15 +584,11 @@ async function init() {
 			cam.worldY += (v.y - altOffset - cam.worldY) * followSpeed * rawDt;
 		}
 
-		// -- Redraw map (always: water shader is animated) --
-		elapsedTime += rawDt;
-		renderMap(mapContainer, cam, layers, elapsedTime);
-
-		// -- Update and draw effects --
-		const entityStates = vehicles.map((pv, i) => ({
+		// -- Build entity states for Three.js renderers --
+		const entityStates: EntityState[] = vehicles.map((pv, i) => ({
 			id: i,
 			vehicleType: pv.vehicle.vehicleType,
-			faction: "civilian",
+			faction: pv.key,
 			x: pv.vehicle.x,
 			y: pv.vehicle.y,
 			heading: pv.vehicle.heading,
@@ -564,55 +597,72 @@ async function init() {
 			hp: pv.hp,
 			angularVelocity: pv.vehicle.angularVelocity,
 		}));
-		effectManager.update(entityStates, dt);
-		effectManager.draw(cam);
 
-		// -- Draw alive vehicles --
-		vehicleGfx.clear();
-		for (let i = 0; i < vehicles.length; i++) {
-			const pv = vehicles[i];
-			if (pv.hp <= 0) continue;
-			renderVehicle(vehicleGfx, cam, pv.vehicle, pv.color);
+		// -- Update Three.js renderers --
+		elapsedTime += rawDt;
+		threeMap.update(elapsedTime, cam.zoom);
+		threeVehicles.update(entityStates, activeIndex, FACTION_COLORS);
+		threeEffects.update(entityStates, dt, cam.zoom);
 
-			// Debug: draw collision polygon wireframe
-			if (simSettings.showCollisionPolygons) {
+		// -- Collision debug wireframes --
+		let vertexCount = 0;
+		if (simSettings.showCollisionPolygons) {
+			for (const pv of vehicles) {
+				if (pv.hp <= 0) continue;
 				const verts = COLLISION_POLYGONS[pv.vehicle.vehicleType];
-				if (verts) {
-					const cos = Math.cos(pv.vehicle.heading);
-					const sin = Math.sin(pv.vehicle.heading);
-					const sz = pv.vehicle.size;
-					const screenPts = verts.map(([lx, ly]) => {
-						const wx = pv.vehicle.x + (lx * cos - ly * sin) * sz;
-						const wy = pv.vehicle.y + (lx * sin + ly * cos) * sz;
-						return worldToScreen(cam, wx, wy);
-					});
-					vehicleGfx.moveTo(screenPts[0].x, screenPts[0].y);
-					for (let k = 1; k < screenPts.length; k++) {
-						vehicleGfx.lineTo(screenPts[k].x, screenPts[k].y);
-					}
-					vehicleGfx.closePath();
-					vehicleGfx.stroke({
-						color: 0x00ff00,
-						width: 1,
-						alpha: 0.5,
-					});
+				if (!verts) continue;
+				const cos = Math.cos(pv.vehicle.heading);
+				const sin = Math.sin(pv.vehicle.heading);
+				const sz = pv.vehicle.size;
+				const elev = pv.vehicle.airborne
+					? getElevation(pv.vehicle.x, pv.vehicle.y) + 30.5
+					: getElevation(pv.vehicle.x, pv.vehicle.y) + 0.5;
+				for (let k = 0; k < verts.length; k++) {
+					const [lx0, ly0] = verts[k];
+					const [lx1, ly1] = verts[(k + 1) % verts.length];
+					const wx0 = pv.vehicle.x + (lx0 * cos - ly0 * sin) * sz;
+					const wy0 = pv.vehicle.y + (lx0 * sin + ly0 * cos) * sz;
+					const wx1 = pv.vehicle.x + (lx1 * cos - ly1 * sin) * sz;
+					const wy1 = pv.vehicle.y + (lx1 * sin + ly1 * cos) * sz;
+					collisionPositions[vertexCount * 3] = wx0;
+					collisionPositions[vertexCount * 3 + 1] = elev;
+					collisionPositions[vertexCount * 3 + 2] = wy0;
+					vertexCount++;
+					collisionPositions[vertexCount * 3] = wx1;
+					collisionPositions[vertexCount * 3 + 1] = elev;
+					collisionPositions[vertexCount * 3 + 2] = wy1;
+					vertexCount++;
 				}
 			}
 		}
+		collisionGeo.setDrawRange(0, vertexCount);
+		(
+			collisionGeo.getAttribute("position") as THREE.BufferAttribute
+		).needsUpdate = true;
+
+		// -- Render Three.js scene --
+		threeScene.syncCamera(
+			cam.worldX,
+			cam.worldY,
+			cam.zoom,
+			cam.screenWidth,
+			cam.screenHeight,
+		);
+		threeScene.render();
 
 		// -- HUD --
 		const world = screenToWorld(cam, mouseScreenX, mouseScreenY);
 		const v = activeVehicle();
 		const label = vehicles[activeIndex].label;
-		const elev = getElevation(v.x, v.y);
-		const slope = getSlopeAlongHeading(v.x, v.y, v.heading);
 		const omega = v.angularVelocity;
 		const pv = vehicles[activeIndex];
 		const hpStr =
 			pv.hp <= 0 ? `DEAD (${pv.respawnTimer.toFixed(1)}s)` : `HP: ${pv.hp}`;
-		coordText.text = `Cursor: (${Math.round(world.x)}, ${Math.round(world.y)})  Elev: ${getElevation(world.x, world.y).toFixed(0)}  Zoom: ${cam.zoom.toFixed(3)}  ${mode.freeCamera ? "[FREE CAM]" : "[FOLLOW]"}  Time: ${simSettings.timeScale.toFixed(1)}x`;
-		boatText.text = `${label}: ${hpStr}  Speed: ${v.speed.toFixed(1)}  Drift: ${v.drift.toFixed(2)}  Heading: ${((v.heading * 180) / Math.PI).toFixed(0)}°  AngVel: ${omega.toFixed(3)}  [1-6]`;
-	});
+		coordEl.textContent = `Cursor: (${Math.round(world.x)}, ${Math.round(world.y)})  Elev: ${getElevation(world.x, world.y).toFixed(0)}  Zoom: ${cam.zoom.toFixed(3)}  ${mode.freeCamera ? "[FREE CAM]" : "[FOLLOW]"}  Time: ${simSettings.timeScale.toFixed(1)}x`;
+		boatEl.textContent = `${label}: ${hpStr}  Speed: ${v.speed.toFixed(1)}  Drift: ${v.drift.toFixed(2)}  Heading: ${((v.heading * 180) / Math.PI).toFixed(0)}°  AngVel: ${omega.toFixed(3)}  [1-6]`;
+	}
+
+	requestAnimationFrame(frame);
 
 	console.log(
 		"Hormuz playground — WASD to drive, 1-6 to switch vehicle, Tab for free camera, scroll to zoom",

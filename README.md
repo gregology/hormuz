@@ -154,7 +154,7 @@ The game world runs on a server 24/7. Bots populate all vehicles when no humans 
 
 Before building the multiplayer game, we need a development playground — a tool for designing, testing, and tuning every aspect of the game.
 
-The playground renders using the same engine as the final game (isometric, sprite-based, full Strait of Hormuz map). It includes:
+The playground renders using the same engine as the final game (isometric, Three.js 3D meshes, full Strait of Hormuz map). It includes:
 
 - **Sandbox mode**: Spawn any vehicle, drive it around, test controls and movement feel. Adjust vehicle stats (speed, turn rate, HP, weapon damage, etc.) via a developer panel with sliders and inputs. Changes apply in real-time.
 - **Scenario mode**: Set up specific situations (e.g., "3 speedboats vs 1 frigate near Qeshm Island") and play them out or observe bot behaviour. Useful for tuning AI, weapon balance, and engagement ranges.
@@ -172,5 +172,5 @@ The playground is the primary development tool. Every vehicle, weapon, AI behavi
 4. **Every vehicle is always active.** Bots fill every seat. Humans seamlessly take over and hand back. The world is never empty.
 5. **Asymmetric by design.** Iran has numbers and geography. The US has technology and firepower. Tankers have nothing but hope and a destination. The asymmetry IS the gameplay.
 6. **Friendly fire is a feature.** It creates chaos, regret, and the fog of war. It's not a bug to be minimized — it's a core mechanic that reinforces the theme.
-7. **Extensible vehicle system.** Adding a new vehicle should be a data definition + sprite + AI behaviour, not a rewrite. The tank game's data-driven VEHICLES config is the right pattern.
+7. **Extensible vehicle system.** Adding a new vehicle should be a data definition + model + AI behaviour, not a rewrite. The tank game's data-driven VEHICLES config is the right pattern.
 8. **The playground comes first.** We build the sandbox before we build the game. Every mechanic is tuned in isolation before it meets the multiplayer world.

@@ -6,7 +6,7 @@ Guidelines for AI agents and human contributors working on Hormuz.
 
 Hormuz is a persistent multiplayer anti-war browser game. Players control military vehicles, civilian oil tankers, and autonomous weapons in the Strait of Hormuz. The game runs 24/7 with ~140 bots and up to 200 concurrent humans. See `README.md` for the full design document and `BRAINSTORM.md` for early decisions.
 
-**Stack:** TypeScript + PixiJS (client), Python 3.12+ + FastAPI + esper ECS (server), WebSocket + MessagePack (networking), YAML + codegen (shared types).
+**Stack:** TypeScript + Three.js (client renderer), Python 3.12+ + FastAPI + esper ECS (server), WebSocket + MessagePack (networking), YAML + codegen (shared types).
 
 ## Core Principle: Optimize for Maintainability and Extensibility
 
@@ -62,9 +62,10 @@ hormuz/
       systems/         # esper Processors (physics, bot_ai, collision, combat, spawn)
       generated/       # Auto-generated from YAML (vehicles, factions, heightmap)
     tests/             # pytest tests for server systems
-  client/              # TypeScript frontend (PixiJS renderer, networking)
+  client/              # TypeScript frontend (Three.js renderer, networking)
     src/
-      render/          # PixiJS rendering (vehicles, map, camera, shaders)
+      render/          # Rendering (camera, colors, shaders, scene, vehicle models + renderers)
+        shaders/       # GLSL shaders (vertex + fragment)
       vehicles/        # Physics engine + collision (reference implementation)
       effects/         # Visual effects system (wake trails, explosions, sinking)
       map/             # Geographic data, terrain, heightmap, coastlines
@@ -124,7 +125,7 @@ Every test must satisfy all three criteria:
 
 ### What not to test
 
-- **Rendering output.** Visual correctness is verified manually in the playground. Do not attempt to test PixiJS draw calls.
+- **Rendering output.** Visual correctness is verified manually in the playground. Do not attempt to test Three.js draw calls.
 - **What the type system already guarantees.** If TypeScript's strict mode ensures a value can't be null, don't write a test for it.
 - **Trivial getters, setters, or pass-through functions.** These have near-zero bug probability.
 - **Implementation details.** Don't test which internal helper was called, what order operations happen in, or what intermediate data structures look like.
@@ -188,7 +189,7 @@ Follow the Arrange-Act-Assert pattern. One behavior per test. Name tests by the 
 
 Decisions that have already been made (do not revisit without explicit request):
 
-- **Renderer:** PixiJS v8 (not Phaser, not Three.js)
+- **Renderer:** Three.js (migrated from PixiJS v8 — see `MIGRATION.md` and `DECISIONS.md`). Single Three.js canvas with DOM overlay HUD. Migration complete (all 6 phases done).
 - **Server language:** Python 3.12+ with FastAPI + asyncio
 - **ECS:** esper (pure Python, zero dependencies)
 - **Serialization:** MessagePack over WebSocket (not JSON, not Protobuf)
@@ -204,7 +205,7 @@ Decisions that have already been made (do not revisit without explicit request):
 - **Server-authoritative simulation:** Server runs all physics at 20Hz. Clients send input and render interpolated state. Client physics code (`vehicles/physics.ts`) is the reference implementation; server physics (`systems/physics.py`) is the authoritative port. Client-side prediction may be added later as a layer on top — the server code won't change.
 - **ECS processor order:** BotAI (priority 5) → Physics (4) → Collision (3) → Combat (2) → Spawn (1). Network broadcast happens after `esper.process()` in the async game loop. Higher priority = runs first.
 - **Snapshot protocol:** Full snapshots sent at 20Hz to all clients (msgpack arrays, ~600 bytes for 20 entities). Delta snapshots deferred until entity count requires it. Each entity includes `angular_velocity` (field index 9).
-- **Visual effects:** Client-side procedural effect system (`client/src/effects/`). `EffectManager` owns a PixiJS Container and handles two categories: continuous effects (wake trails, stern churn) tied to entity state, and transient effects (explosions, sinking) spawned from game events or HP changes. All effects drawn with the Graphics API (no sprite assets). Adding a new effect = one new file implementing the `Effect` interface.
+- **Visual effects:** Client-side procedural effect system. `ThreeEffectManager` (`effects/manager.ts`) owns a `THREE.Group` and handles continuous effects (wake trails, stern churn) tied to entity state and transient effects (explosions, sinking) spawned from game events or HP changes. Each effect implements `ThreeEffect` (owns Three.js objects, update receives zoom for screen-pixel sizing). Wake trails use ribbon mesh geometry; particles use `THREE.Points` with custom ShaderMaterial.
 - **Angular velocity:** `Transform` has an `angular_velocity` field (server + client). Collision impulses set it; `PhysicsProcessor` applies it to heading each tick and dampens via `angular_drag` (per-vehicle parameter on `VehiclePhysics`). This allows ships to spin realistically after off-center impacts.
 
 ## Conventions
@@ -213,7 +214,11 @@ Decisions that have already been made (do not revisit without explicit request):
 - **The playground is the primary development tool.** Build and test features there before integrating into the game client.
 - **Vehicle definitions live in YAML.** Adding a vehicle means editing `shared/vehicles.yaml` and running codegen — not writing TypeScript or Python by hand.
 - **Coordinate system:** Origin (0,0) = top-left (northwest). X = east, Y = south. Geo conversion: `game_x = (lon - 47.5) * 9708`, `game_y = (30.5 - lat) * 10800`.
-- **Map renderer uses a Container** (not a single Graphics). `renderMap()` manages internal children: water Mesh (animated shader), land Graphics (coastline fills), terrain Mesh (elevation shader, masked to coastlines), overlay Graphics (borders, markers). Callers pass a Container.
+- **Map renderer uses Three.js.** `ThreeMapRenderer` (`render/map-renderer.ts`) creates all map geometry once in world coordinates — the isometric camera handles projection, so no per-frame geometry updates are needed. Layers: water (ShaderMaterial), land fills (ShapeGeometry from coastline polygons), terrain (heightmap ShaderMaterial, stencil-masked to coastlines), overlays (lines + markers).
+- **Vehicle models are shared.** `render/vehicle-models.ts` contains pure geometry data (block outlines, heights, details) used by the Three.js renderer (`render/vehicle-meshes.ts`). Adding a visual vehicle model means editing `vehicle-models.ts`.
+- **Vehicle renderer uses Three.js.** `ThreeVehicleRenderer` (`render/vehicle-renderer.ts`) maintains an object pool of `THREE.Group` meshes keyed by entity ID. Blocks are `ExtrudeGeometry` with a `ShaderMaterial` that shades faces based on world-space normals (top=faction color, south-dominant sides=darken 0.45, east-dominant=darken 0.65). The depth buffer handles isometric sorting — no manual sort needed.
+- **Single canvas + DOM HUD.** `index.html` has a `#game-container` div with one Three.js canvas (map, vehicles, effects) and a DOM overlay for HUD text.
+- **Three.js coordinate system.** X = east (game X), Y = up (height), Z = south (game Y). A game point `(gx, gy)` at height `h` becomes `new THREE.Vector3(gx, h, gy)`. The OrthographicCamera looks along `(1,1,1)` with up `(-1,2,-1)`, producing pixel-identical isometric projection to the 2D `worldToScreen()`. See `render/camera-sync.ts` for the math.
 - **Heightmap vs coastlines:** The heightmap (`heightmap.ts`) is for elevation, slopes, hillshade, and physics forces. The coastline polygons (`terrain.ts`) are for land/water classification. Do not use the heightmap to determine whether a point is on land or water — the 500-unit grid resolution does not match the visual coastline.
 - **esper `try_remove_component` is broken.** It raises `KeyError` when the entity doesn't have the component but another entity does. Always guard with `has_component` before `remove_component`. Never use `try_remove_component`.
 - **Server ECS tests must use isolated worlds.** esper processors persist across tests. Use `esper.switch_world()` / `esper.delete_world()` in a pytest fixture (see `tests/conftest.py`) to give each test a clean world.
