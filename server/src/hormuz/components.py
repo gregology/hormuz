@@ -175,6 +175,35 @@ class PlayerControl:
         self.waypoint_index = waypoint_index
 
 
+class CargoState:
+    """Tanker cargo state — affects physics (mass, drag) and route."""
+
+    __slots__ = ("loaded", "destination")
+
+    def __init__(self, loaded: bool = True, destination: str = "oman") -> None:
+        self.loaded = loaded
+        # "oman" = heading to Gulf of Oman, "gulf" = heading back to Persian Gulf
+        self.destination = destination
+
+
+class PatrolZone:
+    """Assigned patrol area for frigates (future AI behavior)."""
+
+    __slots__ = ("center_x", "center_y", "radius", "zone_id")
+
+    def __init__(
+        self,
+        center_x: float,
+        center_y: float,
+        radius: float,
+        zone_id: str,
+    ) -> None:
+        self.center_x = center_x
+        self.center_y = center_y
+        self.radius = radius
+        self.zone_id = zone_id
+
+
 class RespawnTimer:
     """Countdown to respawn after death or delivery."""
 

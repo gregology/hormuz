@@ -1,0 +1,31 @@
+#  cd path/to/hormuz                                                                                                                      
+#  docker build -t hormuz-server:latest ./server                                                                                                 
+#  docker build -t hormuz-client:latest -f client/Dockerfile .   
+
+services:
+  server:
+    image: hormuz-server:latest
+    networks:
+      - hormuz
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/status')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  client:
+    image: hormuz-client:latest
+    ports:
+      - "5567:80"
+    networks:
+      - hormuz
+    depends_on:
+      server:
+        condition: service_healthy
+    restart: unless-stopped
+
+networks:
+  hormuz:
+    driver: bridge

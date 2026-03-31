@@ -1,7 +1,6 @@
 import { fc, it, test } from "@fast-check/vitest";
 import { describe, expect } from "vitest";
 import {
-	FLOOD,
 	type NavalVehicle,
 	type VehicleInput,
 	addBreach,

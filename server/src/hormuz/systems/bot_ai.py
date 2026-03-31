@@ -4,8 +4,13 @@ import math
 
 import esper
 
-from hormuz.components import BotControl, Faction, Health, Transform, VehiclePhysics
-from hormuz.map_data import LANE_OUTBOUND, TANKER_EXITS
+from hormuz.components import BotControl, CargoState, Faction, Health, Transform, VehiclePhysics
+from hormuz.map_data import (
+    GULF_DESTINATION,
+    LANE_INBOUND,
+    LANE_OUTBOUND,
+    OMAN_DESTINATION,
+)
 from hormuz.systems.combat import JAM_RADIUS_SQ
 
 ESCORT_RADIUS = 500.0  # desired orbit distance from escorted tanker
@@ -20,22 +25,24 @@ def steer_toward(tf: Transform, target_x: float, target_y: float) -> float:
     return max(-1.0, min(1.0, diff * 2.0))
 
 
-# Tankers spawned at western ports (index 0-2) go east via LANE_OUTBOUND.
-# Tanker spawned at Gulf of Oman (index 3) goes west via reversed LANE_INBOUND.
-# Exit thresholds (squared distance).
 WAYPOINT_ADVANCE_DIST_SQ = 500.0**2
 EXIT_DIST_SQ = 1500.0**2
 
+# Route/destination lookup by cargo destination
+_ROUTE_CONFIG = {
+    "oman": (LANE_OUTBOUND, OMAN_DESTINATION),
+    "gulf": (LANE_INBOUND, GULF_DESTINATION),
+}
+
 
 def run_tanker_ai(
-    tf: Transform, waypoint_index: int
+    tf: Transform, waypoint_index: int, destination: str = "oman"
 ) -> tuple[float, float, int]:
     """Run tanker waypoint-following AI. Returns (throttle, rudder, new_waypoint_index).
 
     Extracted so it can be reused by the autopilot system for player-controlled tankers.
     """
-    route = LANE_OUTBOUND
-    exit_point = TANKER_EXITS[0]  # Gulf of Oman exit
+    route, exit_point = _ROUTE_CONFIG.get(destination, _ROUTE_CONFIG["oman"])
 
     if waypoint_index < len(route):
         wx, wy = route[waypoint_index]
@@ -63,15 +70,17 @@ class BotAIProcessor(esper.Processor):
 
         for ent, (tf, bot) in esper.get_components(Transform, BotControl):
             if bot.behavior == "tanker_transit":
-                self._tanker_ai(tf, bot)
+                self._tanker_ai(ent, tf, bot)
             elif bot.behavior == "shahed_intercept":
                 self._shahed_ai(ent, tf, bot, frigate_transforms)
             elif bot.behavior == "escort":
                 self._escort_ai(ent, tf, bot)
 
-    def _tanker_ai(self, tf: Transform, bot: BotControl) -> None:
+    def _tanker_ai(self, ent: int, tf: Transform, bot: BotControl) -> None:
+        cargo = esper.try_component(ent, CargoState)
+        destination = cargo.destination if cargo else "oman"
         bot.throttle, bot.rudder, bot.waypoint_index = run_tanker_ai(
-            tf, bot.waypoint_index
+            tf, bot.waypoint_index, destination
         )
 
     def _shahed_ai(

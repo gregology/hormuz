@@ -13,6 +13,8 @@ ORIGIN_LON = 47.5
 ORIGIN_LAT = 30.5
 LON_SCALE = 9708
 LAT_SCALE = 10800
+MAP_WIDTH = 113000.0
+MAP_HEIGHT = 81000.0
 
 
 def geo(lat: float, lon: float) -> tuple[float, float]:
@@ -73,6 +75,10 @@ TANKER_EXITS = [
     geo(26.40, 51.00),  # Persian Gulf port
 ]
 
+# Destination points where tankers turn around
+OMAN_DESTINATION = (112850.0, 62424.0)  # Gulf of Oman turnaround
+GULF_DESTINATION = (71300.0, 46800.0)  # Persian Gulf turnaround (same as spawn center)
+
 # ---------------------------------------------------------------------------
 # Shipping lanes (Traffic Separation Scheme)
 # ---------------------------------------------------------------------------
@@ -92,14 +98,41 @@ TANKER_SPAWN_RADIUS = 3000.0  # scatter within this radius
 TANKER_SPAWN_HEADING = 0.0  # east
 
 
+# Gulf of Oman spawn region — empty tankers and frigates spawn here heading west
+# Offset west from the destination so the full scatter radius stays on-map
+OMAN_SPAWN_CENTER = (109000.0, 62424.0)
+OMAN_SPAWN_RADIUS = 2000.0
+OMAN_SPAWN_HEADING = math.pi  # west
+
+# Margin from map edges for spawn clamping
+_SPAWN_MARGIN = 500.0
+
+
+def _clamp_to_map(x: float, y: float) -> tuple[float, float]:
+    x = max(_SPAWN_MARGIN, min(MAP_WIDTH - _SPAWN_MARGIN, x))
+    y = max(_SPAWN_MARGIN, min(MAP_HEIGHT - _SPAWN_MARGIN, y))
+    return x, y
+
+
 def random_tanker_spawn() -> tuple[float, float, float]:
-    """Return (x, y, heading) for a random tanker spawn in the strait area."""
+    """Return (x, y, heading) for a random tanker spawn in the Persian Gulf area."""
     angle = random.uniform(0, 2 * math.pi)
     dist = random.uniform(0, TANKER_SPAWN_RADIUS)
     x = TANKER_SPAWN_CENTER[0] + math.cos(angle) * dist
     y = TANKER_SPAWN_CENTER[1] + math.sin(angle) * dist
-    # Slight heading variation (+/- 15 degrees)
+    x, y = _clamp_to_map(x, y)
     heading = TANKER_SPAWN_HEADING + random.uniform(-0.26, 0.26)
+    return x, y, heading
+
+
+def random_oman_spawn() -> tuple[float, float, float]:
+    """Return (x, y, heading) for a random spawn in the Gulf of Oman area."""
+    angle = random.uniform(0, 2 * math.pi)
+    dist = random.uniform(0, OMAN_SPAWN_RADIUS)
+    x = OMAN_SPAWN_CENTER[0] + math.cos(angle) * dist
+    y = OMAN_SPAWN_CENTER[1] + math.sin(angle) * dist
+    x, y = _clamp_to_map(x, y)
+    heading = OMAN_SPAWN_HEADING + random.uniform(-0.26, 0.26)
     return x, y, heading
 
 

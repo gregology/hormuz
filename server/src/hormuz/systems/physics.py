@@ -6,6 +6,7 @@ import esper
 
 from hormuz.components import (
     BotControl,
+    CargoState,
     Health,
     PlayerControl,
     RespawnTimer,
@@ -26,12 +27,25 @@ LERP_RATE = 3.0
 BREACH_CLAMP_COUNT = 1
 FLOOD_DRAG_FACTOR = 1.5
 
+# Empty (ballast) tanker physics modifiers
+EMPTY_MASS_FACTOR = 0.4  # 40% of loaded mass
+EMPTY_DRAG_FACTOR = 0.6  # 60% of loaded drag (sits higher, less wetted surface)
+
 
 class PhysicsProcessor(esper.Processor):
     def process(self, dt: float = 0.05) -> None:
         for ent, (tf, phys) in esper.get_components(Transform, VehiclePhysics):
             throttle, rudder = self._get_input(ent)
-            _update_vehicle(tf, phys, throttle, rudder, dt)
+
+            # Apply cargo modifiers for empty tankers
+            cargo = esper.try_component(ent, CargoState)
+            mass_factor = 1.0
+            drag_factor = 1.0
+            if cargo is not None and not cargo.loaded:
+                mass_factor = EMPTY_MASS_FACTOR
+                drag_factor = EMPTY_DRAG_FACTOR
+
+            _update_vehicle(tf, phys, throttle, rudder, dt, mass_factor, drag_factor)
             _update_flooding(tf, phys, dt)
 
             # Flooding kills the entity
@@ -52,7 +66,11 @@ class PhysicsProcessor(esper.Processor):
             if pc.autopilot:
                 # Autopilot controls steering only — player keeps throttle control
                 tf = esper.component_for_entity(ent, Transform)
-                _, rudder, pc.waypoint_index = run_tanker_ai(tf, pc.waypoint_index)
+                cargo = esper.try_component(ent, CargoState)
+                destination = cargo.destination if cargo else "oman"
+                _, rudder, pc.waypoint_index = run_tanker_ai(
+                    tf, pc.waypoint_index, destination
+                )
                 return pc.throttle, rudder
             return pc.throttle, pc.rudder
         bc = esper.try_component(ent, BotControl)
@@ -73,7 +91,13 @@ def _update_vehicle(
     throttle: float,
     rudder: float,
     dt: float,
+    mass_factor: float = 1.0,
+    drag_factor: float = 1.0,
 ) -> None:
+    # Effective mass and drag (modified by cargo state)
+    eff_mass = phys.mass * mass_factor
+    eff_drag_coeff = phys.drag_coefficient * drag_factor
+
     # --- Angular velocity (from collisions + propeller torque) ---
     tf.heading += tf.angular_velocity * dt
     tf.angular_velocity *= phys.angular_drag**dt
@@ -104,7 +128,7 @@ def _update_vehicle(
         lateral_force = prop_wash_force + flow_force
         torque = phys.propeller_offset * phys.size * lateral_force
         tf.angular_velocity += (torque / phys.moment_of_inertia) * dt
-        tf.drift += (lateral_force / phys.mass) * dt
+        tf.drift += (lateral_force / eff_mass) * dt
         thrust *= math.cos(rudder_angle)
     else:
         # Direct steering (drones)
@@ -125,8 +149,8 @@ def _update_vehicle(
         tf.heading += TWO_PI
 
     # --- Forward thrust and drag ---
-    drag = phys.drag_coefficient * tf.speed * abs(tf.speed)
-    tf.speed += ((thrust - drag) / phys.mass) * dt
+    drag = eff_drag_coeff * tf.speed * abs(tf.speed)
+    tf.speed += ((thrust - drag) / eff_mass) * dt
 
     # Lateral drag
     tf.drift *= phys.lateral_drag**dt

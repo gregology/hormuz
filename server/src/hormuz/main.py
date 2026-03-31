@@ -11,14 +11,16 @@ from fastapi.staticfiles import StaticFiles
 
 from hormuz.components import (
     BotControl,
+    CargoState,
     Collidable,
     Faction,
     Health,
+    PatrolZone,
     PlayerControl,
     Transform,
     VehiclePhysics,
 )
-from hormuz.map_data import IRAN_SPAWNS, random_tanker_spawn
+from hormuz.map_data import IRAN_SPAWNS, random_oman_spawn, random_tanker_spawn
 from hormuz.protocol import (
     MSG_INPUT,
     decode_client_message,
@@ -30,6 +32,7 @@ from hormuz.protocol import (
 from hormuz.systems.bot_ai import BotAIProcessor
 from hormuz.systems.collision import COLLISION_POLYGONS, CollisionProcessor
 from hormuz.systems.combat import CombatProcessor
+from hormuz.systems.grounding import GroundingProcessor
 from hormuz.systems.physics import PhysicsProcessor
 from hormuz.systems.spawn import SpawnProcessor
 
@@ -128,14 +131,15 @@ FRIGATE_PHYSICS = dict(
 
 def setup_world() -> None:
     """Create all entities and register ECS processors."""
-    esper.add_processor(BotAIProcessor(), priority=5)
-    esper.add_processor(PhysicsProcessor(), priority=4)
+    esper.add_processor(BotAIProcessor(), priority=6)
+    esper.add_processor(PhysicsProcessor(), priority=5)
+    esper.add_processor(GroundingProcessor(), priority=4)
     esper.add_processor(CombatProcessor(), priority=3)
     esper.add_processor(CollisionProcessor(), priority=2)
     esper.add_processor(SpawnProcessor(), priority=1)
 
-    # Spawn 20 oil tankers scattered near the strait
-    for i in range(20):
+    # Spawn 10 loaded tankers heading outbound (Persian Gulf -> Oman)
+    for i in range(10):
         x, y, heading = random_tanker_spawn()
         esper.create_entity(
             Transform(x=x, y=y, heading=heading),
@@ -144,6 +148,20 @@ def setup_world() -> None:
             Health(100, 100),
             Collidable(COLLISION_POLYGONS["oil_tanker"]),
             BotControl("tanker_transit"),
+            CargoState(loaded=True, destination="oman"),
+        )
+
+    # Spawn 10 empty tankers heading inbound (Oman -> Persian Gulf)
+    for i in range(10):
+        x, y, heading = random_oman_spawn()
+        esper.create_entity(
+            Transform(x=x, y=y, heading=heading),
+            VehiclePhysics(**OIL_TANKER_PHYSICS),
+            Faction("civilian"),
+            Health(100, 100),
+            Collidable(COLLISION_POLYGONS["oil_tanker"]),
+            BotControl("tanker_transit"),
+            CargoState(loaded=False, destination="gulf"),
         )
 
     # Spawn 5 shaheds
@@ -159,8 +177,8 @@ def setup_world() -> None:
             BotControl("shahed_intercept"),
         )
 
-    # Spawn 5 frigates with the tankers
-    for i in range(5):
+    # Spawn 3 frigates on Persian Gulf side
+    for i in range(3):
         x, y, heading = random_tanker_spawn()
         esper.create_entity(
             Transform(x=x, y=y, heading=heading),
@@ -169,6 +187,26 @@ def setup_world() -> None:
             Health(300, 300),
             Collidable(COLLISION_POLYGONS["frigate"]),
             BotControl("escort"),
+            PatrolZone(
+                center_x=71300.0, center_y=46800.0,
+                radius=15000.0, zone_id="strait_west",
+            ),
+        )
+
+    # Spawn 2 frigates on Gulf of Oman side
+    for i in range(2):
+        x, y, heading = random_oman_spawn()
+        esper.create_entity(
+            Transform(x=x, y=y, heading=heading),
+            VehiclePhysics(**FRIGATE_PHYSICS),
+            Faction("us"),
+            Health(300, 300),
+            Collidable(COLLISION_POLYGONS["frigate"]),
+            BotControl("escort"),
+            PatrolZone(
+                center_x=112850.0, center_y=62424.0,
+                radius=15000.0, zone_id="oman_approach",
+            ),
         )
 
 
