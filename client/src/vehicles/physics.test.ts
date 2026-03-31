@@ -1,14 +1,18 @@
 import { fc, it, test } from "@fast-check/vitest";
 import { describe, expect } from "vitest";
 import {
+	FLOOD,
 	type NavalVehicle,
 	type VehicleInput,
+	addBreach,
 	createFrigate,
 	createOilTanker,
 	createQuadcopter,
 	createShahed,
 	createSpeedboat,
 	createTruck,
+	equilibriumSpeed,
+	updateFlooding,
 	updateVehicle,
 } from "./physics";
 
@@ -71,18 +75,19 @@ describe("throttle and acceleration", () => {
 		expect(Math.abs(fwd.speed)).toBeGreaterThan(Math.abs(rev.speed));
 	});
 
-	it("speed cannot exceed maxSpeed", () => {
+	it("speed converges to equilibrium under sustained throttle", () => {
 		const boat = createSpeedboat(FLAT_X, FLAT_Y);
 		step(boat, FULL_AHEAD, 600);
-		expect(boat.speed).toBeLessThanOrEqual(boat.maxSpeed);
+		const eqSpd = equilibriumSpeed(boat);
+		expect(boat.speed).toBeGreaterThan(eqSpd * 0.99);
+		expect(boat.speed).toBeLessThanOrEqual(eqSpd * 1.05);
 	});
 
-	it("reverse speed limited to 20% of maxSpeed", () => {
+	it("reverse speed limited to 20% of equilibrium speed", () => {
 		const boat = createSpeedboat(FLAT_X, FLAT_Y);
 		step(boat, FULL_REVERSE, 600);
-		expect(Math.abs(boat.speed)).toBeLessThanOrEqual(
-			boat.maxSpeed * 0.2 + 0.01,
-		);
+		const eqSpd = equilibriumSpeed(boat);
+		expect(Math.abs(boat.speed)).toBeLessThanOrEqual(eqSpd * 0.2 + 0.01);
 	});
 });
 
@@ -123,7 +128,7 @@ describe("drag and deceleration", () => {
 		"all vehicle types lose speed with no input",
 		({ create }) => {
 			const v = create(FLAT_X, FLAT_Y);
-			v.speed = v.maxSpeed * 0.5;
+			v.speed = equilibriumSpeed(v) * 0.5;
 			const initial = v.speed;
 			step(v, IDLE, 600);
 			if (v.cruiseSpeed > 0) {
@@ -149,9 +154,8 @@ describe("rudder-based steering", () => {
 		expect(boat.heading).toBe(h0);
 	});
 
-	it("ship at speed turns with rudder", () => {
+	it("ship with throttle and rudder turns", () => {
 		const boat = createSpeedboat(FLAT_X, FLAT_Y);
-		boat.speed = boat.maxSpeed;
 		const h0 = boat.heading;
 		step(boat, { throttle: 1, rudder: 1 }, 30);
 		expect(boat.heading).not.toBe(h0);
@@ -173,18 +177,16 @@ describe("rudder-based steering", () => {
 		expect(drone.heading).not.toBeCloseTo(h0, 2);
 	});
 
-	it("faster speed produces faster turn rate for ships", () => {
-		const slow = createSpeedboat(FLAT_X, FLAT_Y);
-		slow.speed = 5;
-		const fast = createSpeedboat(FLAT_X, FLAT_Y);
-		fast.speed = 20;
+	it("higher throttle produces faster turn rate for ships", () => {
+		const low = createSpeedboat(FLAT_X, FLAT_Y);
+		const high = createSpeedboat(FLAT_X, FLAT_Y);
 
-		step(slow, { throttle: 0, rudder: 1 }, 30);
-		step(fast, { throttle: 0, rudder: 1 }, 30);
+		step(low, { throttle: 0.3, rudder: 1 }, 30);
+		step(high, { throttle: 1, rudder: 1 }, 30);
 
-		const slowTurn = Math.abs(slow.heading);
-		const fastTurn = Math.abs(fast.heading);
-		expect(fastTurn).toBeGreaterThan(slowTurn);
+		const lowTurn = Math.abs(low.heading);
+		const highTurn = Math.abs(high.heading);
+		expect(highTurn).toBeGreaterThan(lowTurn);
 	});
 
 	it("port rudder turns left, starboard turns right", () => {
@@ -202,18 +204,15 @@ describe("rudder-based steering", () => {
 		expect(starboard.heading).not.toBeCloseTo(port.heading, 2);
 	});
 
-	it("steering in reverse flips rudder direction", () => {
+	it("reverse thrust flips turn direction for ships", () => {
 		const fwd = createSpeedboat(FLAT_X, FLAT_Y);
-		fwd.speed = 10;
 		const rev = createSpeedboat(FLAT_X, FLAT_Y);
-		rev.speed = -5;
 
-		step(fwd, { throttle: 0, rudder: 1 }, 10);
-		step(rev, { throttle: 0, rudder: 1 }, 10);
+		step(fwd, { throttle: 1, rudder: 1 }, 10);
+		step(rev, { throttle: -1, rudder: 1 }, 10);
 
-		// Forward + starboard rudder turns one way,
-		// reverse + same rudder should turn the opposite way
-		// (nose still goes in the direction the rudder points)
+		// Forward thrust + starboard rudder turns starboard,
+		// reverse thrust + same rudder turns port (physics reversal)
 		const fwdDelta = fwd.heading;
 		const revDelta =
 			rev.heading > Math.PI ? rev.heading - 2 * Math.PI : rev.heading;
@@ -246,7 +245,7 @@ describe("heading normalization", () => {
 describe("drift from turning", () => {
 	it("turning at speed generates drift", () => {
 		const boat = createSpeedboat(FLAT_X, FLAT_Y);
-		boat.speed = boat.maxSpeed;
+		boat.speed = equilibriumSpeed(boat);
 		step(boat, HARD_STARBOARD, 30);
 		expect(boat.drift).not.toBe(0);
 	});
@@ -261,9 +260,9 @@ describe("drift from turning", () => {
 		// Speedboat has high turnRate * driftFactor, so per-frame drift
 		// exceeds the 0.02 snap-to-zero threshold
 		const port = createSpeedboat(FLAT_X, FLAT_Y);
-		port.speed = port.maxSpeed;
+		port.speed = equilibriumSpeed(port);
 		const star = createSpeedboat(FLAT_X, FLAT_Y);
-		star.speed = star.maxSpeed;
+		star.speed = equilibriumSpeed(star);
 
 		step(port, HARD_PORT, 30);
 		step(star, HARD_STARBOARD, 30);
@@ -344,8 +343,8 @@ describe("vehicle type characteristics", () => {
 	it("oil tanker turns slower than speedboat", () => {
 		const tanker = createOilTanker(FLAT_X, FLAT_Y);
 		const boat = createSpeedboat(FLAT_X, FLAT_Y);
-		tanker.speed = tanker.maxSpeed;
-		boat.speed = boat.maxSpeed;
+		tanker.speed = equilibriumSpeed(tanker);
+		boat.speed = equilibriumSpeed(boat);
 
 		step(tanker, HARD_STARBOARD, 30);
 		step(boat, HARD_STARBOARD, 30);
@@ -359,6 +358,199 @@ describe("vehicle type characteristics", () => {
 		const drone = createQuadcopter(FLAT_X, FLAT_Y);
 		const frigate = createFrigate(FLAT_X, FLAT_Y);
 		expect(drone.turnRate).toBeGreaterThan(frigate.turnRate);
-		expect(drone.acceleration).toBeGreaterThan(frigate.acceleration);
+		// Initial acceleration = enginePower / mass
+		expect(drone.enginePower / drone.mass).toBeGreaterThan(
+			frigate.enginePower / frigate.mass,
+		);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Force-based physics model
+// ---------------------------------------------------------------------------
+
+describe("force-based propulsion model", () => {
+	test.prop([fc.constantFrom(...VEHICLE_FACTORIES)], { numRuns: 6 })(
+		"equilibriumSpeed matches calibrated target for each vehicle type",
+		({ create }) => {
+			const v = create(FLAT_X, FLAT_Y);
+			const eqSpd = equilibriumSpeed(v);
+			// Verify equilibriumSpeed is consistent: enginePower / dragCoefficient = eqSpd²
+			expect(v.enginePower / v.dragCoefficient).toBeCloseTo(eqSpd * eqSpd, 6);
+		},
+	);
+
+	it("zero speed produces zero drag force", () => {
+		const boat = createSpeedboat(FLAT_X, FLAT_Y);
+		boat.speed = 0;
+		step(boat, IDLE, 10);
+		expect(boat.speed).toBe(0);
+	});
+
+	it("quadratic drag decelerates faster at high speed than low speed", () => {
+		const fast = createSpeedboat(FLAT_X, FLAT_Y);
+		fast.speed = 25;
+		const slow = createSpeedboat(FLAT_X, FLAT_Y);
+		slow.speed = 5;
+
+		const fastBefore = fast.speed;
+		const slowBefore = slow.speed;
+		step(fast, IDLE, 1);
+		step(slow, IDLE, 1);
+
+		const fastLoss = fastBefore - fast.speed;
+		const slowLoss = slowBefore - slow.speed;
+		expect(fastLoss).toBeGreaterThan(slowLoss);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Propeller torque steering (ships)
+// ---------------------------------------------------------------------------
+
+describe("propeller torque steering", () => {
+	it("outboard ship (speedboat) without throttle does not turn at speed", () => {
+		const boat = createSpeedboat(FLAT_X, FLAT_Y);
+		boat.speed = 20;
+		const h0 = boat.heading;
+		step(boat, { throttle: 0, rudder: 1 }, 30);
+		expect(boat.heading).toBe(h0);
+	});
+
+	it("conventional rudder (frigate) steers at speed without throttle", () => {
+		const ship = createFrigate(FLAT_X, FLAT_Y);
+		ship.speed = 10;
+		const h0 = ship.heading;
+		step(ship, { throttle: 0, rudder: 1 }, 30);
+		expect(ship.heading).not.toBe(h0);
+	});
+
+	it("ship with throttle and rudder turns", () => {
+		const boat = createSpeedboat(FLAT_X, FLAT_Y);
+		const h0 = boat.heading;
+		step(boat, { throttle: 1, rudder: 1 }, 30);
+		expect(boat.heading).not.toBe(h0);
+	});
+
+	it("starboard rudder with forward throttle produces starboard turn", () => {
+		const boat = createSpeedboat(FLAT_X, FLAT_Y);
+		step(boat, { throttle: 1, rudder: 1 }, 30);
+		// Positive heading = starboard (clockwise from east toward south)
+		expect(boat.heading).toBeGreaterThan(0);
+	});
+
+	it("stern kicks opposite to turn direction", () => {
+		const boat = createSpeedboat(FLAT_X, FLAT_Y);
+		step(boat, { throttle: 1, rudder: 1 }, 10);
+		// Starboard rudder → stern kicks to port → negative drift
+		expect(boat.drift).toBeLessThan(0);
+	});
+
+	it("full rudder reduces forward speed vs no rudder", () => {
+		const straight = createSpeedboat(FLAT_X, FLAT_Y);
+		const turning = createSpeedboat(FLAT_X, FLAT_Y);
+		step(straight, { throttle: 1, rudder: 0 }, 60);
+		step(turning, { throttle: 1, rudder: 1 }, 60);
+		expect(straight.speed).toBeGreaterThan(turning.speed);
+	});
+
+	it("larger momentOfInertia produces slower turn rate", () => {
+		const nimble = createSpeedboat(FLAT_X, FLAT_Y);
+		const heavy = createSpeedboat(FLAT_X, FLAT_Y);
+		heavy.momentOfInertia = nimble.momentOfInertia * 3;
+		step(nimble, { throttle: 1, rudder: 1 }, 30);
+		step(heavy, { throttle: 1, rudder: 1 }, 30);
+		expect(nimble.heading).toBeGreaterThan(heavy.heading);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Flooding simulation
+// ---------------------------------------------------------------------------
+
+describe("flooding simulation", () => {
+	it("single breach causes flood level to rise", () => {
+		const ship = createFrigate(FLAT_X, FLAT_Y);
+		addBreach(ship, 0);
+		for (let i = 0; i < 60; i++) updateFlooding(ship, DT);
+		expect(ship.floodLevel).toBeGreaterThan(0);
+	});
+
+	it("flood level reaches 1.0 after sufficient time", () => {
+		const ship = createSpeedboat(FLAT_X, FLAT_Y);
+		addBreach(ship, 0);
+		// Run for ~40 seconds (well beyond single-breach sink time)
+		for (let i = 0; i < 2400; i++) updateFlooding(ship, DT);
+		expect(ship.floodLevel).toBe(1);
+	});
+
+	it("multiple breaches sink faster than one", () => {
+		const one = createFrigate(FLAT_X, FLAT_Y);
+		addBreach(one, 0);
+		const three = createFrigate(FLAT_X, FLAT_Y);
+		addBreach(three, 0);
+		addBreach(three, 0);
+		addBreach(three, 0);
+		for (let i = 0; i < 300; i++) {
+			updateFlooding(one, DT);
+			updateFlooding(three, DT);
+		}
+		expect(three.floodLevel).toBeGreaterThan(one.floodLevel);
+	});
+
+	it("port breach produces negative list angle", () => {
+		const ship = createFrigate(FLAT_X, FLAT_Y);
+		addBreach(ship, -1);
+		for (let i = 0; i < 120; i++) updateFlooding(ship, DT);
+		expect(ship.listAngle).toBeLessThan(0);
+	});
+
+	it("starboard breach produces positive list angle", () => {
+		const ship = createFrigate(FLAT_X, FLAT_Y);
+		addBreach(ship, 1);
+		for (let i = 0; i < 120; i++) updateFlooding(ship, DT);
+		expect(ship.listAngle).toBeGreaterThan(0);
+	});
+
+	it("center breach produces zero list angle", () => {
+		const ship = createFrigate(FLAT_X, FLAT_Y);
+		addBreach(ship, 0);
+		for (let i = 0; i < 120; i++) updateFlooding(ship, DT);
+		expect(ship.listAngle).toBe(0);
+	});
+
+	it("flood level clamped at 1.0", () => {
+		const ship = createSpeedboat(FLAT_X, FLAT_Y);
+		addBreach(ship, 0);
+		addBreach(ship, 0);
+		addBreach(ship, 0);
+		for (let i = 0; i < 6000; i++) updateFlooding(ship, DT);
+		expect(ship.floodLevel).toBe(1);
+	});
+
+	it("airborne vehicles are unaffected by breaches", () => {
+		const drone = createQuadcopter(FLAT_X, FLAT_Y);
+		addBreach(drone, -1);
+		for (let i = 0; i < 600; i++) updateFlooding(drone, DT);
+		expect(drone.floodLevel).toBe(0);
+	});
+
+	it("trucks are unaffected by breaches", () => {
+		const truck = createTruck(FLAT_X, FLAT_Y);
+		addBreach(truck, -1);
+		for (let i = 0; i < 600; i++) updateFlooding(truck, DT);
+		expect(truck.floodLevel).toBe(0);
+	});
+
+	it("flooding slows the ship down", () => {
+		const dry = createFrigate(FLAT_X, FLAT_Y);
+		dry.speed = 10;
+		const wet = createFrigate(FLAT_X, FLAT_Y);
+		wet.speed = 10;
+		wet.floodLevel = 0.5;
+		wet.hullBreaches = 1;
+		updateFlooding(dry, DT);
+		updateFlooding(wet, DT);
+		expect(wet.speed).toBeLessThan(dry.speed);
 	});
 });

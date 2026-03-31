@@ -22,14 +22,18 @@ import { getModel } from "./vehicle-models";
 // ---------------------------------------------------------------------------
 
 const BLOCK_VERT = `
+#include <common>
+#include <logdepthbuf_pars_vertex>
 out vec3 vWorldNormal;
 void main() {
     vWorldNormal = normalize(normalMatrix * normal);
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    #include <logdepthbuf_vertex>
 }
 `;
 
 const BLOCK_FRAG = `
+#include <logdepthbuf_pars_fragment>
 uniform vec3 uFactionColor;
 uniform vec3 uTopColor;
 uniform float uTopAlpha;
@@ -46,6 +50,7 @@ void main() {
     } else {
         fragColor = vec4(uFactionColor * 0.65, uSideAlpha);
     }
+    #include <logdepthbuf_fragment>
 }
 `;
 

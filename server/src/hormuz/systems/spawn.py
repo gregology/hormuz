@@ -79,6 +79,11 @@ class SpawnProcessor(esper.Processor):
             tf.heading = heading
             tf.speed = 0.0
             tf.drift = 0.0
+            tf.angular_velocity = 0.0
+            tf.flood_level = 0.0
+            tf.list_angle = 0.0
+            tf.hull_breaches = 0
+            tf.breach_side = 0.0
             health.hp = health.max_hp
 
             # Restore bot control

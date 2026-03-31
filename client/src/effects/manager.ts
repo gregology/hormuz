@@ -19,14 +19,14 @@ import { WakeTrail } from "./wake-trail";
 // Vehicle defaults needed for effect generation
 const VEHICLE_DEFAULTS: Record<
 	string,
-	{ size: number; airborne: boolean; maxSpeed: number }
+	{ size: number; airborne: boolean; equilibriumSpeed: number }
 > = {
-	oil_tanker: { size: 220, airborne: false, maxSpeed: 15 },
-	shahed: { size: 4, airborne: true, maxSpeed: 80 },
-	speedboat: { size: 10, airborne: false, maxSpeed: 26 },
-	frigate: { size: 100, airborne: false, maxSpeed: 13.5 },
-	truck: { size: 5, airborne: false, maxSpeed: 18 },
-	quadcopter: { size: 2, airborne: true, maxSpeed: 22 },
+	oil_tanker: { size: 220, airborne: false, equilibriumSpeed: 15 },
+	shahed: { size: 4, airborne: true, equilibriumSpeed: 80 },
+	speedboat: { size: 10, airborne: false, equilibriumSpeed: 26 },
+	frigate: { size: 100, airborne: false, equilibriumSpeed: 13.5 },
+	truck: { size: 5, airborne: false, equilibriumSpeed: 18 },
+	quadcopter: { size: 2, airborne: true, equilibriumSpeed: 22 },
 };
 
 // Faction -> render color (duplicated from main.ts to avoid circular dep)
@@ -61,8 +61,10 @@ export class ThreeEffectManager {
 		heading: number,
 		size: number,
 		color: number,
+		floodLevel = 0,
+		listAngle = 0,
 	): void {
-		const effect = new Sinking(x, y, heading, size, color);
+		const effect = new Sinking(x, y, heading, size, color, floodLevel, listAngle);
 		this.transientEffects.push(effect);
 		this.root.add(effect.root);
 	}
@@ -84,7 +86,15 @@ export class ThreeEffectManager {
 			const prevHp = this.previousHp.get(e.id) ?? e.hp;
 			if (prevHp > 0 && e.hp <= 0) {
 				const color = FACTION_COLORS[e.faction] ?? 0xcccccc;
-				this.spawnSinking(e.x, e.y, e.heading, defaults.size, color);
+				this.spawnSinking(
+					e.x,
+					e.y,
+					e.heading,
+					defaults.size,
+					color,
+					e.floodLevel ?? 0,
+					e.listAngle ?? 0,
+				);
 				// Clear wake/churn so respawn doesn't draw a line artifact
 				this.removeWake(e.id);
 				this.removeChurn(e.id);
@@ -116,7 +126,7 @@ export class ThreeEffectManager {
 				e.y,
 				e.heading,
 				e.speed,
-				defaults.maxSpeed,
+				defaults.equilibriumSpeed,
 				defaults.size,
 				dt,
 			);

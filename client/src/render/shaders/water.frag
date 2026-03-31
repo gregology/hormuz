@@ -1,3 +1,5 @@
+#include <logdepthbuf_pars_fragment>
+
 in vec2 vUV;
 out vec4 fragColor;
 
@@ -85,4 +87,5 @@ void main() {
     color = mix(color, vec3(0.35, 0.42, 0.48), foam * 0.12);
 
     fragColor = vec4(color, 1.0);
+    #include <logdepthbuf_fragment>
 }

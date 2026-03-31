@@ -64,14 +64,21 @@ OIL_TANKER_PHYSICS = dict(
     max_speed=15.0,
     acceleration=2.0,
     drag=0.97,
-    turn_rate=0.05,
-    drift_factor=0.25,
+    turn_rate=0.0,
+    drift_factor=0.0,
     lateral_drag=0.45,
     min_turn_fraction=0.0,
     cruise_speed=0.0,
     airborne=False,
     size=220.0,
     angular_drag=0.30,
+    mass=2200.0,
+    engine_power=4400.0,
+    drag_coefficient=4400.0 / (15.0 * 15.0),
+    propeller_offset=-0.4,
+    rudder_max_angle=0.6,
+    moment_of_inertia=3600000.0,
+    rudder_flow_coefficient=0.5 * 4400.0 / (15.0 * 15.0),
 )
 
 SHAHED_PHYSICS = dict(
@@ -87,6 +94,13 @@ SHAHED_PHYSICS = dict(
     airborne=True,
     size=4.0,
     angular_drag=0.10,
+    mass=40.0,
+    engine_power=400.0,
+    drag_coefficient=400.0 / (80.0 * 80.0),
+    propeller_offset=0.0,
+    rudder_max_angle=0.0,
+    moment_of_inertia=0.0,
+    rudder_flow_coefficient=0.0,
 )
 
 
@@ -145,6 +159,8 @@ def build_snapshot() -> bytes:
                 tf.drift,
                 tf.angular_velocity,
                 health.hp,
+                tf.flood_level,
+                tf.list_angle,
             )
         )
     return encode_full_snapshot(game_state["tick"], entities)

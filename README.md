@@ -104,7 +104,7 @@ Vehicles differ dramatically in how they feel to control:
 - **Mine layers** deploy mines behind them as they move. The gameplay is route planning — where to lay mines for maximum disruption.
 - **Helicopters** fly over water and land, with direct control. Fast, moderate weapons, fragile.
 
-Every vehicle has attributes that can be tuned: speed, turn rate, acceleration, HP, weapons (type, damage, range, cooldown, accuracy), and special abilities. Damage can affect performance — a damaged tanker leaks oil and slows down, a hit frigate might lose weapons systems.
+Every vehicle has attributes that can be tuned: engine power, mass, drag coefficient, rudder angle, HP, weapons (type, damage, range, cooldown, accuracy), and special abilities. Ships use propeller torque steering — rudder effectiveness depends on thrust and water flow, with realistic stern kick. Damage creates hull breaches that cause progressive flooding — a hit tanker lists toward the damaged side, rides lower, and slows as it takes on water before eventually sinking.
 
 ## Weapons & Countermeasures
 
@@ -154,9 +154,9 @@ The game world runs on a server 24/7. Bots populate all vehicles when no humans 
 
 Before building the multiplayer game, we need a development playground — a tool for designing, testing, and tuning every aspect of the game.
 
-The playground renders using the same engine as the final game (isometric, Three.js 3D meshes, full Strait of Hormuz map). It includes:
+The playground renders using the same engine as the final game (Three.js 3D meshes, full Strait of Hormuz map) with isometric, third-person, and first-person camera modes. It includes:
 
-- **Sandbox mode**: Spawn any vehicle, drive it around, test controls and movement feel. Adjust vehicle stats (speed, turn rate, HP, weapon damage, etc.) via a developer panel with sliders and inputs. Changes apply in real-time.
+- **Sandbox mode**: Spawn any vehicle, drive it around, test controls and movement feel. Adjust vehicle stats (engine power, drag, mass, rudder angle, flooding rates, etc.) via a developer panel with sliders and inputs. Changes apply in real-time.
 - **Scenario mode**: Set up specific situations (e.g., "3 speedboats vs 1 frigate near Qeshm Island") and play them out or observe bot behaviour. Useful for tuning AI, weapon balance, and engagement ranges.
 - **AI tuning**: Toggle bot control on/off per vehicle. Observe how different AI behaviours interact — do speedboats swarm correctly? Do tankers follow the channel? Do frigates maintain escort formations?
 - **Vehicle model workshop**: Tweak sprite rendering, vehicle proportions, visual effects. See how vehicles look at different zoom levels and times of day.

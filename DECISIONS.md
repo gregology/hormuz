@@ -28,7 +28,7 @@ Migrate to Three.js with an OrthographicCamera that produces pixel-identical iso
 - **Phase 4:** HUD moved to DOM overlay
 - **Phase 5-6:** Playground migration and PixiJS removal
 
-See `MIGRATION.md` for the detailed phase plan, file lists, and risk ranking.
+The migration was completed in 6 phases.
 
 ### Rationale
 
@@ -47,3 +47,32 @@ Game logic, networking, input, physics, collision, map data, and all server code
 1. Camera projection alignment (mitigated: Phase 0 tests verify pixel-identical projection)
 2. Wake trail fidelity in Three.js (WebGL line width limitations)
 3. Dual-canvas performance during transition (temporary, acceptable)
+
+---
+
+## 002: Force-based vehicle physics with propeller torque steering and progressive flooding
+
+**Date:** 2026-03-30
+**Status:** Complete (all 4 phases done)
+
+### Context
+
+The original physics model used explicit `maxSpeed`, linear `acceleration`, and exponential `drag` with direct heading changes from rudder input. This was a serviceable abstraction but didn't model the physical reality of naval propulsion — engine power, water resistance, and how rudders actually work (deflecting propeller wash at the stern to create torque).
+
+### Decision
+
+Replace the velocity-based model with a staged 4-phase overhaul:
+
+- **Phase 1 — Engine power + quadratic drag.** Replace `maxSpeed`/`acceleration`/`drag` with `enginePower`/`dragCoefficient`/`mass`. Top speed emerges from thrust-drag equilibrium (`v_max = √(enginePower / dragCoefficient)`).
+- **Phase 2 — Propeller torque steering.** For ships, rudder deflects the thrust vector at the propeller (stern). The lateral force component creates torque → angular velocity → heading change. Stern kick, speed-dependent turn rate, and throttle-dependent steering all emerge naturally. Non-ship vehicles (trucks, drones) keep direct `turnRate` steering. Ships with conventional rudders (frigate, tanker) also steer from water flow at speed via `rudderFlowCoefficient`; outboard-steered vessels (speedboat) need throttle to turn.
+- **Phase 3 — Progressive flooding.** Hull breaches cause water ingress → listing → sinking. Asymmetric damage produces list angle (roll toward damaged side). Flooding increases drag (ship slows) and draft (ship rides lower). Shahed-tanker combat creates breaches instead of instant kills.
+- **Phase 4 — Server port.** Python server physics matches client. Snapshot protocol extended with `flood_level` and `list_angle`.
+
+Each phase was developed and tuned in the playground, validated by tests, then ported to the server.
+
+### Rationale
+
+- **Emergent behavior over parameterized behavior.** Turn rate, top speed, and stern kick all fall out of the force model rather than being magic numbers.
+- **Physical intuition guides tuning.** "More engine power" and "heavier ship" are intuitive; "exponential drag coefficient 0.97" is not.
+- **Progressive flooding adds drama.** Ships list and slow before sinking, visible to all players. Much more impactful than binary alive/dead.
+- **Staged migration reduced risk.** Each phase was testable and revertible independently.

@@ -1,3 +1,5 @@
+#include <logdepthbuf_pars_fragment>
+
 in vec2 vUV;
 out vec4 fragColor;
 
@@ -98,4 +100,5 @@ void main() {
     color *= 0.85 + 0.15 * coastMask;
 
     fragColor = vec4(color, 1.0);
+    #include <logdepthbuf_fragment>
 }

@@ -28,15 +28,15 @@ const FACTION_COLORS: Record<string, number> = {
 	us: COLORS.spawnUS,
 };
 
-// Vehicle defaults for rendering (only need size, airborne, maxSpeed)
+// Vehicle defaults for rendering (only need size, airborne, equilibriumSpeed)
 const VEHICLE_DEFAULTS: Record<
 	string,
-	{ size: number; airborne: boolean; maxSpeed: number }
+	{ size: number; airborne: boolean; equilibriumSpeed: number }
 > = {
-	oil_tanker: { size: 220, airborne: false, maxSpeed: 15 },
-	shahed: { size: 4, airborne: true, maxSpeed: 80 },
-	speedboat: { size: 10, airborne: false, maxSpeed: 26 },
-	frigate: { size: 100, airborne: false, maxSpeed: 13.5 },
+	oil_tanker: { size: 220, airborne: false, equilibriumSpeed: 15 },
+	shahed: { size: 4, airborne: true, equilibriumSpeed: 80 },
+	speedboat: { size: 10, airborne: false, equilibriumSpeed: 26 },
+	frigate: { size: 100, airborne: false, equilibriumSpeed: 13.5 },
 };
 
 function init() {

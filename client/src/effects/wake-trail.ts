@@ -31,20 +31,25 @@ const MAX_POINTS = 420;
 const MAX_VERTICES = 3 * (MAX_POINTS - 1) * 6;
 
 const RIBBON_VERT = `
+#include <common>
+#include <logdepthbuf_pars_vertex>
 in float aAlpha;
 out float vAlpha;
 void main() {
     vAlpha = aAlpha;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    #include <logdepthbuf_vertex>
 }
 `;
 
 const RIBBON_FRAG = `
+#include <logdepthbuf_pars_fragment>
 in float vAlpha;
 out vec4 fragColor;
 void main() {
     if (vAlpha < 0.002) discard;
     fragColor = vec4(1.0, 1.0, 1.0, vAlpha);
+    #include <logdepthbuf_fragment>
 }
 `;
 

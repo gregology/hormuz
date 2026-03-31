@@ -92,17 +92,21 @@ export class ThreeVehicleRenderer {
 				pitchSlope = 0;
 			}
 
+			// Flooding: ship rides lower as it takes on water
+			const floodLevel = e.floodLevel ?? 0;
+			const draftOffset = floodLevel * info.size * 0.3;
+
 			// Position: game (x, y) → Three.js (x, elevation, y)
-			entry.group.position.set(e.x, elevation, e.y);
+			entry.group.position.set(e.x, elevation - draftOffset, e.y);
 
 			// Scale by vehicle size (model coords are fractions of size)
 			entry.group.scale.setScalar(info.size);
 
-			// Rotation: heading (yaw) around Y, pitch around local lateral axis
+			// Rotation: heading (yaw), pitch (terrain slope), roll (list from flooding)
 			entry.group.rotation.order = "YZX";
 			entry.group.rotation.y = -e.heading;
 			entry.group.rotation.z = pitchSlope;
-			entry.group.rotation.x = 0;
+			entry.group.rotation.x = e.listAngle ?? 0;
 
 			// Update faction color only when it changes
 			const color =

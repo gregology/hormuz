@@ -33,14 +33,18 @@ const BILLBOARD_QUAT = new THREE.Quaternion().setFromUnitVectors(
 );
 
 const EXPLOSION_VERT = `
+#include <common>
+#include <logdepthbuf_pars_vertex>
 out vec2 vUv;
 void main() {
     vUv = uv;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    #include <logdepthbuf_vertex>
 }
 `;
 
 const EXPLOSION_FRAG = `
+#include <logdepthbuf_pars_fragment>
 uniform float uTime;
 uniform float uAge;
 uniform float uCoreDuration;
@@ -92,10 +96,13 @@ void main() {
 
     if (col.a < 0.003) discard;
     fragColor = col;
+    #include <logdepthbuf_fragment>
 }
 `;
 
 const DEBRIS_VERT = `
+#include <common>
+#include <logdepthbuf_pars_vertex>
 in float aAlpha;
 in float aSize;
 in vec3 aColor;
@@ -106,10 +113,12 @@ void main() {
     vColor = aColor;
     gl_PointSize = aSize;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    #include <logdepthbuf_vertex>
 }
 `;
 
 const DEBRIS_FRAG = `
+#include <logdepthbuf_pars_fragment>
 in float vAlpha;
 in vec3 vColor;
 out vec4 fragColor;
@@ -117,6 +126,7 @@ void main() {
     vec2 c = gl_PointCoord - 0.5;
     if (dot(c, c) > 0.25) discard;
     fragColor = vec4(vColor, vAlpha);
+    #include <logdepthbuf_fragment>
 }
 `;
 

@@ -4,7 +4,10 @@
 class Transform:
     """Position and orientation in world space."""
 
-    __slots__ = ("x", "y", "heading", "speed", "drift", "angular_velocity")
+    __slots__ = (
+        "x", "y", "heading", "speed", "drift", "angular_velocity",
+        "flood_level", "list_angle", "hull_breaches", "breach_side",
+    )
 
     def __init__(
         self,
@@ -14,6 +17,10 @@ class Transform:
         speed: float = 0.0,
         drift: float = 0.0,
         angular_velocity: float = 0.0,
+        flood_level: float = 0.0,
+        list_angle: float = 0.0,
+        hull_breaches: int = 0,
+        breach_side: float = 0.0,
     ) -> None:
         self.x = x
         self.y = y
@@ -21,6 +28,10 @@ class Transform:
         self.speed = speed
         self.drift = drift
         self.angular_velocity = angular_velocity
+        self.flood_level = flood_level
+        self.list_angle = list_angle
+        self.hull_breaches = hull_breaches
+        self.breach_side = breach_side
 
 
 class VehiclePhysics:
@@ -39,22 +50,38 @@ class VehiclePhysics:
         "airborne",
         "size",
         "angular_drag",
+        # Force-based propulsion (Phase 1)
+        "mass",
+        "engine_power",
+        "drag_coefficient",
+        # Propeller torque steering (Phase 2)
+        "propeller_offset",
+        "rudder_max_angle",
+        "moment_of_inertia",
+        "rudder_flow_coefficient",
     )
 
     def __init__(
         self,
         vehicle_type: str,
-        max_speed: float,
-        acceleration: float,
-        drag: float,
-        turn_rate: float,
-        drift_factor: float,
-        lateral_drag: float,
+        max_speed: float = 0.0,
+        acceleration: float = 0.0,
+        drag: float = 0.95,
+        turn_rate: float = 0.0,
+        drift_factor: float = 0.0,
+        lateral_drag: float = 0.1,
         min_turn_fraction: float = 0.0,
         cruise_speed: float = 0.0,
         airborne: bool = False,
         size: float = 10.0,
         angular_drag: float = 0.15,
+        mass: float = 100.0,
+        engine_power: float = 0.0,
+        drag_coefficient: float = 1.0,
+        propeller_offset: float = 0.0,
+        rudder_max_angle: float = 0.0,
+        moment_of_inertia: float = 0.0,
+        rudder_flow_coefficient: float = 0.0,
     ) -> None:
         self.vehicle_type = vehicle_type
         self.max_speed = max_speed
@@ -68,6 +95,13 @@ class VehiclePhysics:
         self.airborne = airborne
         self.size = size
         self.angular_drag = angular_drag
+        self.mass = mass
+        self.engine_power = engine_power
+        self.drag_coefficient = drag_coefficient
+        self.propeller_offset = propeller_offset
+        self.rudder_max_angle = rudder_max_angle
+        self.moment_of_inertia = moment_of_inertia
+        self.rudder_flow_coefficient = rudder_flow_coefficient
 
 
 class Faction:
