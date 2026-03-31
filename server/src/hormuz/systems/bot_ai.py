@@ -1,11 +1,14 @@
-"""Bot AI processor — tanker waypoint following, shahed interception."""
+"""Bot AI processor — tanker waypoint following, shahed interception, frigate escort."""
 
 import math
 
 import esper
 
-from hormuz.components import BotControl, Faction, Health, Transform
+from hormuz.components import BotControl, Faction, Health, Transform, VehiclePhysics
 from hormuz.map_data import LANE_OUTBOUND, TANKER_EXITS
+from hormuz.systems.combat import JAM_RADIUS_SQ
+
+ESCORT_RADIUS = 500.0  # desired orbit distance from escorted tanker
 
 
 def steer_toward(tf: Transform, target_x: float, target_y: float) -> float:
@@ -52,33 +55,115 @@ def run_tanker_ai(
 
 class BotAIProcessor(esper.Processor):
     def process(self, dt: float = 0.05) -> None:
+        # Collect frigate positions once for jamming checks
+        frigate_transforms: list[Transform] = []
+        for _, (tf, phys, health) in esper.get_components(Transform, VehiclePhysics, Health):
+            if phys.vehicle_type == "frigate" and health.hp > 0:
+                frigate_transforms.append(tf)
+
         for ent, (tf, bot) in esper.get_components(Transform, BotControl):
             if bot.behavior == "tanker_transit":
                 self._tanker_ai(tf, bot)
             elif bot.behavior == "shahed_intercept":
-                self._shahed_ai(ent, tf, bot)
+                self._shahed_ai(ent, tf, bot, frigate_transforms)
+            elif bot.behavior == "escort":
+                self._escort_ai(ent, tf, bot)
 
     def _tanker_ai(self, tf: Transform, bot: BotControl) -> None:
         bot.throttle, bot.rudder, bot.waypoint_index = run_tanker_ai(
             tf, bot.waypoint_index
         )
 
-    def _shahed_ai(self, ent: int, tf: Transform, bot: BotControl) -> None:
-        best_dist_sq = float("inf")
-        best_tf: Transform | None = None
+    def _shahed_ai(
+        self,
+        ent: int,
+        tf: Transform,
+        bot: BotControl,
+        frigate_transforms: list[Transform],
+    ) -> None:
+        # Check if jammed by a nearby frigate
+        jammed = False
+        for f_tf in frigate_transforms:
+            dx = f_tf.x - tf.x
+            dy = f_tf.y - tf.y
+            if dx * dx + dy * dy < JAM_RADIUS_SQ:
+                jammed = True
+                break
 
-        for t_ent, (t_tf, t_faction, t_health) in esper.get_components(Transform, Faction, Health):
-            if t_faction.name == "civilian" and t_health.hp > 0:
+        if not jammed:
+            best_dist_sq = float("inf")
+            best_tf: Transform | None = None
+
+            for t_ent, (t_tf, t_faction, t_health) in esper.get_components(
+                Transform, Faction, Health
+            ):
+                if t_faction.name == "civilian" and t_health.hp > 0:
+                    dx = t_tf.x - tf.x
+                    dy = t_tf.y - tf.y
+                    d_sq = dx * dx + dy * dy
+                    if d_sq < best_dist_sq:
+                        best_dist_sq = d_sq
+                        best_tf = t_tf
+
+            if best_tf is not None:
+                bot.rudder = steer_toward(tf, best_tf.x, best_tf.y)
+            else:
+                bot.rudder = 0.0
+        else:
+            bot.rudder = 0.0  # jammed — can't steer
+
+        bot.throttle = 1.0
+
+    def _escort_ai(self, ent: int, tf: Transform, bot: BotControl) -> None:
+        # Validate current escort target
+        if bot.target_entity != 0:
+            if not esper.entity_exists(bot.target_entity):
+                bot.target_entity = 0
+            else:
+                health = esper.try_component(bot.target_entity, Health)
+                if health is None or health.hp <= 0:
+                    bot.target_entity = 0
+
+        # Acquire nearest alive tanker if no target
+        if bot.target_entity == 0:
+            best_dist_sq = float("inf")
+            for t_ent, (t_tf, t_phys, t_health) in esper.get_components(
+                Transform, VehiclePhysics, Health
+            ):
+                if t_phys.vehicle_type != "oil_tanker" or t_health.hp <= 0:
+                    continue
                 dx = t_tf.x - tf.x
                 dy = t_tf.y - tf.y
                 d_sq = dx * dx + dy * dy
                 if d_sq < best_dist_sq:
                     best_dist_sq = d_sq
-                    best_tf = t_tf
+                    bot.target_entity = t_ent
 
-        if best_tf is not None:
-            bot.rudder = steer_toward(tf, best_tf.x, best_tf.y)
-        else:
+        if bot.target_entity == 0:
+            bot.throttle = 0.0
             bot.rudder = 0.0
+            return
 
-        bot.throttle = 1.0
+        target_tf = esper.component_for_entity(bot.target_entity, Transform)
+        dx = target_tf.x - tf.x
+        dy = target_tf.y - tf.y
+        dist = math.sqrt(dx * dx + dy * dy)
+
+        if dist > ESCORT_RADIUS * 2:
+            # Far from tanker — head straight toward it
+            bot.rudder = steer_toward(tf, target_tf.x, target_tf.y)
+            bot.throttle = 1.0
+        else:
+            # Near tanker — orbit clockwise
+            angle = math.atan2(tf.y - target_tf.y, tf.x - target_tf.x)
+            target_angle = angle + 0.5  # advance ~29° on circle
+            orbit_x = target_tf.x + math.cos(target_angle) * ESCORT_RADIUS
+            orbit_y = target_tf.y + math.sin(target_angle) * ESCORT_RADIUS
+            bot.rudder = steer_toward(tf, orbit_x, orbit_y)
+
+            if dist > ESCORT_RADIUS * 1.3:
+                bot.throttle = 1.0
+            elif dist < ESCORT_RADIUS * 0.7:
+                bot.throttle = 0.3
+            else:
+                bot.throttle = 0.7

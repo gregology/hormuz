@@ -68,6 +68,9 @@ class SpawnProcessor(esper.Processor):
             if faction.name == "civilian":
                 x, y, heading = random_tanker_spawn()
                 behavior = "tanker_transit"
+            elif faction.name == "us":
+                x, y, heading = random_tanker_spawn()
+                behavior = "escort"
             else:
                 spawn = random.choice(IRAN_SPAWNS)
                 x, y = spawn["position"]
@@ -88,6 +91,6 @@ class SpawnProcessor(esper.Processor):
 
             # Restore bot control
             if not esper.has_component(ent, BotControl):
-                esper.add_component(ent, BotControl(behavior, waypoint_index=0))
+                esper.add_component(ent, BotControl(behavior))
 
             esper.remove_component(ent, RespawnTimer)

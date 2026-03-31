@@ -1,11 +1,12 @@
-"""Combat processor — shahed kamikaze attacks on tankers.
+"""Combat processor — shahed kamikaze attacks + frigate autocannon.
 
-Uses bounding-circle broad phase + SAT narrow phase from the collision system
-so that hits only trigger on actual polygon contact. Shahed dies on impact;
-tanker receives hull breaches and floods progressively.
+Shaheds attack tankers and frigates via polygon collision (SAT).
+Frigates engage shaheds with an autocannon: lead-predicted projectiles
+tracked as lightweight data (not ECS entities).
 """
 
 import math
+import random
 
 import esper
 
@@ -20,30 +21,238 @@ from hormuz.components import (
 )
 from hormuz.systems.collision import _sat_collision, _transform_polygon
 
+# --- Jamming ---
+JAM_RADIUS = 2000.0
+JAM_RADIUS_SQ = JAM_RADIUS * JAM_RADIUS
+
+# --- Autocannon ---
+AUTOCANNON_RANGE = 1500.0
+AUTOCANNON_RANGE_SQ = AUTOCANNON_RANGE * AUTOCANNON_RANGE
+AUTOCANNON_COOLDOWN = 0.5  # seconds between shots
+AUTOCANNON_PROJECTILE_SPEED = 300.0  # game units/sec
+AUTOCANNON_PROJECTILE_LIFETIME = 6.0  # seconds
+AUTOCANNON_DAMAGE = 10  # one-shot kill on shahed (10 HP)
+AUTOCANNON_HIT_RADIUS = 10.0  # game units
+AUTOCANNON_HIT_RADIUS_SQ = AUTOCANNON_HIT_RADIUS * AUTOCANNON_HIT_RADIUS
+AUTOCANNON_SPREAD = 0.02  # radians (~1.15°)
+
+
+class _Projectile:
+    __slots__ = ("x", "y", "vx", "vy", "remaining")
+
+    def __init__(self, x: float, y: float, vx: float, vy: float, lifetime: float) -> None:
+        self.x = x
+        self.y = y
+        self.vx = vx
+        self.vy = vy
+        self.remaining = lifetime
+
+
+class _AutocannonState:
+    __slots__ = ("target", "cooldown")
+
+    def __init__(self) -> None:
+        self.target: int | None = None
+        self.cooldown: float = 0.0
+
 
 class CombatProcessor(esper.Processor):
     def __init__(self) -> None:
         super().__init__()
-        # Events generated this tick — consumed by networking
         self.events: list[dict] = []
+        self._projectiles: list[_Projectile] = []
+        self._autocannon: dict[int, _AutocannonState] = {}
 
     def process(self, dt: float = 0.05) -> None:
         self.events.clear()
 
-        shaheds = [
-            (ent, tf, phys, col)
-            for ent, (tf, phys, col, health) in esper.get_components(
-                Transform, VehiclePhysics, Collidable, Health
-            )
-            if phys.vehicle_type == "shahed" and health.hp > 0
-        ]
+        # Gather live entities by type
+        shaheds: list[tuple[int, Transform, VehiclePhysics, Collidable]] = []
+        tankers: list[tuple[int, Transform, VehiclePhysics, Collidable]] = []
+        frigates: list[tuple[int, Transform, VehiclePhysics, Collidable]] = []
 
-        tankers = [
-            (ent, tf, phys, col)
-            for ent, (tf, phys, col, health) in esper.get_components(
-                Transform, VehiclePhysics, Collidable, Health
-            )
-            if phys.vehicle_type == "oil_tanker" and health.hp > 0
+        for ent, (tf, phys, col, health) in esper.get_components(
+            Transform, VehiclePhysics, Collidable, Health
+        ):
+            if health.hp <= 0:
+                continue
+            if phys.vehicle_type == "shahed":
+                shaheds.append((ent, tf, phys, col))
+            elif phys.vehicle_type == "oil_tanker":
+                tankers.append((ent, tf, phys, col))
+            elif phys.vehicle_type == "frigate":
+                frigates.append((ent, tf, phys, col))
+
+        # 1. Autocannon — target, fire, advance projectiles, check hits
+        self._update_autocannons(frigates, shaheds, dt)
+        killed_by_autocannon = self._advance_projectiles(shaheds, dt)
+
+        # Filter shaheds killed by autocannon before kamikaze phase
+        if killed_by_autocannon:
+            shaheds = [s for s in shaheds if s[0] not in killed_by_autocannon]
+
+        # 2. Shahed kamikaze — vs tankers and frigates
+        self._shahed_kamikaze(shaheds, tankers, frigates)
+
+    # ------------------------------------------------------------------
+    # Autocannon
+    # ------------------------------------------------------------------
+
+    def _update_autocannons(
+        self,
+        frigates: list[tuple[int, Transform, VehiclePhysics, Collidable]],
+        shaheds: list[tuple[int, Transform, VehiclePhysics, Collidable]],
+        dt: float,
+    ) -> None:
+        # Prune state for dead/removed frigates
+        active_ids = {ent for ent, _, _, _ in frigates}
+        for eid in [k for k in self._autocannon if k not in active_ids]:
+            del self._autocannon[eid]
+
+        for f_ent, f_tf, _, _ in frigates:
+            state = self._autocannon.get(f_ent)
+            if state is None:
+                state = _AutocannonState()
+                self._autocannon[f_ent] = state
+
+            state.cooldown -= dt
+
+            # Validate current target (alive and in range?)
+            if state.target is not None:
+                valid = False
+                for s_ent, s_tf, _, _ in shaheds:
+                    if s_ent == state.target:
+                        dx = s_tf.x - f_tf.x
+                        dy = s_tf.y - f_tf.y
+                        if dx * dx + dy * dy <= AUTOCANNON_RANGE_SQ:
+                            valid = True
+                        break
+                if not valid:
+                    state.target = None
+
+            # Acquire new target — nearest shahed in range
+            if state.target is None:
+                best_dist_sq = AUTOCANNON_RANGE_SQ
+                best_ent: int | None = None
+                for s_ent, s_tf, _, _ in shaheds:
+                    dx = s_tf.x - f_tf.x
+                    dy = s_tf.y - f_tf.y
+                    d_sq = dx * dx + dy * dy
+                    if d_sq <= best_dist_sq:
+                        best_dist_sq = d_sq
+                        best_ent = s_ent
+                state.target = best_ent
+
+            # Fire
+            if state.target is not None and state.cooldown <= 0:
+                self._fire_autocannon(f_tf, state, shaheds)
+                state.cooldown = AUTOCANNON_COOLDOWN
+
+    def _fire_autocannon(
+        self,
+        f_tf: Transform,
+        state: _AutocannonState,
+        shaheds: list[tuple[int, Transform, VehiclePhysics, Collidable]],
+    ) -> None:
+        target_tf: Transform | None = None
+        for s_ent, s_tf, _, _ in shaheds:
+            if s_ent == state.target:
+                target_tf = s_tf
+                break
+        if target_tf is None:
+            return
+
+        dx = target_tf.x - f_tf.x
+        dy = target_tf.y - f_tf.y
+        dist = math.sqrt(dx * dx + dy * dy)
+        if dist < 1.0:
+            return
+
+        # Lead targeting — predict where target will be when projectile arrives
+        t_intercept = dist / AUTOCANNON_PROJECTILE_SPEED
+        t_vx = math.cos(target_tf.heading) * target_tf.speed
+        t_vy = math.sin(target_tf.heading) * target_tf.speed
+        pred_x = target_tf.x + t_vx * t_intercept
+        pred_y = target_tf.y + t_vy * t_intercept
+
+        aim_dx = pred_x - f_tf.x
+        aim_dy = pred_y - f_tf.y
+        aim_dist = math.sqrt(aim_dx * aim_dx + aim_dy * aim_dy)
+        if aim_dist < 1.0:
+            return
+
+        # Aim angle with random spread
+        aim_angle = math.atan2(aim_dy, aim_dx)
+        aim_angle += random.uniform(-AUTOCANNON_SPREAD, AUTOCANNON_SPREAD)
+
+        vx = math.cos(aim_angle) * AUTOCANNON_PROJECTILE_SPEED
+        vy = math.sin(aim_angle) * AUTOCANNON_PROJECTILE_SPEED
+
+        self._projectiles.append(
+            _Projectile(f_tf.x, f_tf.y, vx, vy, AUTOCANNON_PROJECTILE_LIFETIME)
+        )
+
+        self.events.append({
+            "type": "projectile",
+            "x": f_tf.x,
+            "y": f_tf.y,
+            "target_x": pred_x,
+            "target_y": pred_y,
+        })
+
+    def _advance_projectiles(
+        self,
+        shaheds: list[tuple[int, Transform, VehiclePhysics, Collidable]],
+        dt: float,
+    ) -> set[int]:
+        """Advance projectiles, check hits. Returns set of killed shahed entity IDs."""
+        surviving: list[_Projectile] = []
+        killed: set[int] = set()
+
+        for proj in self._projectiles:
+            proj.x += proj.vx * dt
+            proj.y += proj.vy * dt
+            proj.remaining -= dt
+
+            if proj.remaining <= 0:
+                continue
+
+            hit = False
+            for s_ent, s_tf, _, _ in shaheds:
+                if s_ent in killed:
+                    continue
+                pdx = proj.x - s_tf.x
+                pdy = proj.y - s_tf.y
+                if pdx * pdx + pdy * pdy <= AUTOCANNON_HIT_RADIUS_SQ:
+                    health = esper.component_for_entity(s_ent, Health)
+                    health.hp = max(0, health.hp - AUTOCANNON_DAMAGE)
+                    if health.hp <= 0:
+                        self._kill(s_ent)
+                        killed.add(s_ent)
+                    self.events.append({"type": "explosion", "x": s_tf.x, "y": s_tf.y})
+                    hit = True
+                    break
+
+            if not hit:
+                surviving.append(proj)
+
+        self._projectiles = surviving
+        return killed
+
+    # ------------------------------------------------------------------
+    # Shahed kamikaze
+    # ------------------------------------------------------------------
+
+    def _shahed_kamikaze(
+        self,
+        shaheds: list[tuple[int, Transform, VehiclePhysics, Collidable]],
+        tankers: list[tuple[int, Transform, VehiclePhysics, Collidable]],
+        frigates: list[tuple[int, Transform, VehiclePhysics, Collidable]],
+    ) -> None:
+        targets = [
+            (ent, tf, phys, col, 3) for ent, tf, phys, col in tankers
+        ] + [
+            (ent, tf, phys, col, 2) for ent, tf, phys, col in frigates
         ]
 
         hit_shaheds: set[int] = set()
@@ -51,8 +260,7 @@ class CombatProcessor(esper.Processor):
         for s_ent, s_tf, s_phys, s_col in shaheds:
             if s_ent in hit_shaheds:
                 continue
-            for t_ent, t_tf, t_phys, t_col in tankers:
-                # Broad phase: bounding circles
+            for t_ent, t_tf, t_phys, t_col, breach_count in targets:
                 dx = t_tf.x - s_tf.x
                 dy = t_tf.y - s_tf.y
                 dist_sq = dx * dx + dy * dy
@@ -63,7 +271,6 @@ class CombatProcessor(esper.Processor):
                 if dist_sq > br_sum * br_sum:
                     continue
 
-                # Narrow phase: SAT polygon intersection
                 s_poly = _transform_polygon(
                     s_col.vertices, s_tf.x, s_tf.y, s_tf.heading, s_phys.size
                 )
@@ -78,13 +285,11 @@ class CombatProcessor(esper.Processor):
 
                 _, _, _, contact_x, contact_y = result
 
-                # Shahed dies on impact
                 self._kill(s_ent)
                 hit_shaheds.add(s_ent)
 
-                # Tanker receives hull breaches — determine which side was hit
                 breach_side = self._breach_side(t_tf, contact_x, contact_y)
-                self._breach_tanker(t_ent, t_tf, breach_side)
+                self._breach_hull(t_tf, breach_side, breach_count)
 
                 self.events.append({
                     "type": "explosion",
@@ -93,38 +298,34 @@ class CombatProcessor(esper.Processor):
                 })
                 break
 
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
     @staticmethod
     def _breach_side(tf: Transform, cx: float, cy: float) -> float:
-        """Determine which side of the hull was hit (-1 port, +1 starboard)."""
-        # Vector from tanker center to contact point
         dx = cx - tf.x
         dy = cy - tf.y
-        # Cross product with heading direction gives lateral side
         cross = math.cos(tf.heading) * dy - math.sin(tf.heading) * dx
         if cross > 0:
-            return 1.0  # starboard
+            return 1.0
         if cross < 0:
-            return -1.0  # port
-        return 0.0  # center
+            return -1.0
+        return 0.0
 
     @staticmethod
-    def _breach_tanker(ent: int, tf: Transform, side: float) -> None:
-        """Add hull breaches to a tanker from a kamikaze hit."""
+    def _breach_hull(tf: Transform, side: float, breach_count: int) -> None:
         from hormuz.systems.physics import BREACH_CLAMP_COUNT
 
-        tf.hull_breaches += 3  # severe damage from kamikaze drone
+        tf.hull_breaches += breach_count
         tf.breach_side = max(-1.0, min(1.0, tf.breach_side + side / BREACH_CLAMP_COUNT))
 
     def _kill(self, ent: int) -> None:
         health = esper.component_for_entity(ent, Health)
         health.hp = 0
-
-        # Remove control components during respawn
         if esper.has_component(ent, BotControl):
             esper.remove_component(ent, BotControl)
         if esper.has_component(ent, PlayerControl):
             esper.remove_component(ent, PlayerControl)
-
-        # Add respawn timer
         if not esper.has_component(ent, RespawnTimer):
             esper.add_component(ent, RespawnTimer(remaining=3.0))

@@ -103,6 +103,28 @@ SHAHED_PHYSICS = dict(
     rudder_flow_coefficient=0.0,
 )
 
+FRIGATE_PHYSICS = dict(
+    vehicle_type="frigate",
+    max_speed=20.0,
+    acceleration=2.0,
+    drag=0.95,
+    turn_rate=0.0,
+    drift_factor=0.0,
+    lateral_drag=0.2,
+    min_turn_fraction=0.0,
+    cruise_speed=0.0,
+    airborne=False,
+    size=100.0,
+    angular_drag=0.25,
+    mass=1000.0,
+    engine_power=5000.0,
+    drag_coefficient=5000.0 / (20.0 * 20.0),
+    propeller_offset=-0.4,
+    rudder_max_angle=0.6,
+    moment_of_inertia=435000.0,
+    rudder_flow_coefficient=0.5 * 5000.0 / (20.0 * 20.0),
+)
+
 
 def setup_world() -> None:
     """Create all entities and register ECS processors."""
@@ -112,8 +134,8 @@ def setup_world() -> None:
     esper.add_processor(CollisionProcessor(), priority=2)
     esper.add_processor(SpawnProcessor(), priority=1)
 
-    # Spawn 10 oil tankers scattered near the strait
-    for i in range(10):
+    # Spawn 20 oil tankers scattered near the strait
+    for i in range(20):
         x, y, heading = random_tanker_spawn()
         esper.create_entity(
             Transform(x=x, y=y, heading=heading),
@@ -124,8 +146,8 @@ def setup_world() -> None:
             BotControl("tanker_transit"),
         )
 
-    # Spawn 10 shaheds
-    for i in range(10):
+    # Spawn 5 shaheds
+    for i in range(5):
         spawn = IRAN_SPAWNS[i % len(IRAN_SPAWNS)]
         x, y = spawn["position"]
         esper.create_entity(
@@ -135,6 +157,18 @@ def setup_world() -> None:
             Health(10, 10),
             Collidable(COLLISION_POLYGONS["shahed"]),
             BotControl("shahed_intercept"),
+        )
+
+    # Spawn 5 frigates with the tankers
+    for i in range(5):
+        x, y, heading = random_tanker_spawn()
+        esper.create_entity(
+            Transform(x=x, y=y, heading=heading),
+            VehiclePhysics(**FRIGATE_PHYSICS),
+            Faction("us"),
+            Health(300, 300),
+            Collidable(COLLISION_POLYGONS["frigate"]),
+            BotControl("escort"),
         )
 
 
@@ -250,7 +284,7 @@ def assign_vehicle_type_to_player(conn_id: int, vehicle_type: str) -> int | None
     Picks randomly among matching vehicles, weighted toward the strait.
     Teleports the vehicle to a safe spawn so the player starts fresh.
     """
-    if vehicle_type not in ("oil_tanker", "shahed"):
+    if vehicle_type not in ("oil_tanker", "shahed", "frigate"):
         return None
 
     candidates = [
@@ -281,7 +315,12 @@ def release_vehicle(conn_id: int) -> None:
         esper.remove_component(ent, PlayerControl)
     if not esper.has_component(ent, BotControl):
         phys = esper.component_for_entity(ent, VehiclePhysics)
-        behavior = "tanker_transit" if phys.vehicle_type == "oil_tanker" else "shahed_intercept"
+        if phys.vehicle_type == "oil_tanker":
+            behavior = "tanker_transit"
+        elif phys.vehicle_type == "frigate":
+            behavior = "escort"
+        else:
+            behavior = "shahed_intercept"
         esper.add_component(ent, BotControl(behavior, waypoint_index=waypoint_index))
 
 
@@ -311,6 +350,21 @@ def apply_input(conn_id: int, msg: dict) -> None:
         rev = 1.0 if keys & 0x02 else 0.0
         pc.throttle = fwd - rev
         pc.autopilot = False
+
+        # Jamming — player shaheds lose steering near frigates
+        if pc.rudder != 0.0:
+            from hormuz.systems.combat import JAM_RADIUS_SQ
+
+            tf = esper.component_for_entity(ent, Transform)
+            for _, (f_tf, f_phys, f_health) in esper.get_components(
+                Transform, VehiclePhysics, Health
+            ):
+                if f_phys.vehicle_type == "frigate" and f_health.hp > 0:
+                    dx = f_tf.x - tf.x
+                    dy = f_tf.y - tf.y
+                    if dx * dx + dy * dy < JAM_RADIUS_SQ:
+                        pc.rudder = 0.0
+                        break
     else:
         # Ships use stepped throttle float from client
         pc.throttle = max(-1.0, min(1.0, throttle_float))
@@ -387,9 +441,20 @@ async def game_loop() -> None:
         snapshot = build_snapshot()
         await broadcast(snapshot)
 
-        # Broadcast events (explosions, deliveries)
+        # Broadcast events (explosions, deliveries, projectiles)
         for event in combat_proc.events:
-            await broadcast(encode_event(event["type"], event["x"], event["y"]))
+            if event["type"] == "projectile":
+                await broadcast(
+                    encode_event(
+                        "projectile",
+                        event["x"],
+                        event["y"],
+                        event["target_x"],
+                        event["target_y"],
+                    )
+                )
+            else:
+                await broadcast(encode_event(event["type"], event["x"], event["y"]))
         for event in spawn_proc.events:
             await broadcast(encode_event(event["type"], event["x"], event["y"]))
 

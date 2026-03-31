@@ -61,8 +61,11 @@ def encode_war_cost(total_usd: int, tankers_delivered: int, tankers_sunk: int) -
     return msgpack.packb([MSG_WAR_COST, total_usd, tankers_delivered, tankers_sunk])
 
 
-def encode_event(event_type: str, x: float, y: float) -> bytes:
-    return msgpack.packb([MSG_EVENT, event_type, round(x, 1), round(y, 1)])
+def encode_event(event_type: str, x: float, y: float, *extra: float) -> bytes:
+    data: list = [MSG_EVENT, event_type, round(x, 1), round(y, 1)]
+    for v in extra:
+        data.append(round(v, 1))
+    return msgpack.packb(data)
 
 
 def decode_client_message(data: bytes) -> dict:
