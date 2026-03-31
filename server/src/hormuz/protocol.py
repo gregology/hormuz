@@ -12,6 +12,7 @@ MSG_WAR_COST = 5
 # Client -> Server message types
 MSG_INPUT = 10
 MSG_HEARTBEAT = 11
+MSG_RESPAWN_CHOICE = 12
 
 # Vehicle type indices (compact encoding for snapshots)
 VEHICLE_TYPE_INDEX = {"oil_tanker": 0, "shahed": 1, "speedboat": 2, "frigate": 3}
@@ -74,4 +75,6 @@ def decode_client_message(data: bytes) -> dict:
         }
     if msg_type == MSG_HEARTBEAT:
         return {"type": MSG_HEARTBEAT}
+    if msg_type == MSG_RESPAWN_CHOICE:
+        return {"type": MSG_RESPAWN_CHOICE, "vehicle_type": msg[1]}
     return {"type": msg_type}

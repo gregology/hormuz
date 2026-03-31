@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import random
 import time
 from pathlib import Path
 
@@ -60,8 +61,8 @@ start_time = time.monotonic()
 
 OIL_TANKER_PHYSICS = dict(
     vehicle_type="oil_tanker",
-    max_speed=7.5,
-    acceleration=1.0,
+    max_speed=15.0,
+    acceleration=2.0,
     drag=0.97,
     turn_rate=0.05,
     drift_factor=0.25,
@@ -75,14 +76,14 @@ OIL_TANKER_PHYSICS = dict(
 
 SHAHED_PHYSICS = dict(
     vehicle_type="shahed",
-    max_speed=40.0,
-    acceleration=5.0,
+    max_speed=80.0,
+    acceleration=10.0,
     drag=0.95,
     turn_rate=0.5,
     drift_factor=0.02,
     lateral_drag=0.1,
     min_turn_fraction=1.0,
-    cruise_speed=34.0,
+    cruise_speed=68.0,
     airborne=True,
     size=4.0,
     angular_drag=0.10,
@@ -93,8 +94,8 @@ def setup_world() -> None:
     """Create all entities and register ECS processors."""
     esper.add_processor(BotAIProcessor(), priority=5)
     esper.add_processor(PhysicsProcessor(), priority=4)
-    esper.add_processor(CollisionProcessor(), priority=3)
-    esper.add_processor(CombatProcessor(), priority=2)
+    esper.add_processor(CombatProcessor(), priority=3)
+    esper.add_processor(CollisionProcessor(), priority=2)
     esper.add_processor(SpawnProcessor(), priority=1)
 
     # Spawn 10 oil tankers scattered near the strait
@@ -149,17 +150,93 @@ def build_snapshot() -> bytes:
     return encode_full_snapshot(game_state["tick"], entities)
 
 
-def assign_vehicle_to_player(conn_id: int) -> int | None:
-    """Find a bot-controlled entity and assign it to a human player."""
-    for ent, (bot, phys, health) in esper.get_components(BotControl, VehiclePhysics, Health):
-        if health.hp <= 0:
-            continue
-        # Remove bot control, add player control
-        esper.remove_component(ent, BotControl)
-        esper.add_component(ent, PlayerControl(connection_id=conn_id))
-        player_entities[conn_id] = ent
-        return ent
-    return None
+# Center of action — the strait narrows where tanker lanes converge and shaheds attack
+STRAIT_CENTER = (85000.0, 37000.0)
+
+
+def _proximity_weight(ent: int) -> float:
+    """Weight for random selection: closer to the strait = higher weight."""
+    tf = esper.component_for_entity(ent, Transform)
+    dx = tf.x - STRAIT_CENTER[0]
+    dy = tf.y - STRAIT_CENTER[1]
+    dist = (dx * dx + dy * dy) ** 0.5
+    # Inverse distance weighting — cap minimum to avoid division by near-zero
+    return 1.0 / max(dist, 500.0)
+
+
+def _pick_weighted(candidates: list[int]) -> int:
+    """Pick a random entity from candidates, weighted by strait proximity."""
+    weights = [_proximity_weight(ent) for ent in candidates]
+    return random.choices(candidates, weights=weights, k=1)[0]
+
+
+def _assign_entity(conn_id: int, ent: int) -> None:
+    """Hand an entity from bot control to a player."""
+    esper.remove_component(ent, BotControl)
+    esper.add_component(ent, PlayerControl(connection_id=conn_id))
+    player_entities[conn_id] = ent
+
+
+def _teleport_to_spawn(ent: int) -> None:
+    """Teleport an entity to a safe spawn point based on its vehicle type."""
+    tf = esper.component_for_entity(ent, Transform)
+    phys = esper.component_for_entity(ent, VehiclePhysics)
+    if phys.vehicle_type == "shahed":
+        spawn = random.choice(IRAN_SPAWNS)
+        tf.x, tf.y = float(spawn["position"][0]), float(spawn["position"][1])
+        tf.heading = spawn["heading"]
+    else:
+        tf.x, tf.y, tf.heading = random_tanker_spawn()
+    tf.speed = 0.0
+    tf.drift = 0.0
+    tf.angular_velocity = 0.0
+
+
+def assign_vehicle_to_player(conn_id: int, teleport: bool = False) -> int | None:
+    """Find a bot-controlled entity and assign it to a human player.
+
+    Picks randomly, weighted toward vehicles closer to the strait.
+    If teleport is True, moves the vehicle to a safe spawn point.
+    """
+    candidates = [
+        ent
+        for ent, (bot, phys, health) in esper.get_components(
+            BotControl, VehiclePhysics, Health
+        )
+        if health.hp > 0
+    ]
+    if not candidates:
+        return None
+    ent = _pick_weighted(candidates)
+    _assign_entity(conn_id, ent)
+    if teleport:
+        _teleport_to_spawn(ent)
+    return ent
+
+
+def assign_vehicle_type_to_player(conn_id: int, vehicle_type: str) -> int | None:
+    """Find a bot-controlled entity of the requested type and assign it to a human player.
+
+    Picks randomly among matching vehicles, weighted toward the strait.
+    Teleports the vehicle to a safe spawn so the player starts fresh.
+    """
+    if vehicle_type not in ("oil_tanker", "shahed"):
+        return None
+
+    candidates = [
+        ent
+        for ent, (bot, phys, health) in esper.get_components(
+            BotControl, VehiclePhysics, Health
+        )
+        if health.hp > 0 and phys.vehicle_type == vehicle_type
+    ]
+    if not candidates:
+        return assign_vehicle_to_player(conn_id, teleport=True)
+
+    ent = _pick_weighted(candidates)
+    _assign_entity(conn_id, ent)
+    _teleport_to_spawn(ent)
+    return ent
 
 
 def release_vehicle(conn_id: int) -> None:
@@ -237,24 +314,25 @@ async def game_loop() -> None:
             + spawn_proc.tankers_delivered * tanker_cost
         )
 
-        # Reassign players whose vehicles were killed
+        # Clean up players whose vehicles were killed — auto-assign a random new one
         for conn_id, ent in list(player_entities.items()):
             if not esper.entity_exists(ent):
                 player_entities.pop(conn_id, None)
                 continue
             health = esper.try_component(ent, Health)
             if health and health.hp <= 0 and not esper.has_component(ent, PlayerControl):
-                # Vehicle was killed — reassign to another bot vehicle
                 player_entities.pop(conn_id, None)
-                new_ent = assign_vehicle_to_player(conn_id)
-                if new_ent is not None and conn_id in connections:
-                    phys = esper.component_for_entity(new_ent, VehiclePhysics)
-                    try:
-                        await connections[conn_id].send_bytes(
-                            encode_assign_vehicle(new_ent, phys.vehicle_type)
-                        )
-                    except Exception:
-                        pass
+
+                if conn_id in connections:
+                    new_ent = assign_vehicle_to_player(conn_id, teleport=True)
+                    if new_ent is not None:
+                        new_phys = esper.component_for_entity(new_ent, VehiclePhysics)
+                        try:
+                            await connections[conn_id].send_bytes(
+                                encode_assign_vehicle(new_ent, new_phys.vehicle_type)
+                            )
+                        except Exception:
+                            pass
 
         # Broadcast snapshot to all clients
         snapshot = build_snapshot()

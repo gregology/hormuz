@@ -1,17 +1,22 @@
 /**
- * Shared types for the visual effects system.
+ * Shared types for the Three.js visual effects system.
  */
 
-import type { Graphics } from "pixi.js";
-import type { Camera } from "../render/camera";
+import type * as THREE from "three";
 
-export interface Effect {
+export interface ThreeEffect {
 	/** False once the effect has finished and should be removed. */
 	alive: boolean;
 
-	/** Advance the effect by dt seconds. */
-	update(dt: number): void;
+	/** The root Three.js object to add to the scene. */
+	readonly root: THREE.Object3D;
 
-	/** Draw the effect onto the shared Graphics object. */
-	draw(g: Graphics, cam: Camera): void;
+	/**
+	 * Advance the effect by dt seconds.
+	 * Zoom is needed to convert screen-pixel sizes to world units.
+	 */
+	update(dt: number, zoom: number): void;
+
+	/** Dispose all GPU resources owned by this effect. */
+	dispose(): void;
 }

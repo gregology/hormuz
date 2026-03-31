@@ -1,9 +1,10 @@
 /**
  * Hormuz game client — connects to server, renders entities, sends input.
+ *
+ * Single Three.js canvas with a DOM HUD overlay.
  */
 
-import { Application, Container, Graphics, Text, TextStyle } from "pixi.js";
-import { EffectManager } from "./effects/manager";
+import { ThreeEffectManager } from "./effects/manager";
 import { EntityStore } from "./game/entities";
 import { SnapshotInterpolator } from "./game/interpolation";
 import { KeyboardManager } from "./input/keyboard";
@@ -11,13 +12,14 @@ import { MAP } from "./map/data";
 import { GameConnection } from "./net/connection";
 import { type Camera, createCamera } from "./render/camera";
 import { COLORS } from "./render/colors";
+import { HUD } from "./render/hud";
 import {
 	DEFAULT_LAYERS,
 	type MapLayers,
-	renderMap,
+	ThreeMapRenderer,
 } from "./render/map-renderer";
-import { renderVehicle } from "./render/vehicle-renderer";
-import type { NavalVehicle, VehicleType } from "./vehicles/physics";
+import { ThreeScene } from "./render/scene";
+import { ThreeVehicleRenderer } from "./render/vehicle-renderer";
 
 // Faction -> render color
 const FACTION_COLORS: Record<string, number> = {
@@ -31,65 +33,44 @@ const VEHICLE_DEFAULTS: Record<
 	string,
 	{ size: number; airborne: boolean; maxSpeed: number }
 > = {
-	oil_tanker: { size: 220, airborne: false, maxSpeed: 7.5 },
-	shahed: { size: 4, airborne: true, maxSpeed: 40 },
+	oil_tanker: { size: 220, airborne: false, maxSpeed: 15 },
+	shahed: { size: 4, airborne: true, maxSpeed: 80 },
 	speedboat: { size: 10, airborne: false, maxSpeed: 26 },
 	frigate: { size: 100, airborne: false, maxSpeed: 13.5 },
 };
 
-async function init() {
-	const app = new Application();
-	await app.init({
-		resizeTo: window,
-		background: 0x0a1628,
-		antialias: true,
-	});
-	document.body.appendChild(app.canvas);
+function init() {
+	// biome-ignore lint/style/noNonNullAssertion: element defined in index.html
+	const container = document.getElementById("game-container")!;
+	const screenW = window.innerWidth;
+	const screenH = window.innerHeight;
+
+	// --- Three.js canvas ---
+	const threeScene = new ThreeScene();
+	threeScene.setSize(screenW, screenH);
+	container.appendChild(threeScene.renderer.domElement);
+
+	// --- DOM HUD overlay ---
+	const hud = new HUD(container);
 
 	// --- Camera ---
-	const cam: Camera = createCamera(app.screen.width, app.screen.height);
+	const cam: Camera = createCamera(screenW, screenH);
 	cam.worldX = MAP.center.x;
 	cam.worldY = MAP.center.y;
 	cam.zoom = 0.04;
 
-	// --- Graphics layers ---
-	const mapContainer = new Container();
-	const effectManager = new EffectManager();
-	const vehicleGfx = new Graphics();
-	const hudContainer = new Container();
-	app.stage.addChild(mapContainer);
-	app.stage.addChild(effectManager.getContainer());
-	app.stage.addChild(vehicleGfx);
-	app.stage.addChild(hudContainer);
-
-	// --- Map layers ---
+	// --- Map layers (Three.js) ---
 	const layers: MapLayers = { ...DEFAULT_LAYERS };
+	const threeMap = new ThreeMapRenderer(layers);
+	threeScene.scene.add(threeMap.root);
 
-	// --- HUD ---
-	const hudStyle = new TextStyle({
-		fontFamily: "monospace",
-		fontSize: 14,
-		fill: 0xffffff,
-		dropShadow: {
-			color: 0x000000,
-			distance: 1,
-			blur: 2,
-		},
-	});
-	const vehicleText = new Text({ text: "", style: hudStyle });
-	vehicleText.x = 10;
-	vehicleText.y = 10;
-	hudContainer.addChild(vehicleText);
+	// --- Three.js vehicles ---
+	const threeVehicles = new ThreeVehicleRenderer();
+	threeScene.scene.add(threeVehicles.root);
 
-	const costText = new Text({ text: "", style: hudStyle });
-	costText.x = 10;
-	costText.y = 30;
-	hudContainer.addChild(costText);
-
-	const statusText = new Text({ text: "Connecting...", style: hudStyle });
-	statusText.x = 10;
-	statusText.y = 50;
-	hudContainer.addChild(statusText);
+	// --- Three.js effects ---
+	const threeEffects = new ThreeEffectManager();
+	threeScene.scene.add(threeEffects.root);
 
 	// --- Game state ---
 	const entityStore = new EntityStore();
@@ -102,73 +83,61 @@ async function init() {
 	let warCost = { totalUsd: 0, tankersDelivered: 0, tankersSunk: 0 };
 	let elapsedTime = 0;
 
-	// Respawn delay — let the player watch their vehicle's destruction before switching
+	// Zoom limits per vehicle type (scaled roughly by inverse vehicle size)
+	const ZOOM_LIMITS: Record<
+		string,
+		{ min: number; max: number; default: number }
+	> = {
+		oil_tanker: { min: 0.005, max: 2, default: 0.04 },
+		shahed: { min: 0.08, max: 10, default: 2 },
+		speedboat: { min: 0.02, max: 5, default: 0.15 },
+		frigate: { min: 0.008, max: 3, default: 0.06 },
+	};
+	const DEFAULT_ZOOM_LIMITS = { min: 0.005, max: 2, default: 0.04 };
+	let zoomLimits = DEFAULT_ZOOM_LIMITS;
+
+	// Spectator mode: after death, free camera until player presses space to respawn
+	let spectating = false;
 	let pendingAssign: { entityId: number; vehicleType: string } | null = null;
-	let respawnTimer = 0;
-	const RESPAWN_DELAY = 3.0;
-
-	// Reusable NavalVehicle objects for rendering (keyed by entity ID)
-	const renderVehicles = new Map<number, NavalVehicle>();
-
-	function getOrCreateRenderVehicle(
-		id: number,
-		vehicleType: string,
-	): NavalVehicle {
-		let v = renderVehicles.get(id);
-		if (!v) {
-			const defaults = VEHICLE_DEFAULTS[vehicleType] ?? {
-				size: 10,
-				airborne: false,
-				maxSpeed: 10,
-			};
-			v = {
-				vehicleType: vehicleType as VehicleType,
-				x: 0,
-				y: 0,
-				heading: 0,
-				speed: 0,
-				drift: 0,
-				maxSpeed: defaults.maxSpeed,
-				acceleration: 0,
-				drag: 0.95,
-				turnRate: 0,
-				driftFactor: 0,
-				lateralDrag: 0,
-				minTurnFraction: 0,
-				cruiseSpeed: 0,
-				airborne: defaults.airborne,
-				size: defaults.size,
-			};
-			renderVehicles.set(id, v);
-		}
-		return v;
-	}
+	const SPECTATOR_ZOOM = { min: 0.005, max: 10 };
 
 	// --- Connection handlers ---
 	conn.onSnapshot((snapshot) => {
 		entityStore.applySnapshot(snapshot);
 		const now = performance.now() / 1000;
 		interpolator.pushSnapshot(entityStore.entities, now);
-
-		// Clean up render vehicles for removed entities
-		for (const id of renderVehicles.keys()) {
-			if (!entityStore.entities.has(id)) {
-				renderVehicles.delete(id);
-			}
-		}
 	});
 
 	conn.onAssign((msg) => {
 		if (assignedEntityId === null) {
 			// First assignment on connect — apply immediately
-			assignedEntityId = msg.entityId;
-			assignedVehicleType = msg.vehicleType;
-		} else {
-			// Reassignment after death — delay to watch destruction animation
-			pendingAssign = { entityId: msg.entityId, vehicleType: msg.vehicleType };
-			respawnTimer = RESPAWN_DELAY;
+			applyAssignment(msg.entityId, msg.vehicleType);
+			return;
 		}
+		// Reassignment after death — queue it, enter spectator mode
+		pendingAssign = { entityId: msg.entityId, vehicleType: msg.vehicleType };
+		spectating = true;
 	});
+
+	function applyAssignment(entityId: number, vehicleType: string): void {
+		assignedEntityId = entityId;
+		assignedVehicleType = vehicleType;
+		spectating = false;
+		pendingAssign = null;
+
+		// Update zoom limits and reset zoom for the new vehicle type
+		zoomLimits = ZOOM_LIMITS[vehicleType] ?? DEFAULT_ZOOM_LIMITS;
+		cam.zoom = zoomLimits.default;
+
+		// Snap camera to the new vehicle
+		const now = performance.now() / 1000;
+		const snap = interpolator.getAllInterpolated(now);
+		const target = snap.find((e) => e.id === entityId);
+		if (target) {
+			cam.worldX = target.x;
+			cam.worldY = target.y;
+		}
+	}
 
 	conn.onWarCost((msg) => {
 		warCost = msg;
@@ -176,7 +145,7 @@ async function init() {
 
 	conn.onEvent((msg) => {
 		if (msg.eventType === "explosion") {
-			effectManager.spawnExplosion(msg.x, msg.y);
+			threeEffects.spawnExplosion(msg.x, msg.y);
 		}
 	});
 
@@ -185,23 +154,35 @@ async function init() {
 	conn.connect(`${wsProtocol}//${location.host}/ws`);
 
 	// --- Mouse wheel zoom ---
-	app.canvas.addEventListener("wheel", (e: WheelEvent) => {
+	container.addEventListener("wheel", (e: WheelEvent) => {
 		e.preventDefault();
 		const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
-		cam.zoom = Math.max(0.005, Math.min(2, cam.zoom * zoomFactor));
+		const limits = spectating ? SPECTATOR_ZOOM : zoomLimits;
+		cam.zoom = Math.max(
+			limits.min,
+			Math.min(limits.max, cam.zoom * zoomFactor),
+		);
 	});
 
 	// --- Resize handler ---
 	window.addEventListener("resize", () => {
-		cam.screenWidth = app.screen.width;
-		cam.screenHeight = app.screen.height;
+		const w = window.innerWidth;
+		const h = window.innerHeight;
+		cam.screenWidth = w;
+		cam.screenHeight = h;
+		threeScene.setSize(w, h);
 	});
 
 	// --- Render loop ---
-	app.ticker.add(() => {
-		const dt = app.ticker.deltaMS / 1000;
+	let lastTime = performance.now();
+
+	function frame(now: number): void {
+		requestAnimationFrame(frame);
+
+		const dt = (now - lastTime) / 1000;
+		lastTime = now;
 		elapsedTime += dt;
-		const renderTime = performance.now() / 1000;
+		const renderTime = now / 1000;
 
 		// Send input to server
 		conn.sendInput(keyboard.getBitmask());
@@ -209,18 +190,31 @@ async function init() {
 		// Get interpolated entities
 		const entities = interpolator.getAllInterpolated(renderTime);
 
-		// Process respawn timer
-		if (respawnTimer > 0) {
-			respawnTimer -= dt;
-			if (respawnTimer <= 0 && pendingAssign) {
-				assignedEntityId = pendingAssign.entityId;
-				assignedVehicleType = pendingAssign.vehicleType;
-				pendingAssign = null;
+		// Detect player death: assigned entity's HP drops to zero
+		if (assignedEntityId !== null && !spectating) {
+			const assigned = entities.find((e) => e.id === assignedEntityId);
+			if (assigned && assigned.hp <= 0) {
+				spectating = true;
 			}
 		}
 
-		// Camera follow assigned vehicle (freeze during respawn to watch destruction)
-		if (assignedEntityId !== null && respawnTimer <= 0) {
+		// Spectator mode: press space to respawn
+		if (spectating && pendingAssign && keyboard.isDown(" ")) {
+			applyAssignment(pendingAssign.entityId, pendingAssign.vehicleType);
+		}
+
+		// Camera: follow vehicle when playing, WASD pan when spectating
+		if (spectating) {
+			const panSpeed = 500 / cam.zoom;
+			if (keyboard.isDown("w") || keyboard.isDown("arrowup"))
+				cam.worldY -= panSpeed * dt;
+			if (keyboard.isDown("s") || keyboard.isDown("arrowdown"))
+				cam.worldY += panSpeed * dt;
+			if (keyboard.isDown("a") || keyboard.isDown("arrowleft"))
+				cam.worldX -= panSpeed * dt;
+			if (keyboard.isDown("d") || keyboard.isDown("arrowright"))
+				cam.worldX += panSpeed * dt;
+		} else if (assignedEntityId !== null) {
 			const target = entities.find((e) => e.id === assignedEntityId);
 			if (target) {
 				const followSpeed = 5;
@@ -232,56 +226,33 @@ async function init() {
 			}
 		}
 
-		// Render map
-		renderMap(mapContainer, cam, layers, elapsedTime);
+		// Update Three.js objects
+		threeMap.update(elapsedTime, cam.zoom);
+		threeVehicles.update(entities, assignedEntityId, FACTION_COLORS);
+		threeEffects.update(entities, dt, cam.zoom);
 
-		// Update and draw effects (wake trails, churns, explosions, sinking)
-		effectManager.update(entities, dt);
-		effectManager.draw(cam);
-
-		// Render all vehicles
-		vehicleGfx.clear();
-		for (const e of entities) {
-			if (e.hp <= 0) continue;
-
-			const rv = getOrCreateRenderVehicle(e.id, e.vehicleType);
-			rv.x = e.x;
-			rv.y = e.y;
-			rv.heading = e.heading;
-			rv.speed = e.speed;
-			rv.drift = e.drift;
-
-			const color =
-				e.id === assignedEntityId
-					? 0xffffff
-					: (FACTION_COLORS[e.faction] ?? 0xcccccc);
-			renderVehicle(vehicleGfx, cam, rv, color);
-		}
+		// Render Three.js scene (map + vehicles + effects)
+		threeScene.syncCamera(
+			cam.worldX,
+			cam.worldY,
+			cam.zoom,
+			cam.screenWidth,
+			cam.screenHeight,
+		);
+		threeScene.render();
 
 		// HUD
-		const typeLabel =
-			respawnTimer > 0
-				? `Destroyed -- respawning in ${Math.ceil(respawnTimer)}s`
-				: assignedVehicleType === "oil_tanker"
-					? "Oil Tanker"
-					: assignedVehicleType === "shahed"
-						? "Shahed Drone"
-						: assignedVehicleType || "Spectating";
-		vehicleText.text =
-			respawnTimer > 0
-				? `You: ${typeLabel}`
-				: `You: ${typeLabel}  |  WASD to control`;
-
-		const costStr = warCost.totalUsd.toLocaleString("en-US", {
-			style: "currency",
-			currency: "USD",
-			maximumFractionDigits: 0,
-		});
-		costText.text = `War Cost: ${costStr}  |  Delivered: ${warCost.tankersDelivered}  Sunk: ${warCost.tankersSunk}`;
-
+		hud.updateVehicle(spectating, pendingAssign !== null, assignedVehicleType);
+		hud.updateCost(
+			warCost.totalUsd,
+			warCost.tankersDelivered,
+			warCost.tankersSunk,
+		);
 		const entityCount = entities.filter((e) => e.hp > 0).length;
-		statusText.text = `Entities: ${entityCount}  |  Zoom: ${cam.zoom.toFixed(3)}  [scroll to zoom]`;
-	});
+		hud.updateStatus(entityCount, cam.zoom);
+	}
+
+	requestAnimationFrame(frame);
 
 	console.log("Hormuz client started");
 }

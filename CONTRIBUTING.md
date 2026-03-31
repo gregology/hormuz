@@ -87,6 +87,7 @@ See `CLAUDE.md` for the full testing philosophy. The short version:
 | `client/src/vehicles/physics.test.ts` | Throttle, drag, steering, drift, cruise speed, movement, vehicle characteristics |
 | `client/src/vehicles/collision.test.ts` | Terrain collisions, vehicle-vehicle collisions, airborne bypass |
 | `client/src/render/camera.test.ts` | Isometric projection round-trips, zoom, camera centering |
+| `client/src/render/camera-sync.test.ts` | Three.js OrthographicCamera matches 2D isometric projection |
 | `client/src/map/heightmap.test.ts` | Elevation queries, gradients, slope projection, hillshade |
 | `client/src/map/data.test.ts` | Spawn point terrain/bounds validation, shipping lane integrity |
 
@@ -105,7 +106,7 @@ pnpm format:server     # Ruff auto-format (Python)
 hormuz/
   shared/              # YAML definitions, codegen scripts, Natural Earth cache
   server/              # Python backend (FastAPI, ECS, game loop)
-  client/              # TypeScript frontend (PixiJS renderer, physics)
+  client/              # TypeScript frontend (Three.js renderer, physics)
   playground/          # Dev sandbox (same renderer, lil-gui controls)
 ```
 

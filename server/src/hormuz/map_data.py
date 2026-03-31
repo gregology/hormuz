@@ -27,6 +27,7 @@ def geo(lat: float, lon: float) -> tuple[float, float]:
 # ---------------------------------------------------------------------------
 
 IRAN_SPAWNS = [
+    # --- Strait narrows (existing cluster) ---
     {"position": geo(27.18, 56.28), "heading": math.pi, "label": "Bandar Abbas"},
     {"position": geo(26.95, 55.50), "heading": math.pi * 0.5, "label": "Iran Coast West"},
     {"position": geo(27.05, 56.80), "heading": math.pi * 0.6, "label": "Iran Coast East"},
@@ -35,6 +36,29 @@ IRAN_SPAWNS = [
     {"position": geo(27.05, 56.45), "heading": math.pi * 0.5, "label": "Hormuz Island"},
     {"position": geo(26.86, 56.35), "heading": math.pi * 0.5, "label": "Larak Island"},
     {"position": geo(25.88, 55.02), "heading": math.pi * 0.5, "label": "Abu Musa Island"},
+    # --- Western Persian Gulf coast ---
+    {"position": geo(26.53, 54.02), "heading": math.pi * 0.5, "label": "Kish Island"},
+    {"position": geo(26.30, 54.30), "heading": math.pi * 0.5, "label": "Kish South"},
+    {"position": geo(25.91, 54.54), "heading": math.pi * 0.5, "label": "Sirri Island"},
+    {"position": geo(26.56, 54.88), "heading": math.pi * 0.5, "label": "Bandar Lengeh"},
+    {"position": geo(26.65, 54.50), "heading": math.pi * 0.5, "label": "Nakhilu Island"},
+    {"position": geo(26.42, 54.65), "heading": math.pi * 0.5, "label": "Farur Island"},
+    {"position": geo(27.08, 54.30), "heading": math.pi * 0.4, "label": "Bushehr Coast"},
+    {"position": geo(26.80, 54.10), "heading": math.pi * 0.5, "label": "Kharg Approach"},
+    # --- Central coast (approaching strait) ---
+    {"position": geo(26.70, 55.20), "heading": math.pi * 0.5, "label": "Tunb Island"},
+    {"position": geo(26.25, 55.30), "heading": math.pi * 0.5, "label": "Greater Tunb"},
+    {"position": geo(26.60, 55.70), "heading": math.pi * 0.5, "label": "Hengam Island"},
+    {"position": geo(27.00, 55.20), "heading": math.pi * 0.5, "label": "Basaidu Coast"},
+    {"position": geo(26.75, 55.95), "heading": math.pi * 0.5, "label": "Qeshm South"},
+    # --- Eastern coast (Gulf of Oman side) ---
+    {"position": geo(27.10, 57.08), "heading": math.pi * 0.5, "label": "Minab Coast"},
+    {"position": geo(26.60, 57.30), "heading": math.pi * 0.4, "label": "Sirik Coast"},
+    {"position": geo(25.64, 57.77), "heading": math.pi * 0.3, "label": "Jask"},
+    {"position": geo(25.30, 58.20), "heading": math.pi * 0.3, "label": "Jask East"},
+    {"position": geo(25.90, 57.40), "heading": math.pi * 0.4, "label": "Kuhestak"},
+    {"position": geo(26.30, 57.00), "heading": math.pi * 0.45, "label": "Bandar Jask West"},
+    {"position": geo(25.50, 58.50), "heading": math.pi * 0.25, "label": "Konarak Coast"},
 ]
 
 TANKER_SPAWNS = [

@@ -1,20 +1,19 @@
 /**
- * Effect manager — lifecycle management for all visual effects.
+ * Three.js effect manager — lifecycle management for all visual effects.
  *
- * Owns a PixiJS Container with a Graphics child for procedural drawing.
- * Handles two categories:
+ * Owns a THREE.Group added to the scene graph. Handles two categories:
  *   - Continuous effects (wake trails, stern churn) tied to entity state
  *   - Transient effects (explosions, sinking) that run independently
+ *
+ * Effects own Three.js objects that render automatically in the scene.
  */
 
-import { Container, Graphics } from "pixi.js";
+import * as THREE from "three";
 import type { EntityState } from "../game/entities";
-import type { Camera } from "../render/camera";
-import type { VehicleType } from "../vehicles/physics";
 import { Explosion } from "./explosion";
 import { Sinking } from "./sinking";
 import { SternChurn } from "./stern-churn";
-import type { Effect } from "./types";
+import type { ThreeEffect } from "./types";
 import { WakeTrail } from "./wake-trail";
 
 // Vehicle defaults needed for effect generation
@@ -22,8 +21,8 @@ const VEHICLE_DEFAULTS: Record<
 	string,
 	{ size: number; airborne: boolean; maxSpeed: number }
 > = {
-	oil_tanker: { size: 220, airborne: false, maxSpeed: 7.5 },
-	shahed: { size: 4, airborne: true, maxSpeed: 40 },
+	oil_tanker: { size: 220, airborne: false, maxSpeed: 15 },
+	shahed: { size: 4, airborne: true, maxSpeed: 80 },
 	speedboat: { size: 10, airborne: false, maxSpeed: 26 },
 	frigate: { size: 100, airborne: false, maxSpeed: 13.5 },
 	truck: { size: 5, airborne: false, maxSpeed: 18 },
@@ -37,27 +36,22 @@ const FACTION_COLORS: Record<string, number> = {
 	us: 0x2980b9,
 };
 
-export class EffectManager {
-	private container: Container;
-	private graphics: Graphics;
-	private transientEffects: Effect[] = [];
+export class ThreeEffectManager {
+	readonly root: THREE.Group;
+	private transientEffects: ThreeEffect[] = [];
 	private wakeTrails = new Map<number, WakeTrail>();
 	private sternChurns = new Map<number, SternChurn>();
 	private previousHp = new Map<number, number>();
 
 	constructor() {
-		this.container = new Container();
-		this.graphics = new Graphics();
-		this.container.addChild(this.graphics);
-	}
-
-	getContainer(): Container {
-		return this.container;
+		this.root = new THREE.Group();
 	}
 
 	/** Spawn an explosion effect at the given world position. */
 	spawnExplosion(x: number, y: number, radius = 60): void {
-		this.transientEffects.push(new Explosion(x, y, radius));
+		const effect = new Explosion(x, y, radius);
+		this.transientEffects.push(effect);
+		this.root.add(effect.root);
 	}
 
 	/** Spawn a sinking effect for a destroyed vehicle. */
@@ -68,15 +62,16 @@ export class EffectManager {
 		size: number,
 		color: number,
 	): void {
-		this.transientEffects.push(new Sinking(x, y, heading, size, color));
+		const effect = new Sinking(x, y, heading, size, color);
+		this.transientEffects.push(effect);
+		this.root.add(effect.root);
 	}
 
 	/**
 	 * Update all effects. Call once per frame with interpolated entities.
-	 * Manages wake trails and stern churns based on entity state,
-	 * detects deaths to spawn sinking effects, and advances transient effects.
+	 * Zoom is needed for screen-pixel-to-world-unit conversions.
 	 */
-	update(entities: EntityState[], dt: number): void {
+	update(entities: EntityState[], dt: number, zoom: number): void {
 		const activeIds = new Set<number>();
 
 		for (const e of entities) {
@@ -90,20 +85,22 @@ export class EffectManager {
 			if (prevHp > 0 && e.hp <= 0) {
 				const color = FACTION_COLORS[e.faction] ?? 0xcccccc;
 				this.spawnSinking(e.x, e.y, e.heading, defaults.size, color);
-				// Clear wake/churn so respawn at new position doesn't draw a line artifact
-				this.wakeTrails.delete(e.id);
-				this.sternChurns.delete(e.id);
+				// Clear wake/churn so respawn doesn't draw a line artifact
+				this.removeWake(e.id);
+				this.removeChurn(e.id);
 			}
 			this.previousHp.set(e.id, e.hp);
 
-			// Skip dead or airborne vehicles for water effects
-			if (e.hp <= 0 || defaults.airborne || e.vehicleType === "truck") continue;
+			// Skip dead, airborne, or truck entities for water effects
+			if (e.hp <= 0 || defaults.airborne || e.vehicleType === "truck")
+				continue;
 
 			// Wake trail
 			let wake = this.wakeTrails.get(e.id);
 			if (!wake) {
 				wake = new WakeTrail(e.id);
 				this.wakeTrails.set(e.id, wake);
+				this.root.add(wake.root);
 			}
 			wake.feed(e.x, e.y, e.heading, e.speed, defaults.size, dt);
 
@@ -112,6 +109,7 @@ export class EffectManager {
 			if (!churn) {
 				churn = new SternChurn(e.id);
 				this.sternChurns.set(e.id, churn);
+				this.root.add(churn.root);
 			}
 			churn.feed(
 				e.x,
@@ -126,39 +124,69 @@ export class EffectManager {
 
 		// Remove effects for entities that no longer exist
 		for (const [id] of this.wakeTrails) {
-			if (!activeIds.has(id)) this.wakeTrails.delete(id);
+			if (!activeIds.has(id)) this.removeWake(id);
 		}
 		for (const [id] of this.sternChurns) {
-			if (!activeIds.has(id)) this.sternChurns.delete(id);
+			if (!activeIds.has(id)) this.removeChurn(id);
 		}
 		for (const [id] of this.previousHp) {
 			if (!activeIds.has(id)) this.previousHp.delete(id);
 		}
 
-		// Update transient effects
-		for (const e of this.transientEffects) {
-			e.update(dt);
+		// Update all continuous effects
+		for (const [, wake] of this.wakeTrails) {
+			wake.update(dt, zoom);
+		}
+		for (const [, churn] of this.sternChurns) {
+			churn.update(dt, zoom);
+		}
+
+		// Update transient effects, remove dead ones
+		for (const effect of this.transientEffects) {
+			effect.update(dt, zoom);
+		}
+		const dead = this.transientEffects.filter((e) => !e.alive);
+		for (const effect of dead) {
+			this.root.remove(effect.root);
+			effect.dispose();
 		}
 		this.transientEffects = this.transientEffects.filter((e) => e.alive);
 	}
 
-	/** Draw all effects. Call after update(), before vehicle rendering. */
-	draw(cam: Camera): void {
-		this.graphics.clear();
+	private removeWake(id: number): void {
+		const wake = this.wakeTrails.get(id);
+		if (wake) {
+			this.root.remove(wake.root);
+			wake.dispose();
+			this.wakeTrails.delete(id);
+		}
+	}
 
-		// Wake trails (behind everything)
+	private removeChurn(id: number): void {
+		const churn = this.sternChurns.get(id);
+		if (churn) {
+			this.root.remove(churn.root);
+			churn.dispose();
+			this.sternChurns.delete(id);
+		}
+	}
+
+	/** Clean up all GPU resources. */
+	dispose(): void {
 		for (const [, wake] of this.wakeTrails) {
-			wake.draw(this.graphics, cam);
+			this.root.remove(wake.root);
+			wake.dispose();
 		}
-
-		// Stern churns
 		for (const [, churn] of this.sternChurns) {
-			churn.draw(this.graphics, cam);
+			this.root.remove(churn.root);
+			churn.dispose();
 		}
-
-		// Transient effects (explosions, sinking)
-		for (const e of this.transientEffects) {
-			e.draw(this.graphics, cam);
+		for (const effect of this.transientEffects) {
+			this.root.remove(effect.root);
+			effect.dispose();
 		}
+		this.wakeTrails.clear();
+		this.sternChurns.clear();
+		this.transientEffects = [];
 	}
 }
