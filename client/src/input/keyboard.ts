@@ -11,6 +11,10 @@
  * Ships use stepped throttle (ArrowUp/W increment, ArrowDown/S decrement).
  */
 
+export type CameraMode = "isometric" | "third-person";
+
+const CAMERA_MODES: CameraMode[] = ["isometric", "third-person"];
+
 export class KeyboardManager {
 	private keys = new Set<string>();
 
@@ -21,6 +25,10 @@ export class KeyboardManager {
 	private _autopilotOn = true;
 	private _autopilotToggled = false;
 	private _steerInputThisFrame = false;
+
+	// Camera mode (V key cycles through modes)
+	private _cameraMode: CameraMode = "isometric";
+	private _cameraModeChanged = false;
 
 	constructor() {
 		window.addEventListener("keydown", (e) => {
@@ -39,6 +47,13 @@ export class KeyboardManager {
 			if (key === "p" && !e.repeat) {
 				this._autopilotOn = !this._autopilotOn;
 				this._autopilotToggled = true;
+			}
+
+			// Camera mode toggle: V key, edge-triggered
+			if (key === "v" && !e.repeat) {
+				const idx = CAMERA_MODES.indexOf(this._cameraMode);
+				this._cameraMode = CAMERA_MODES[(idx + 1) % CAMERA_MODES.length];
+				this._cameraModeChanged = true;
 			}
 
 			// Detect steering input (A/D/ArrowLeft/ArrowRight)
@@ -114,5 +129,18 @@ export class KeyboardManager {
 		const had = this._steerInputThisFrame;
 		this._steerInputThisFrame = false;
 		return had;
+	}
+
+	// --- Camera mode ---
+
+	get cameraMode(): CameraMode {
+		return this._cameraMode;
+	}
+
+	/** Returns true if V was pressed since last call. Resets the flag. */
+	consumeCameraModeChange(): boolean {
+		const changed = this._cameraModeChanged;
+		this._cameraModeChanged = false;
+		return changed;
 	}
 }

@@ -4,11 +4,13 @@
  * Single Three.js canvas with a DOM HUD overlay.
  */
 
+import * as THREE from "three";
 import { ThreeEffectManager } from "./effects/manager";
 import { EntityStore } from "./game/entities";
 import { SnapshotInterpolator } from "./game/interpolation";
-import { KeyboardManager } from "./input/keyboard";
+import { type CameraMode, KeyboardManager } from "./input/keyboard";
 import { MAP } from "./map/data";
+import { getElevation } from "./map/heightmap";
 import { GameConnection } from "./net/connection";
 import { type Camera, createCamera } from "./render/camera";
 import { COLORS } from "./render/colors";
@@ -101,6 +103,16 @@ function init() {
 	let spectating = false;
 	let pendingAssign: { entityId: number; vehicleType: string } | null = null;
 	const SPECTATOR_ZOOM = { min: 0.005, max: 10 };
+
+	// Perspective camera state (third-person / first-person)
+	let prevCameraMode: CameraMode = "isometric";
+	const _tPos = new THREE.Vector3();
+	const _tLook = new THREE.Vector3();
+	const PERSP = {
+		tpDistance: 3,
+		tpHeight: 1.5,
+		smoothing: 8,
+	};
 
 	// --- Connection handlers ---
 	conn.onSnapshot((snapshot) => {
@@ -232,6 +244,10 @@ function init() {
 			applyAssignment(pendingAssign.entityId, pendingAssign.vehicleType);
 		}
 
+		// Consume camera mode change (resets to isometric when spectating)
+		const cameraMode = spectating ? "isometric" : keyboard.cameraMode;
+		keyboard.consumeCameraModeChange();
+
 		// Camera: follow vehicle when playing, WASD pan when spectating
 		if (spectating) {
 			const panSpeed = 500 / cam.zoom;
@@ -255,20 +271,52 @@ function init() {
 			}
 		}
 
+		// Update perspective camera for third-person / first-person modes
+		if (cameraMode !== "isometric" && assignedEntityId !== null) {
+			const target = entities.find((e) => e.id === assignedEntityId);
+			if (target) {
+				const defaults = VEHICLE_DEFAULTS[target.vehicleType];
+				const sz = defaults?.size ?? 50;
+				const elev = defaults?.airborne
+					? getElevation(target.x, target.y) + 30
+					: getElevation(target.x, target.y);
+				const fwdX = Math.cos(target.heading);
+				const fwdZ = Math.sin(target.heading);
+
+				const dist = sz * PERSP.tpDistance;
+				const height = sz * PERSP.tpHeight;
+				_tPos.set(target.x - fwdX * dist, elev + height, target.y - fwdZ * dist);
+				_tLook.set(target.x, elev + sz * 0.2, target.y);
+
+				if (prevCameraMode !== cameraMode) {
+					threeScene.perspCamera.position.copy(_tPos);
+				} else {
+					const t = 1 - Math.exp(-PERSP.smoothing * dt);
+					threeScene.perspCamera.position.lerp(_tPos, t);
+				}
+				threeScene.perspCamera.lookAt(_tLook);
+			}
+		}
+		prevCameraMode = cameraMode;
+
 		// Update Three.js objects
 		threeMap.update(elapsedTime, cam.zoom);
 		threeVehicles.update(entities, assignedEntityId, FACTION_COLORS);
 		threeEffects.update(entities, dt, cam.zoom);
 
 		// Render Three.js scene (map + vehicles + effects)
-		threeScene.syncCamera(
-			cam.worldX,
-			cam.worldY,
-			cam.zoom,
-			cam.screenWidth,
-			cam.screenHeight,
-		);
-		threeScene.render();
+		if (cameraMode === "isometric") {
+			threeScene.syncCamera(
+				cam.worldX,
+				cam.worldY,
+				cam.zoom,
+				cam.screenWidth,
+				cam.screenHeight,
+			);
+			threeScene.render();
+		} else {
+			threeScene.renderPerspective();
+		}
 
 		// HUD
 		hud.updateVehicle(spectating, pendingAssign !== null, assignedVehicleType);

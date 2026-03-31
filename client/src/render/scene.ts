@@ -63,6 +63,7 @@ export class ThreeScene {
 	readonly renderer: THREE.WebGLRenderer;
 	readonly scene: THREE.Scene;
 	readonly camera: THREE.OrthographicCamera;
+	readonly perspCamera: THREE.PerspectiveCamera;
 
 	constructor(canvas?: HTMLCanvasElement) {
 		this.renderer = new THREE.WebGLRenderer({
@@ -79,11 +80,16 @@ export class ThreeScene {
 		this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, VIEW_DISTANCE * 2);
 		this.camera.up.copy(CAMERA_UP);
 		this.scene.add(this.camera);
+
+		this.perspCamera = new THREE.PerspectiveCamera(60, 1, 1, 100000);
+		this.scene.add(this.perspCamera);
 	}
 
 	/** Resize the renderer to match the given screen dimensions. */
 	setSize(width: number, height: number): void {
 		this.renderer.setSize(width, height);
+		this.perspCamera.aspect = width / height;
+		this.perspCamera.updateProjectionMatrix();
 	}
 
 	/** Sync camera to match game Camera state. */
@@ -97,9 +103,14 @@ export class ThreeScene {
 		syncCamera(this.camera, worldX, worldY, zoom, screenWidth, screenHeight);
 	}
 
-	/** Render one frame. */
+	/** Render one frame using the orthographic camera. */
 	render(): void {
 		this.renderer.render(this.scene, this.camera);
+	}
+
+	/** Render one frame using the perspective camera. */
+	renderPerspective(): void {
+		this.renderer.render(this.scene, this.perspCamera);
 	}
 
 	/** Clean up WebGL resources. */
