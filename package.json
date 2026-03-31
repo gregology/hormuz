@@ -17,7 +17,6 @@
     "lint:client": "pnpm --filter client lint",
     "lint:playground": "pnpm --filter playground lint",
     "lint:server": "cd server && uv run ruff check .",
-    "format:server": "cd server && uv run ruff format .",
-    "docker:server": "pnpm generate && pnpm generate:coastlines && pnpm generate:heightmap && docker build -t hormuz-server:latest ./server"
+    "format:server": "cd server && uv run ruff format ."
   }
 }

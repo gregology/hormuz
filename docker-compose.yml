@@ -1,5 +1,5 @@
 #  cd path/to/hormuz
-#  pnpm docker:server                    # runs codegen + docker build
+#  docker build -t hormuz-server:latest -f server/Dockerfile .
 #  docker build -t hormuz-client:latest -f client/Dockerfile .   
 
 services:

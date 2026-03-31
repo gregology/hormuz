@@ -1,16 +1,31 @@
+# Build context must be the repo root:
+#   docker build -t hormuz-server:latest -f server/Dockerfile .
+
+# --- Stage 1: generate Python code from YAML + geographic data ---
+FROM python:3.12-slim AS codegen
+
+WORKDIR /build
+COPY shared/ shared/
+
+# Create output directories the scripts expect
+RUN mkdir -p server/src/hormuz/generated client/src/generated client/src/map
+
+RUN pip install --no-cache-dir pyyaml shapely requests numpy scipy
+
+RUN python shared/scripts/generate.py && \
+    python shared/scripts/generate_coastlines.py && \
+    python shared/scripts/generate_heightmap.py
+
+# --- Stage 2: server image ---
 FROM python:3.12-slim
 
 WORKDIR /app
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-COPY pyproject.toml .
-COPY src/ src/
-
-# Verify codegen ran before docker build (generated files are gitignored,
-# so the build host must run: pnpm generate && pnpm generate:coastlines && pnpm generate:heightmap)
-RUN test -f src/hormuz/generated/__init__.py || \
-    (echo "ERROR: server/src/hormuz/generated/ is missing. Run 'pnpm generate && pnpm generate:coastlines && pnpm generate:heightmap' before building." && exit 1)
+COPY server/pyproject.toml .
+COPY server/src/ src/
+COPY --from=codegen /build/server/src/hormuz/generated/ src/hormuz/generated/
 
 RUN uv sync --no-dev
 
