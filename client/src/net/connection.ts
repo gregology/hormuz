@@ -63,9 +63,9 @@ export class GameConnection {
 		this.onEventCb = cb;
 	}
 
-	sendInput(keys: number): void {
+	sendInput(keys: number, throttleFloat: number, autopilot: boolean): void {
 		if (this.ws?.readyState === WebSocket.OPEN) {
-			this.ws.send(encodeInput(keys, 0, 0, 0));
+			this.ws.send(encodeInput(keys, 0, 0, 0, throttleFloat, autopilot));
 		}
 	}
 

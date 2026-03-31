@@ -82,6 +82,7 @@ function init() {
 	let assignedVehicleType = "";
 	let warCost = { totalUsd: 0, tankersDelivered: 0, tankersSunk: 0 };
 	let elapsedTime = 0;
+	let autopilotOn = true;
 
 	// Zoom limits per vehicle type (scaled roughly by inverse vehicle size)
 	const ZOOM_LIMITS: Record<
@@ -128,6 +129,11 @@ function init() {
 		// Update zoom limits and reset zoom for the new vehicle type
 		zoomLimits = ZOOM_LIMITS[vehicleType] ?? DEFAULT_ZOOM_LIMITS;
 		cam.zoom = zoomLimits.default;
+
+		// Reset throttle and autopilot for the new vehicle
+		keyboard.throttleLevel = 0;
+		autopilotOn = vehicleType === "oil_tanker";
+		keyboard.autopilotOn = autopilotOn;
 
 		// Snap camera to the new vehicle
 		const now = performance.now() / 1000;
@@ -184,8 +190,31 @@ function init() {
 		elapsedTime += dt;
 		const renderTime = now / 1000;
 
+		// --- Autopilot logic (tankers only) ---
+		if (assignedVehicleType === "oil_tanker" && !spectating) {
+			if (keyboard.consumeAutopilotToggle()) {
+				autopilotOn = keyboard.autopilotOn;
+			}
+			if (keyboard.consumeSteerInput() && autopilotOn) {
+				autopilotOn = false;
+				keyboard.autopilotOn = false;
+			}
+		} else {
+			keyboard.consumeAutopilotToggle();
+			keyboard.consumeSteerInput();
+		}
+
 		// Send input to server
-		conn.sendInput(keyboard.getBitmask());
+		const isShip =
+			assignedVehicleType === "oil_tanker" ||
+			assignedVehicleType === "frigate" ||
+			assignedVehicleType === "speedboat";
+		const throttleFloat = isShip ? keyboard.throttleFloat : 0.0;
+		conn.sendInput(
+			keyboard.getBitmask(),
+			throttleFloat,
+			autopilotOn && assignedVehicleType === "oil_tanker",
+		);
 
 		// Get interpolated entities
 		const entities = interpolator.getAllInterpolated(renderTime);
@@ -250,6 +279,13 @@ function init() {
 		);
 		const entityCount = entities.filter((e) => e.hp > 0).length;
 		hud.updateStatus(entityCount, cam.zoom);
+
+		const showShipHud = isShip && !spectating;
+		hud.updateThrottle(keyboard.throttleLevel, showShipHud);
+		hud.updateAutopilot(
+			autopilotOn,
+			assignedVehicleType === "oil_tanker" && !spectating,
+		);
 	}
 
 	requestAnimationFrame(frame);

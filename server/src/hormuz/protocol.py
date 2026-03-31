@@ -76,6 +76,8 @@ def decode_client_message(data: bytes) -> dict:
             "mouse_x": msg[2] if len(msg) > 2 else 0,
             "mouse_y": msg[3] if len(msg) > 3 else 0,
             "action": msg[4] if len(msg) > 4 else 0,
+            "throttle_float": msg[5] if len(msg) > 5 else 0.0,
+            "autopilot": bool(msg[6]) if len(msg) > 6 else False,
         }
     if msg_type == MSG_HEARTBEAT:
         return {"type": MSG_HEARTBEAT}

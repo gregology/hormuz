@@ -12,6 +12,7 @@ from hormuz.components import (
     Transform,
     VehiclePhysics,
 )
+from hormuz.systems.bot_ai import run_tanker_ai
 
 # Re-export for combat.py import
 __all__ = ["PhysicsProcessor", "BREACH_CLAMP_COUNT", "BREACH_RATE"]
@@ -48,6 +49,11 @@ class PhysicsProcessor(esper.Processor):
     def _get_input(self, ent: int) -> tuple[float, float]:
         pc = esper.try_component(ent, PlayerControl)
         if pc is not None:
+            if pc.autopilot:
+                # Autopilot controls steering only — player keeps throttle control
+                tf = esper.component_for_entity(ent, Transform)
+                _, rudder, pc.waypoint_index = run_tanker_ai(tf, pc.waypoint_index)
+                return pc.throttle, rudder
             return pc.throttle, pc.rudder
         bc = esper.try_component(ent, BotControl)
         if bc is not None:

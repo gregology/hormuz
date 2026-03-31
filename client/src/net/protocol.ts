@@ -121,7 +121,17 @@ export function encodeInput(
 	mouseX: number,
 	mouseY: number,
 	action: number,
+	throttleFloat: number,
+	autopilot: boolean,
 ): Uint8Array {
-	return encode([MSG_INPUT, keys, mouseX, mouseY, action]) as Uint8Array;
+	return encode([
+		MSG_INPUT,
+		keys,
+		mouseX,
+		mouseY,
+		action,
+		throttleFloat,
+		autopilot ? 1 : 0,
+	]) as Uint8Array;
 }
 

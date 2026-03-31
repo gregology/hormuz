@@ -188,8 +188,22 @@ def _pick_weighted(candidates: list[int]) -> int:
 
 def _assign_entity(conn_id: int, ent: int) -> None:
     """Hand an entity from bot control to a player."""
+    waypoint_index = 0
+    bot = esper.try_component(ent, BotControl)
+    if bot is not None:
+        waypoint_index = bot.waypoint_index
     esper.remove_component(ent, BotControl)
-    esper.add_component(ent, PlayerControl(connection_id=conn_id))
+
+    phys = esper.component_for_entity(ent, VehiclePhysics)
+    autopilot_default = phys.vehicle_type == "oil_tanker"
+    esper.add_component(
+        ent,
+        PlayerControl(
+            connection_id=conn_id,
+            autopilot=autopilot_default,
+            waypoint_index=waypoint_index,
+        ),
+    )
     player_entities[conn_id] = ent
 
 
@@ -260,29 +274,48 @@ def release_vehicle(conn_id: int) -> None:
     ent = player_entities.pop(conn_id, None)
     if ent is None or not esper.entity_exists(ent):
         return
+    waypoint_index = 0
     if esper.has_component(ent, PlayerControl):
+        pc = esper.component_for_entity(ent, PlayerControl)
+        waypoint_index = pc.waypoint_index
         esper.remove_component(ent, PlayerControl)
     if not esper.has_component(ent, BotControl):
         phys = esper.component_for_entity(ent, VehiclePhysics)
         behavior = "tanker_transit" if phys.vehicle_type == "oil_tanker" else "shahed_intercept"
-        esper.add_component(ent, BotControl(behavior))
+        esper.add_component(ent, BotControl(behavior, waypoint_index=waypoint_index))
 
 
-def apply_input(conn_id: int, keys: int) -> None:
-    """Decode key bitmask and update player's vehicle input."""
+def apply_input(conn_id: int, msg: dict) -> None:
+    """Decode input message and update player's vehicle input."""
     ent = player_entities.get(conn_id)
     if ent is None or not esper.entity_exists(ent):
         return
     pc = esper.try_component(ent, PlayerControl)
     if pc is None:
         return
-    # Decode bitmask: bit0=W, bit1=S, bit2=A, bit3=D
-    fwd = 1.0 if keys & 0x01 else 0.0
-    rev = 1.0 if keys & 0x02 else 0.0
+
+    keys = msg["keys"]
+    throttle_float = msg.get("throttle_float", 0.0)
+    autopilot = msg.get("autopilot", False)
+
+    phys = esper.component_for_entity(ent, VehiclePhysics)
+
+    # Decode rudder from bitmask: bit2=A/Left, bit3=D/Right
     left = 1.0 if keys & 0x04 else 0.0
     right = 1.0 if keys & 0x08 else 0.0
-    pc.throttle = fwd - rev
     pc.rudder = right - left
+
+    if phys.vehicle_type == "shahed":
+        # Shaheds use hold-to-move (W/S from bitmask)
+        fwd = 1.0 if keys & 0x01 else 0.0
+        rev = 1.0 if keys & 0x02 else 0.0
+        pc.throttle = fwd - rev
+        pc.autopilot = False
+    else:
+        # Ships use stepped throttle float from client
+        pc.throttle = max(-1.0, min(1.0, throttle_float))
+        # Autopilot only for tankers
+        pc.autopilot = autopilot if phys.vehicle_type == "oil_tanker" else False
 
 
 async def broadcast(data: bytes) -> None:
@@ -451,7 +484,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             data = await websocket.receive_bytes()
             msg = decode_client_message(data)
             if msg["type"] == MSG_INPUT:
-                apply_input(conn_id, msg["keys"])
+                apply_input(conn_id, msg)
     except WebSocketDisconnect:
         connections.pop(conn_id, None)
         release_vehicle(conn_id)

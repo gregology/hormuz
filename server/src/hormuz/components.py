@@ -158,17 +158,21 @@ class BotControl:
 class PlayerControl:
     """Human-controlled entity."""
 
-    __slots__ = ("connection_id", "throttle", "rudder")
+    __slots__ = ("connection_id", "throttle", "rudder", "autopilot", "waypoint_index")
 
     def __init__(
         self,
         connection_id: int,
         throttle: float = 0.0,
         rudder: float = 0.0,
+        autopilot: bool = False,
+        waypoint_index: int = 0,
     ) -> None:
         self.connection_id = connection_id
         self.throttle = throttle
         self.rudder = rudder
+        self.autopilot = autopilot
+        self.waypoint_index = waypoint_index
 
 
 class RespawnTimer:

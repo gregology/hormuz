@@ -24,6 +24,32 @@ WAYPOINT_ADVANCE_DIST_SQ = 500.0**2
 EXIT_DIST_SQ = 1500.0**2
 
 
+def run_tanker_ai(
+    tf: Transform, waypoint_index: int
+) -> tuple[float, float, int]:
+    """Run tanker waypoint-following AI. Returns (throttle, rudder, new_waypoint_index).
+
+    Extracted so it can be reused by the autopilot system for player-controlled tankers.
+    """
+    route = LANE_OUTBOUND
+    exit_point = TANKER_EXITS[0]  # Gulf of Oman exit
+
+    if waypoint_index < len(route):
+        wx, wy = route[waypoint_index]
+        dx = wx - tf.x
+        dy = wy - tf.y
+        if dx * dx + dy * dy < WAYPOINT_ADVANCE_DIST_SQ:
+            waypoint_index += 1
+
+    if waypoint_index < len(route):
+        wx, wy = route[waypoint_index]
+        rudder = steer_toward(tf, wx, wy)
+    else:
+        rudder = steer_toward(tf, exit_point[0], exit_point[1])
+
+    return 1.0, rudder, waypoint_index
+
+
 class BotAIProcessor(esper.Processor):
     def process(self, dt: float = 0.05) -> None:
         for ent, (tf, bot) in esper.get_components(Transform, BotControl):
@@ -33,24 +59,9 @@ class BotAIProcessor(esper.Processor):
                 self._shahed_ai(ent, tf, bot)
 
     def _tanker_ai(self, tf: Transform, bot: BotControl) -> None:
-        route = LANE_OUTBOUND
-        exit_point = TANKER_EXITS[0]  # Gulf of Oman exit
-
-        if bot.waypoint_index < len(route):
-            wx, wy = route[bot.waypoint_index]
-            dx = wx - tf.x
-            dy = wy - tf.y
-            if dx * dx + dy * dy < WAYPOINT_ADVANCE_DIST_SQ:
-                bot.waypoint_index += 1
-
-        if bot.waypoint_index < len(route):
-            wx, wy = route[bot.waypoint_index]
-            bot.rudder = steer_toward(tf, wx, wy)
-        else:
-            # Past last waypoint, head for exit
-            bot.rudder = steer_toward(tf, exit_point[0], exit_point[1])
-
-        bot.throttle = 1.0
+        bot.throttle, bot.rudder, bot.waypoint_index = run_tanker_ai(
+            tf, bot.waypoint_index
+        )
 
     def _shahed_ai(self, ent: int, tf: Transform, bot: BotControl) -> None:
         best_dist_sq = float("inf")

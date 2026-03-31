@@ -209,6 +209,68 @@ function init() {
 	hudEl.append(coordEl, boatEl);
 	document.body.appendChild(hudEl);
 
+	// ---- Throttle bar (right edge, vertical) ----
+	const throttleContainer = document.createElement("div");
+	Object.assign(throttleContainer.style, {
+		position: "fixed",
+		right: "20px",
+		top: "50%",
+		transform: "translateY(-50%)",
+		display: "none",
+		flexDirection: "column",
+		alignItems: "center",
+		gap: "1px",
+		pointerEvents: "none",
+	} satisfies Partial<CSSStyleDeclaration>);
+
+	const throttleSegments: HTMLDivElement[] = [];
+	for (let i = 0; i < 21; i++) {
+		const level = 10 - i;
+		const seg = document.createElement("div");
+		Object.assign(seg.style, {
+			width: "8px",
+			height: level === 0 ? "3px" : "10px",
+			backgroundColor: level === 0 ? "#ffffff" : "#333333",
+			borderRadius: "1px",
+		} satisfies Partial<CSSStyleDeclaration>);
+		if (level !== 0) {
+			seg.style.border = "1px solid #555";
+		}
+		throttleContainer.appendChild(seg);
+		throttleSegments.push(seg);
+	}
+
+	const throttleLabelEl = document.createElement("div");
+	Object.assign(throttleLabelEl.style, {
+		color: "#ffffff",
+		fontFamily: "monospace",
+		fontSize: "12px",
+		marginTop: "4px",
+		textShadow: "1px 1px 2px #000",
+	} satisfies Partial<CSSStyleDeclaration>);
+	throttleLabelEl.textContent = "0";
+	throttleContainer.appendChild(throttleLabelEl);
+	document.body.appendChild(throttleContainer);
+
+	// ---- Autopilot badge ----
+	const apBadge = document.createElement("div");
+	Object.assign(apBadge.style, {
+		position: "fixed",
+		right: "48px",
+		top: "50%",
+		transform: "translateY(-50%)",
+		fontFamily: "monospace",
+		fontSize: "16px",
+		fontWeight: "bold",
+		padding: "4px 8px",
+		borderRadius: "4px",
+		pointerEvents: "none",
+		display: "none",
+		textShadow: "1px 1px 2px #000",
+	} satisfies Partial<CSSStyleDeclaration>);
+	apBadge.textContent = "AP";
+	document.body.appendChild(apBadge);
+
 	// ---- Input state ----
 	const keysDown = new Set<string>();
 	let isDragging = false;
@@ -217,6 +279,18 @@ function init() {
 	let mouseScreenX = 0;
 	let mouseScreenY = 0;
 	let elapsedTime = 0;
+
+	// Stepped throttle for ships (-10 to +10)
+	let throttleLevel = 0;
+	let autopilotOn = false;
+
+	function isShipVehicle(v: NavalVehicle): boolean {
+		return v.propellerOffset !== 0;
+	}
+
+	function isTankerVehicle(v: NavalVehicle): boolean {
+		return v.vehicleType === "oil_tanker";
+	}
 
 	type CameraMode = "isometric" | "third-person" | "first-person";
 	const mode = {
@@ -558,7 +632,35 @@ function init() {
 
 	// ---- Keyboard ----
 	window.addEventListener("keydown", (e: KeyboardEvent) => {
-		keysDown.add(e.key.toLowerCase());
+		const key = e.key.toLowerCase();
+		keysDown.add(key);
+
+		// Stepped throttle for ships: ArrowUp/W increments, ArrowDown/S decrements
+		if (isShipVehicle(activeVehicle()) && !mode.freeCamera) {
+			if (key === "arrowup" || key === "w") {
+				throttleLevel = Math.min(10, throttleLevel + 1);
+				e.preventDefault();
+			} else if (key === "arrowdown" || key === "s") {
+				throttleLevel = Math.max(-10, throttleLevel - 1);
+				e.preventDefault();
+			}
+		}
+
+		// Autopilot toggle: P key
+		if (key === "p" && !e.repeat && isTankerVehicle(activeVehicle())) {
+			autopilotOn = !autopilotOn;
+		}
+
+		// Steering disengages autopilot
+		if (
+			(key === "a" ||
+				key === "arrowleft" ||
+				key === "d" ||
+				key === "arrowright") &&
+			autopilotOn
+		) {
+			autopilotOn = false;
+		}
 
 		// Tab: toggle free camera
 		if (e.key === "Tab") {
@@ -568,7 +670,7 @@ function init() {
 		}
 
 		// V: cycle camera mode
-		if (e.key === "v") {
+		if (key === "v") {
 			const modes: CameraMode[] = ["isometric", "third-person", "first-person"];
 			const idx = modes.indexOf(mode.cameraMode);
 			mode.cameraMode = modes[(idx + 1) % modes.length];
@@ -585,6 +687,9 @@ function init() {
 			mode.freeCamera = false;
 			mode.cameraFollow = true;
 			rebuildVehicleFolder();
+			// Reset throttle and autopilot for new vehicle
+			throttleLevel = 0;
+			autopilotOn = isTankerVehicle(activeVehicle());
 		}
 	});
 
@@ -616,10 +721,22 @@ function init() {
 		// -- Input --
 		const input: VehicleInput = { throttle: 0, rudder: 0 };
 		if (!mode.freeCamera) {
-			if (keysDown.has("w") || keysDown.has("arrowup")) input.throttle = 1;
-			if (keysDown.has("s") || keysDown.has("arrowdown")) input.throttle = -1;
-			if (keysDown.has("a") || keysDown.has("arrowleft")) input.rudder = -1;
-			if (keysDown.has("d") || keysDown.has("arrowright")) input.rudder = 1;
+			const ship = isShipVehicle(activeVehicle());
+			if (ship) {
+				// Ships use stepped throttle (player always controls throttle)
+				input.throttle = throttleLevel / 10;
+			} else {
+				// Non-ships use hold-to-move
+				if (keysDown.has("w") || keysDown.has("arrowup")) input.throttle = 1;
+				if (keysDown.has("s") || keysDown.has("arrowdown"))
+					input.throttle = -1;
+			}
+			// Autopilot controls steering only — rudder is 0 (go straight)
+			// When off, player steers manually
+			if (!autopilotOn) {
+				if (keysDown.has("a") || keysDown.has("arrowleft")) input.rudder = -1;
+				if (keysDown.has("d") || keysDown.has("arrowright")) input.rudder = 1;
+			}
 		} else {
 			const panSpeed = 500 / cam.zoom;
 			if (keysDown.has("a") || keysDown.has("arrowleft")) {
@@ -820,7 +937,6 @@ function init() {
 		const world = screenToWorld(cam, mouseScreenX, mouseScreenY);
 		const v = activeVehicle();
 		const label = vehicles[activeIndex].label;
-		const omega = v.angularVelocity;
 		const pv = vehicles[activeIndex];
 		const hpStr =
 			pv.hp <= 0 ? `DEAD (${pv.respawnTimer.toFixed(1)}s)` : `HP: ${pv.hp}`;
@@ -836,13 +952,53 @@ function init() {
 			v.floodLevel > 0
 				? `  Flood: ${(v.floodLevel * 100).toFixed(0)}%  List: ${((v.listAngle * 180) / Math.PI).toFixed(1)}°`
 				: "";
-		boatEl.textContent = `${label}: ${hpStr}  Speed: ${v.speed.toFixed(1)} kn (max ${eqSpd.toFixed(0)})  Heading: ${((v.heading * 180) / Math.PI).toFixed(0)}°${floodStr}  [1-6]`;
+		const controlHint = isShipVehicle(v)
+			? "arrows steer/throttle, P autopilot"
+			: "WASD";
+		boatEl.textContent = `${label}: ${hpStr}  Speed: ${v.speed.toFixed(1)} kn (max ${eqSpd.toFixed(0)})  Heading: ${((v.heading * 180) / Math.PI).toFixed(0)}°${floodStr}  [1-6] ${controlHint}`;
+
+		// -- Throttle bar --
+		const showThrottle = isShipVehicle(v);
+		throttleContainer.style.display = showThrottle ? "flex" : "none";
+		if (showThrottle) {
+			throttleLabelEl.textContent =
+				throttleLevel > 0 ? `+${throttleLevel}` : `${throttleLevel}`;
+			for (let i = 0; i < 21; i++) {
+				const segLevel = 10 - i;
+				const seg = throttleSegments[i];
+				if (segLevel === 0) {
+					seg.style.backgroundColor = "#ffffff";
+				} else if (
+					throttleLevel > 0 &&
+					segLevel > 0 &&
+					segLevel <= throttleLevel
+				) {
+					seg.style.backgroundColor = "#00cc44";
+				} else if (
+					throttleLevel < 0 &&
+					segLevel < 0 &&
+					segLevel >= throttleLevel
+				) {
+					seg.style.backgroundColor = "#cc4400";
+				} else {
+					seg.style.backgroundColor = "#333333";
+				}
+			}
+		}
+
+		// -- Autopilot badge --
+		const showAp = isTankerVehicle(v);
+		apBadge.style.display = showAp ? "block" : "none";
+		if (showAp) {
+			apBadge.style.backgroundColor = autopilotOn ? "#00aa44" : "#555555";
+			apBadge.style.color = autopilotOn ? "#ffffff" : "#999999";
+		}
 	}
 
 	requestAnimationFrame(frame);
 
 	console.log(
-		"Hormuz playground — WASD to drive, 1-6 to switch vehicle, Tab for free camera, V to cycle camera mode, scroll to zoom",
+		"Hormuz playground — WASD to drive, arrows steer/throttle (ships), P autopilot (tanker), 1-6 switch vehicle, Tab free camera, V cycle camera, scroll zoom",
 	);
 }
 
