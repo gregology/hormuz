@@ -59,7 +59,7 @@ def _make_tanker(x: float, y: float) -> tuple:
 
 
 class TestShahedTankerCombat:
-    def test_overlapping_shahed_and_tanker_kills_both(self):
+    def test_overlapping_shahed_dies_tanker_gets_breaches(self):
         s_comps = _make_shahed(100, 100)
         t_comps = _make_tanker(100, 100)  # same position = overlapping
         s_ent = esper.create_entity(*s_comps)
@@ -69,21 +69,25 @@ class TestShahedTankerCombat:
         esper.add_processor(proc)
         esper.process(dt=0.05)
 
+        # Shahed dies instantly
         assert esper.component_for_entity(s_ent, Health).hp == 0
-        assert esper.component_for_entity(t_ent, Health).hp == 0
+        # Tanker survives but has hull breaches
+        t_health = esper.component_for_entity(t_ent, Health)
+        t_tf = esper.component_for_entity(t_ent, Transform)
+        assert t_health.hp == 100  # still alive
+        assert t_tf.hull_breaches > 0  # but breached
 
-    def test_kill_adds_respawn_timer(self):
+    def test_shahed_kill_adds_respawn_timer(self):
         s_comps = _make_shahed(100, 100)
         t_comps = _make_tanker(100, 100)
         s_ent = esper.create_entity(*s_comps)
-        t_ent = esper.create_entity(*t_comps)
+        esper.create_entity(*t_comps)
 
         proc = CombatProcessor()
         esper.add_processor(proc)
         esper.process(dt=0.05)
 
         assert esper.has_component(s_ent, RespawnTimer)
-        assert esper.has_component(t_ent, RespawnTimer)
 
     def test_distant_shahed_and_tanker_survive(self):
         s_comps = _make_shahed(0, 0)

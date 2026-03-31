@@ -1,9 +1,11 @@
-"""Combat processor — shahed-tanker collision kills both.
+"""Combat processor — shahed kamikaze attacks on tankers.
 
 Uses bounding-circle broad phase + SAT narrow phase from the collision system
-so that kills only trigger on actual polygon contact.
+so that hits only trigger on actual polygon contact. Shahed dies on impact;
+tanker receives hull breaches and floods progressively.
 """
 
+import math
 
 import esper
 
@@ -75,9 +77,14 @@ class CombatProcessor(esper.Processor):
                     continue
 
                 _, _, _, contact_x, contact_y = result
-                self._kill(s_ent, "iran")
-                self._kill(t_ent, "tanker")
+
+                # Shahed dies on impact
+                self._kill(s_ent)
                 hit_shaheds.add(s_ent)
+
+                # Tanker receives hull breaches — determine which side was hit
+                breach_side = self._breach_side(t_tf, contact_x, contact_y)
+                self._breach_tanker(t_ent, t_tf, breach_side)
 
                 self.events.append({
                     "type": "explosion",
@@ -86,7 +93,29 @@ class CombatProcessor(esper.Processor):
                 })
                 break
 
-    def _kill(self, ent: int, spawn_type: str) -> None:
+    @staticmethod
+    def _breach_side(tf: Transform, cx: float, cy: float) -> float:
+        """Determine which side of the hull was hit (-1 port, +1 starboard)."""
+        # Vector from tanker center to contact point
+        dx = cx - tf.x
+        dy = cy - tf.y
+        # Cross product with heading direction gives lateral side
+        cross = math.cos(tf.heading) * dy - math.sin(tf.heading) * dx
+        if cross > 0:
+            return 1.0  # starboard
+        if cross < 0:
+            return -1.0  # port
+        return 0.0  # center
+
+    @staticmethod
+    def _breach_tanker(ent: int, tf: Transform, side: float) -> None:
+        """Add hull breaches to a tanker from a kamikaze hit."""
+        from hormuz.systems.physics import BREACH_CLAMP_COUNT
+
+        tf.hull_breaches += 3  # severe damage from kamikaze drone
+        tf.breach_side = max(-1.0, min(1.0, tf.breach_side + side / BREACH_CLAMP_COUNT))
+
+    def _kill(self, ent: int) -> None:
         health = esper.component_for_entity(ent, Health)
         health.hp = 0
 

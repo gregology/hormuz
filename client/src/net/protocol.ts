@@ -31,6 +31,8 @@ export interface EntitySnapshot {
 	drift: number;
 	hp: number;
 	angularVelocity: number;
+	floodLevel: number;
+	listAngle: number;
 }
 
 export interface FullSnapshot {
@@ -79,6 +81,8 @@ export function decodeMessage(data: ArrayBuffer): ServerMessage | null {
 			drift: e[7] as number,
 			hp: e[8] as number,
 			angularVelocity: (e[9] as number) ?? 0,
+			floodLevel: (e[10] as number) ?? 0,
+			listAngle: (e[11] as number) ?? 0,
 		}));
 		return { type: MSG_FULL_SNAPSHOT, tick, entities };
 	}

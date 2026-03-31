@@ -25,6 +25,8 @@ const SQRT6 = Math.sqrt(6);
 const WATER_Y = 0.1;
 
 const POINT_VERT = `
+#include <common>
+#include <logdepthbuf_pars_vertex>
 in float aAlpha;
 in float aSize;
 out float vAlpha;
@@ -32,16 +34,19 @@ void main() {
     vAlpha = aAlpha;
     gl_PointSize = aSize;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    #include <logdepthbuf_vertex>
 }
 `;
 
 const POINT_FRAG = `
+#include <logdepthbuf_pars_fragment>
 in float vAlpha;
 out vec4 fragColor;
 void main() {
     vec2 c = gl_PointCoord - 0.5;
     if (dot(c, c) > 0.25) discard;
     fragColor = vec4(1.0, 1.0, 1.0, vAlpha);
+    #include <logdepthbuf_fragment>
 }
 `;
 
@@ -97,7 +102,7 @@ export class SternChurn implements ThreeEffect {
 		y: number,
 		heading: number,
 		speed: number,
-		maxSpeed: number,
+		equilibriumSpeed: number,
 		size: number,
 		dt: number,
 	): void {
@@ -110,7 +115,7 @@ export class SternChurn implements ThreeEffect {
 		}
 		this.particles = this.particles.filter((p) => p.age < p.maxAge);
 
-		const intensity = Math.min(Math.abs(speed) / maxSpeed, 1);
+		const intensity = Math.min(Math.abs(speed) / equilibriumSpeed, 1);
 		if (intensity < 0.1) return;
 
 		this.emitAccum += EMIT_RATE * intensity * dt;

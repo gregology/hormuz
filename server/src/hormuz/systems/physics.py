@@ -4,9 +4,26 @@ import math
 
 import esper
 
-from hormuz.components import BotControl, PlayerControl, Transform, VehiclePhysics
+from hormuz.components import (
+    BotControl,
+    Health,
+    PlayerControl,
+    RespawnTimer,
+    Transform,
+    VehiclePhysics,
+)
+
+# Re-export for combat.py import
+__all__ = ["PhysicsProcessor", "BREACH_CLAMP_COUNT", "BREACH_RATE"]
 
 TWO_PI = math.pi * 2
+
+# Flooding constants (match client FLOOD object)
+BREACH_RATE = 0.03
+MAX_LIST = 0.5
+LERP_RATE = 3.0
+BREACH_CLAMP_COUNT = 1
+FLOOD_DRAG_FACTOR = 1.5
 
 
 class PhysicsProcessor(esper.Processor):
@@ -14,6 +31,19 @@ class PhysicsProcessor(esper.Processor):
         for ent, (tf, phys) in esper.get_components(Transform, VehiclePhysics):
             throttle, rudder = self._get_input(ent)
             _update_vehicle(tf, phys, throttle, rudder, dt)
+            _update_flooding(tf, phys, dt)
+
+            # Flooding kills the entity
+            if tf.flood_level >= 1.0:
+                health = esper.try_component(ent, Health)
+                if health is not None and health.hp > 0:
+                    health.hp = 0
+                    if esper.has_component(ent, BotControl):
+                        esper.remove_component(ent, BotControl)
+                    if esper.has_component(ent, PlayerControl):
+                        esper.remove_component(ent, PlayerControl)
+                    if not esper.has_component(ent, RespawnTimer):
+                        esper.add_component(ent, RespawnTimer(remaining=3.0))
 
     def _get_input(self, ent: int) -> tuple[float, float]:
         pc = esper.try_component(ent, PlayerControl)
@@ -25,6 +55,12 @@ class PhysicsProcessor(esper.Processor):
         return 0.0, 0.0
 
 
+def _equilibrium_speed(phys: VehiclePhysics) -> float:
+    if phys.drag_coefficient <= 0 or phys.engine_power <= 0:
+        return phys.max_speed  # fallback for unconfigured vehicles
+    return math.sqrt(phys.engine_power / phys.drag_coefficient)
+
+
 def _update_vehicle(
     tf: Transform,
     phys: VehiclePhysics,
@@ -32,50 +68,71 @@ def _update_vehicle(
     rudder: float,
     dt: float,
 ) -> None:
-    # --- Angular velocity from collisions ---
+    # --- Angular velocity (from collisions + propeller torque) ---
     tf.heading += tf.angular_velocity * dt
     tf.angular_velocity *= phys.angular_drag**dt
     if abs(tf.angular_velocity) < 0.001:
         tf.angular_velocity = 0.0
 
+    # --- Compute thrust ---
+    thrust = 0.0
+    if throttle > 0:
+        thrust = throttle * phys.engine_power
+    elif throttle < 0:
+        thrust = throttle * phys.engine_power * 0.3  # reverse is much weaker
+
     # --- Steering ---
-    speed_ratio = min(abs(tf.speed) / phys.max_speed, 1.0) if phys.max_speed > 0 else 0.0
+    eq_speed = _equilibrium_speed(phys)
 
-    if phys.min_turn_fraction > 0:
-        rudder_effect = max(phys.min_turn_fraction, speed_ratio)
+    if phys.propeller_offset != 0.0:
+        # Propeller torque steering (ships)
+        rudder_angle = rudder * phys.rudder_max_angle
+        sin_rudder = math.sin(rudder_angle)
+        prop_wash_force = -thrust * sin_rudder
+        flow_force = (
+            -phys.rudder_flow_coefficient
+            * tf.speed
+            * abs(tf.speed)
+            * sin_rudder
+        )
+        lateral_force = prop_wash_force + flow_force
+        torque = phys.propeller_offset * phys.size * lateral_force
+        tf.angular_velocity += (torque / phys.moment_of_inertia) * dt
+        tf.drift += (lateral_force / phys.mass) * dt
+        thrust *= math.cos(rudder_angle)
     else:
-        rudder_effect = 0.0 if speed_ratio < 0.05 else speed_ratio
-
-    steer_sign = -1.0 if tf.speed < 0 else 1.0
-    turn_amount = rudder * phys.turn_rate * rudder_effect * steer_sign * dt
-    tf.heading += turn_amount
+        # Direct steering (drones)
+        speed_ratio = min(abs(tf.speed) / eq_speed, 1.0) if eq_speed > 0 else 0.0
+        if phys.min_turn_fraction > 0:
+            rudder_effect = max(phys.min_turn_fraction, speed_ratio)
+        else:
+            rudder_effect = 0.0 if speed_ratio < 0.05 else speed_ratio
+        steer_sign = -1.0 if tf.speed < 0 else 1.0
+        tf.heading += rudder * phys.turn_rate * rudder_effect * steer_sign * dt
+        tf.drift += (
+            rudder * phys.turn_rate * rudder_effect * tf.speed * phys.drift_factor * dt
+        )
 
     # Normalize heading to [0, 2pi)
     tf.heading = tf.heading % TWO_PI
     if tf.heading < 0:
         tf.heading += TWO_PI
 
-    # --- Drift from turning ---
-    tf.drift += rudder * phys.turn_rate * rudder_effect * tf.speed * phys.drift_factor * dt
+    # --- Forward thrust and drag ---
+    drag = phys.drag_coefficient * tf.speed * abs(tf.speed)
+    tf.speed += ((thrust - drag) / phys.mass) * dt
 
-    # --- Throttle ---
-    if throttle > 0:
-        tf.speed += throttle * phys.acceleration * dt
-    elif throttle < 0:
-        tf.speed += throttle * phys.acceleration * 0.3 * dt
-
-    # --- Drag ---
-    tf.speed *= phys.drag**dt
+    # Lateral drag
     tf.drift *= phys.lateral_drag**dt
 
-    # --- Slope forces skipped for MVP (airborne drones + open water tankers) ---
+    # --- Slope forces skipped (open water + airborne drones) ---
 
     # --- Cruise speed (fixed-wing drones) ---
     if phys.cruise_speed > 0:
         tf.speed = phys.cruise_speed
 
     # --- Clamp ---
-    tf.speed = max(-phys.max_speed * 0.2, min(phys.max_speed, tf.speed))
+    tf.speed = max(-eq_speed * 0.2, min(eq_speed * 1.05, tf.speed))
     if abs(tf.speed) < 0.05 and throttle == 0:
         tf.speed = 0.0
     if abs(tf.drift) < 0.02:
@@ -86,3 +143,26 @@ def _update_vehicle(
     sin_h = math.sin(tf.heading)
     tf.x += (cos_h * tf.speed - sin_h * tf.drift) * dt
     tf.y += (sin_h * tf.speed + cos_h * tf.drift) * dt
+
+
+def _update_flooding(tf: Transform, phys: VehiclePhysics, dt: float) -> None:
+    if tf.hull_breaches == 0 or phys.airborne or phys.vehicle_type == "truck":
+        return
+
+    # Water ingress accelerates as ship takes on more water
+    ingress = tf.hull_breaches * BREACH_RATE * (1.0 + tf.flood_level)
+    tf.flood_level = min(tf.flood_level + ingress * dt, 1.0)
+
+    # List toward damaged side
+    target_list = tf.breach_side * MAX_LIST * tf.flood_level
+    tf.list_angle += (target_list - tf.list_angle) * (1.0 - math.exp(-LERP_RATE * dt))
+
+    # Flooding increases drag
+    flood_drag = (
+        tf.flood_level
+        * FLOOD_DRAG_FACTOR
+        * phys.drag_coefficient
+        * tf.speed
+        * abs(tf.speed)
+    )
+    tf.speed -= (flood_drag / phys.mass) * dt

@@ -32,6 +32,8 @@ export class Sinking implements ThreeEffect {
 	private y: number;
 	private heading: number;
 	private size: number;
+	private initialFloodLevel: number;
+	private initialListAngle: number;
 	private bubbles: Bubble[] = [];
 	private bubbleAccum = 0;
 
@@ -47,10 +49,14 @@ export class Sinking implements ThreeEffect {
 		heading: number,
 		size: number,
 		color: number,
+		floodLevel = 0,
+		listAngle = 0,
 	) {
 		this.x = x;
 		this.y = y;
 		this.heading = heading;
+		this.initialFloodLevel = floodLevel;
+		this.initialListAngle = listAngle;
 		this.size = size;
 		this.root = new THREE.Group();
 
@@ -152,14 +158,19 @@ export class Sinking implements ThreeEffect {
 		this.x += Math.cos(this.heading) * dt * 0.5;
 		this.y += Math.sin(this.heading) * dt * 0.5;
 
-		// Sinking offset and bow tilt
-		const sinkOffset = t * this.size * 0.3;
+		// Sinking offset — continues from initial flood draft
+		const initialDraft = this.initialFloodLevel * this.size * 0.3;
+		const additionalSink = t * this.size * 0.3;
+		const sinkOffset = initialDraft + additionalSink;
+
+		// Bow tilt stacks on initial list angle
 		const bowRise = t * this.size * 0.1;
 		const halfLen = this.size * 0.4;
 		const tiltAngle = Math.asin(Math.min(bowRise / halfLen, 1));
 
 		this.root.position.set(this.x, -sinkOffset, this.y);
 		this.root.rotation.y = -this.heading;
+		this.root.rotation.x = this.initialListAngle * (1 - t); // list fades as ship sinks
 		this.root.rotation.z = tiltAngle;
 
 		// Hull opacity: (1-t) * 0.6 * 0.5 for fill, (1-t) * 0.6 * 0.3 for stroke
@@ -245,6 +256,8 @@ export class Sinking implements ThreeEffect {
 
 // Bubble shaders (same circular point as stern churn but light blue)
 const BUBBLE_VERT = `
+#include <common>
+#include <logdepthbuf_pars_vertex>
 in float aAlpha;
 in float aSize;
 out float vAlpha;
@@ -252,15 +265,18 @@ void main() {
     vAlpha = aAlpha;
     gl_PointSize = aSize;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    #include <logdepthbuf_vertex>
 }
 `;
 
 const BUBBLE_FRAG = `
+#include <logdepthbuf_pars_fragment>
 in float vAlpha;
 out vec4 fragColor;
 void main() {
     vec2 c = gl_PointCoord - 0.5;
     if (dot(c, c) > 0.25) discard;
     fragColor = vec4(0.667, 0.867, 1.0, vAlpha);
+    #include <logdepthbuf_fragment>
 }
 `;

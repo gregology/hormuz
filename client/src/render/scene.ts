@@ -70,6 +70,7 @@ export class ThreeScene {
 			antialias: true,
 			alpha: true,
 			stencil: true,
+			logarithmicDepthBuffer: true,
 		});
 		this.renderer.setPixelRatio(window.devicePixelRatio);
 

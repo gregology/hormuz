@@ -23,14 +23,18 @@ import {
 	resolveVehicleCollisions,
 } from "../../client/src/vehicles/collision";
 import {
+	FLOOD,
 	type NavalVehicle,
 	type VehicleInput,
+	addBreach,
 	createFrigate,
 	createOilTanker,
 	createQuadcopter,
 	createShahed,
 	createSpeedboat,
 	createTruck,
+	equilibriumSpeed,
+	updateFlooding,
 	updateVehicle,
 } from "../../client/src/vehicles/physics";
 
@@ -77,6 +81,15 @@ function init() {
 	// ---- Effects (Three.js) ----
 	const threeEffects = new ThreeEffectManager();
 	threeScene.scene.add(threeEffects.root);
+
+	// ---- Perspective camera (for first/third-person views) ----
+	const perspCamera = new THREE.PerspectiveCamera(
+		60,
+		screenW / screenH,
+		1,
+		100000,
+	);
+	threeScene.scene.add(perspCamera);
 
 	// ---- Collision debug wireframes ----
 	// 6 vehicles × 8 edges max × 2 vertices per segment = 96 vertices
@@ -205,7 +218,24 @@ function init() {
 	let mouseScreenY = 0;
 	let elapsedTime = 0;
 
-	const mode = { cameraFollow: true, freeCamera: false };
+	type CameraMode = "isometric" | "third-person" | "first-person";
+	const mode = {
+		cameraFollow: true,
+		freeCamera: false,
+		cameraMode: "isometric" as CameraMode,
+	};
+	let prevCameraMode: CameraMode = "isometric";
+	const _tPos = new THREE.Vector3();
+	const _tLook = new THREE.Vector3();
+
+	// ---- Perspective camera settings (tunable via GUI) ----
+	const perspSettings = {
+		tpDistance: 3, // behind vehicle, multiplier of size
+		tpHeight: 1.5, // above vehicle, multiplier of size
+		fpHeight: 0.5, // eye height, multiplier of size
+		fpForward: 0.3, // forward from center, multiplier of size
+		smoothing: 8, // camera lerp speed
+	};
 
 	// ---- Simulation settings ----
 	const simSettings = { timeScale: 1.0, showCollisionPolygons: true };
@@ -221,11 +251,22 @@ function init() {
 		const v = activeVehicle();
 		const label = vehicles[activeIndex].label;
 		vehicleFolder = gui.addFolder(`${label} [${activeIndex + 1}]`);
-		vehicleFolder.add(v, "maxSpeed", 0.5, 100).name("Max Speed");
-		vehicleFolder.add(v, "acceleration", 0.1, 25).name("Acceleration");
-		vehicleFolder.add(v, "drag", 0.5, 0.99).name("Forward Drag");
-		vehicleFolder.add(v, "turnRate", 0.05, 6).name("Turn Rate");
-		vehicleFolder.add(v, "driftFactor", 0, 0.5).name("Drift Factor");
+		vehicleFolder.add(v, "enginePower", 10, 10000).name("Engine Power");
+		vehicleFolder.add(v, "dragCoefficient", 0.01, 50).name("Drag Coefficient");
+		vehicleFolder.add(v, "mass", 1, 5000).name("Mass");
+		if (v.propellerOffset !== 0) {
+			vehicleFolder.add(v, "propellerOffset", -0.5, 0).name("Propeller Offset");
+			vehicleFolder.add(v, "rudderMaxAngle", 0.1, 1.2).name("Rudder Max Angle");
+			vehicleFolder
+				.add(v, "momentOfInertia", 100, 5000000)
+				.name("Moment of Inertia");
+			vehicleFolder
+				.add(v, "rudderFlowCoefficient", 0, 30)
+				.name("Rudder Flow Coeff");
+		} else {
+			vehicleFolder.add(v, "turnRate", 0.05, 6).name("Turn Rate");
+			vehicleFolder.add(v, "driftFactor", 0, 0.5).name("Drift Factor");
+		}
 		vehicleFolder.add(v, "lateralDrag", 0.01, 0.8).name("Lateral Drag");
 		vehicleFolder.add(v, "cruiseSpeed", 0, 100).name("Cruise Speed");
 		vehicleFolder.add(v, "size", 0.5, 300).name("Visual Size");
@@ -244,6 +285,27 @@ function init() {
 		.onChange((v: boolean) => {
 			mode.cameraFollow = !v;
 		});
+	cameraFolder
+		.add(mode, "cameraMode", ["isometric", "third-person", "first-person"])
+		.name("Mode (V)")
+		.listen()
+		.onChange((v: CameraMode) => {
+			if (v !== "isometric") {
+				mode.freeCamera = false;
+				mode.cameraFollow = true;
+			}
+		});
+	const perspFolder = gui.addFolder("Perspective Camera");
+	perspFolder
+		.add(perspCamera, "fov", 30, 120)
+		.name("FOV")
+		.step(1)
+		.onChange(() => perspCamera.updateProjectionMatrix());
+	perspFolder.add(perspSettings, "tpDistance", 1, 10).name("TP Distance");
+	perspFolder.add(perspSettings, "tpHeight", 0.5, 5).name("TP Height");
+	perspFolder.add(perspSettings, "fpHeight", 0.1, 1.5).name("FP Height");
+	perspFolder.add(perspSettings, "fpForward", -0.5, 0.5).name("FP Forward");
+	perspFolder.add(perspSettings, "smoothing", 1, 20).name("Smoothing");
 
 	// Simulation folder
 	const simFolder = gui.addFolder("Simulation");
@@ -350,6 +412,33 @@ function init() {
 	collisionFolder.add(collisionTests, "Destroy active vehicle");
 	collisionFolder.add(collisionTests, "Spawn explosion (no kill)");
 
+	// Damage folder
+	const damageActions = {
+		"Damage Port"() {
+			const v = activeVehicle();
+			addBreach(v, -1);
+		},
+		"Damage Starboard"() {
+			const v = activeVehicle();
+			addBreach(v, 1);
+		},
+		"Damage Center"() {
+			const v = activeVehicle();
+			addBreach(v, 0);
+		},
+	};
+	const damageFolder = gui.addFolder("Damage");
+	damageFolder.add(damageActions, "Damage Port");
+	damageFolder.add(damageActions, "Damage Starboard");
+	damageFolder.add(damageActions, "Damage Center");
+
+	// Flooding tuning folder
+	const floodingFolder = gui.addFolder("Flooding");
+	floodingFolder.add(FLOOD, "breachRate", 0.005, 0.1).name("Breach Rate");
+	floodingFolder.add(FLOOD, "maxList", 0.1, 0.8).name("Max List (rad)");
+	floodingFolder.add(FLOOD, "floodDragFactor", 0, 3).name("Flood Drag Factor");
+	floodingFolder.add(FLOOD, "lerpRate", 0.5, 10).name("List Lerp Rate");
+
 	// Presets
 	const presets = {
 		"Full Map"() {
@@ -380,6 +469,10 @@ function init() {
 				pv.vehicle.speed = 0;
 				pv.vehicle.drift = 0;
 				pv.vehicle.angularVelocity = 0;
+				pv.vehicle.floodLevel = 0;
+				pv.vehicle.listAngle = 0;
+				pv.vehicle.hullBreaches = 0;
+				pv.vehicle.breachSide = 0;
 				pv.hp = 100;
 				pv.respawnTimer = 0;
 			}
@@ -453,10 +546,12 @@ function init() {
 		"wheel",
 		(e: WheelEvent) => {
 			e.preventDefault();
-			cam.zoom = Math.max(
-				0.02,
-				Math.min(10, cam.zoom * (e.deltaY > 0 ? 0.9 : 1.1)),
-			);
+			if (mode.cameraMode === "isometric") {
+				cam.zoom = Math.max(
+					0.02,
+					Math.min(10, cam.zoom * (e.deltaY > 0 ? 0.9 : 1.1)),
+				);
+			}
 		},
 		{ passive: false },
 	);
@@ -470,6 +565,17 @@ function init() {
 			e.preventDefault();
 			mode.freeCamera = !mode.freeCamera;
 			mode.cameraFollow = !mode.freeCamera;
+		}
+
+		// V: cycle camera mode
+		if (e.key === "v") {
+			const modes: CameraMode[] = ["isometric", "third-person", "first-person"];
+			const idx = modes.indexOf(mode.cameraMode);
+			mode.cameraMode = modes[(idx + 1) % modes.length];
+			if (mode.cameraMode !== "isometric") {
+				mode.freeCamera = false;
+				mode.cameraFollow = true;
+			}
 		}
 
 		// 1-6: switch active vehicle
@@ -493,6 +599,8 @@ function init() {
 		cam.screenWidth = w;
 		cam.screenHeight = h;
 		threeScene.setSize(w, h);
+		perspCamera.aspect = w / h;
+		perspCamera.updateProjectionMatrix();
 	});
 
 	// ---- Render loop ----
@@ -542,6 +650,10 @@ function init() {
 					pv.vehicle.speed = 0;
 					pv.vehicle.drift = 0;
 					pv.vehicle.angularVelocity = 0;
+					pv.vehicle.floodLevel = 0;
+					pv.vehicle.listAngle = 0;
+					pv.vehicle.hullBreaches = 0;
+					pv.vehicle.breachSide = 0;
 				}
 			}
 		}
@@ -575,6 +687,17 @@ function init() {
 		}
 		resolveVehicleCollisions(aliveVehicles);
 
+		// -- Flooding simulation --
+		for (let i = 0; i < vehicles.length; i++) {
+			const pv = vehicles[i];
+			if (pv.hp <= 0) continue;
+			updateFlooding(pv.vehicle, dt);
+			if (pv.vehicle.floodLevel >= 1) {
+				pv.hp = 0;
+				pv.respawnTimer = RESPAWN_TIME;
+			}
+		}
+
 		// -- Camera follow --
 		if (mode.cameraFollow) {
 			const v = activeVehicle();
@@ -583,6 +706,43 @@ function init() {
 			cam.worldX += (v.x - altOffset - cam.worldX) * followSpeed * rawDt;
 			cam.worldY += (v.y - altOffset - cam.worldY) * followSpeed * rawDt;
 		}
+
+		// -- Update perspective camera for first/third-person modes --
+		if (mode.cameraMode !== "isometric") {
+			const v = activeVehicle();
+			const sz = v.size;
+			const elev = v.airborne
+				? getElevation(v.x, v.y) + 30
+				: getElevation(v.x, v.y);
+			const fwdX = Math.cos(v.heading);
+			const fwdZ = Math.sin(v.heading);
+
+			if (mode.cameraMode === "third-person") {
+				const dist = sz * perspSettings.tpDistance;
+				const height = sz * perspSettings.tpHeight;
+				_tPos.set(v.x - fwdX * dist, elev + height, v.y - fwdZ * dist);
+				_tLook.set(v.x, elev + sz * 0.2, v.y);
+			} else {
+				const fwd = sz * perspSettings.fpForward;
+				const height = sz * perspSettings.fpHeight;
+				_tPos.set(v.x + fwdX * fwd, elev + height, v.y + fwdZ * fwd);
+				_tLook.set(
+					v.x + fwdX * (fwd + sz * 2),
+					elev + height * 0.8,
+					v.y + fwdZ * (fwd + sz * 2),
+				);
+			}
+
+			// Snap on mode switch, smooth-lerp otherwise
+			if (prevCameraMode !== mode.cameraMode) {
+				perspCamera.position.copy(_tPos);
+			} else {
+				const t = 1 - Math.exp(-perspSettings.smoothing * rawDt);
+				perspCamera.position.lerp(_tPos, t);
+			}
+			perspCamera.lookAt(_tLook);
+		}
+		prevCameraMode = mode.cameraMode;
 
 		// -- Build entity states for Three.js renderers --
 		const entityStates: EntityState[] = vehicles.map((pv, i) => ({
@@ -596,6 +756,8 @@ function init() {
 			drift: pv.vehicle.drift,
 			hp: pv.hp,
 			angularVelocity: pv.vehicle.angularVelocity,
+			floodLevel: pv.vehicle.floodLevel,
+			listAngle: pv.vehicle.listAngle,
 		}));
 
 		// -- Update Three.js renderers --
@@ -641,14 +803,18 @@ function init() {
 		).needsUpdate = true;
 
 		// -- Render Three.js scene --
-		threeScene.syncCamera(
-			cam.worldX,
-			cam.worldY,
-			cam.zoom,
-			cam.screenWidth,
-			cam.screenHeight,
-		);
-		threeScene.render();
+		if (mode.cameraMode === "isometric") {
+			threeScene.syncCamera(
+				cam.worldX,
+				cam.worldY,
+				cam.zoom,
+				cam.screenWidth,
+				cam.screenHeight,
+			);
+			threeScene.render();
+		} else {
+			threeScene.renderer.render(threeScene.scene, perspCamera);
+		}
 
 		// -- HUD --
 		const world = screenToWorld(cam, mouseScreenX, mouseScreenY);
@@ -658,14 +824,25 @@ function init() {
 		const pv = vehicles[activeIndex];
 		const hpStr =
 			pv.hp <= 0 ? `DEAD (${pv.respawnTimer.toFixed(1)}s)` : `HP: ${pv.hp}`;
-		coordEl.textContent = `Cursor: (${Math.round(world.x)}, ${Math.round(world.y)})  Elev: ${getElevation(world.x, world.y).toFixed(0)}  Zoom: ${cam.zoom.toFixed(3)}  ${mode.freeCamera ? "[FREE CAM]" : "[FOLLOW]"}  Time: ${simSettings.timeScale.toFixed(1)}x`;
-		boatEl.textContent = `${label}: ${hpStr}  Speed: ${v.speed.toFixed(1)}  Drift: ${v.drift.toFixed(2)}  Heading: ${((v.heading * 180) / Math.PI).toFixed(0)}°  AngVel: ${omega.toFixed(3)}  [1-6]`;
+		const camLabel =
+			mode.cameraMode !== "isometric"
+				? `[${mode.cameraMode.toUpperCase()}]`
+				: mode.freeCamera
+					? "[FREE CAM]"
+					: "[FOLLOW]";
+		coordEl.textContent = `Cursor: (${Math.round(world.x)}, ${Math.round(world.y)})  Elev: ${getElevation(world.x, world.y).toFixed(0)}  Zoom: ${cam.zoom.toFixed(3)}  ${camLabel}  Time: ${simSettings.timeScale.toFixed(1)}x`;
+		const eqSpd = equilibriumSpeed(v);
+		const floodStr =
+			v.floodLevel > 0
+				? `  Flood: ${(v.floodLevel * 100).toFixed(0)}%  List: ${((v.listAngle * 180) / Math.PI).toFixed(1)}°`
+				: "";
+		boatEl.textContent = `${label}: ${hpStr}  Speed: ${v.speed.toFixed(1)} kn (max ${eqSpd.toFixed(0)})  Heading: ${((v.heading * 180) / Math.PI).toFixed(0)}°${floodStr}  [1-6]`;
 	}
 
 	requestAnimationFrame(frame);
 
 	console.log(
-		"Hormuz playground — WASD to drive, 1-6 to switch vehicle, Tab for free camera, scroll to zoom",
+		"Hormuz playground — WASD to drive, 1-6 to switch vehicle, Tab for free camera, V to cycle camera mode, scroll to zoom",
 	);
 }
 
