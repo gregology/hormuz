@@ -880,7 +880,7 @@ function init() {
 		// -- Update Three.js renderers --
 		elapsedTime += rawDt;
 		threeMap.update(elapsedTime, cam.zoom);
-		threeVehicles.update(entityStates, activeIndex, FACTION_COLORS);
+		threeVehicles.update(entityStates, activeIndex, vehicles[activeIndex].vehicle.vehicleType, FACTION_COLORS);
 		threeEffects.update(entityStates, dt, cam.zoom);
 
 		// -- Collision debug wireframes --

@@ -26,6 +26,11 @@ import {
 const FRIGATE_RADAR_RANGE = 10000;
 const FRIGATE_RADAR_RANGE_SQ = FRIGATE_RADAR_RANGE * FRIGATE_RADAR_RANGE;
 
+// Quadcopters are much smaller — not detected until very close
+const QUADCOPTER_RADAR_RANGE = 750;
+const QUADCOPTER_RADAR_RANGE_SQ =
+	QUADCOPTER_RADAR_RANGE * QUADCOPTER_RADAR_RANGE;
+
 // Detection indicator ring (world-space units)
 const DETECTION_RING_INNER = 80;
 const DETECTION_RING_OUTER = 100;
@@ -95,19 +100,25 @@ export class ThreeVehicleRenderer {
 	update(
 		entities: EntityState[],
 		assignedEntityId: number | null,
+		assignedVehicleType: string,
 		factionColors: Record<string, number>,
 	): void {
 		const activeIds = new Set<number>();
 
+		// Detection rings are only visible to frigate players (radar/AWACS)
+		const showDetectionRings = assignedVehicleType === "frigate";
+
 		// Collect frigate positions for radar detection
 		const frigatePositions: { x: number; y: number }[] = [];
-		for (const e of entities) {
-			if (e.hp > 0 && e.vehicleType === "frigate") {
-				frigatePositions.push({ x: e.x, y: e.y });
+		if (showDetectionRings) {
+			for (const e of entities) {
+				if (e.hp > 0 && e.vehicleType === "frigate") {
+					frigatePositions.push({ x: e.x, y: e.y });
+				}
 			}
 		}
 
-		const detectedShahedIds = new Set<number>();
+		const detectedDroneIds = new Set<number>();
 
 		for (const e of entities) {
 			if (e.hp <= 0) continue;
@@ -157,24 +168,39 @@ export class ThreeVehicleRenderer {
 				entry.currentColor = color;
 			}
 
-			// Radar detection: check if this shahed is within any frigate's radar range
-			if (e.vehicleType === "shahed") {
-				for (const fp of frigatePositions) {
-					const dx = fp.x - e.x;
-					const dy = fp.y - e.y;
-					if (dx * dx + dy * dy < FRIGATE_RADAR_RANGE_SQ) {
-						detectedShahedIds.add(e.id);
-						break;
+			// Radar detection: only computed for frigate players
+			if (showDetectionRings) {
+				if (e.vehicleType === "shahed") {
+					for (const fp of frigatePositions) {
+						const dx = fp.x - e.x;
+						const dy = fp.y - e.y;
+						if (dx * dx + dy * dy < FRIGATE_RADAR_RANGE_SQ) {
+							detectedDroneIds.add(e.id);
+							break;
+						}
+					}
+				} else if (e.vehicleType === "quadcopter") {
+					for (const fp of frigatePositions) {
+						const dx = fp.x - e.x;
+						const dy = fp.y - e.y;
+						if (dx * dx + dy * dy < QUADCOPTER_RADAR_RANGE_SQ) {
+							detectedDroneIds.add(e.id);
+							break;
+						}
 					}
 				}
 			}
 		}
 
-		// Update detection indicator rings
+		// Update detection indicator rings (frigate players only)
 		for (const e of entities) {
-			if (e.hp <= 0 || e.vehicleType !== "shahed") continue;
+			if (
+				e.hp <= 0 ||
+				(e.vehicleType !== "shahed" && e.vehicleType !== "quadcopter")
+			)
+				continue;
 
-			if (detectedShahedIds.has(e.id)) {
+			if (detectedDroneIds.has(e.id)) {
 				let ring = this.detectionIndicators.get(e.id);
 				if (!ring) {
 					ring = new THREE.Mesh(this.detectionGeo, this.detectionMat);
@@ -201,7 +227,7 @@ export class ThreeVehicleRenderer {
 				this.pool.delete(id);
 			}
 		}
-		// Remove detection indicators for dead/removed shaheds
+		// Remove detection indicators for dead/removed drones
 		for (const [id, ring] of this.detectionIndicators) {
 			if (!activeIds.has(id)) {
 				this.root.remove(ring);

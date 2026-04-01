@@ -20,6 +20,10 @@ ESCORT_RADIUS = 500.0  # desired orbit distance from escorted tanker
 SHAHED_VISUAL_RANGE = 5000.0
 SHAHED_VISUAL_RANGE_SQ = SHAHED_VISUAL_RANGE * SHAHED_VISUAL_RANGE
 
+# Quadcopter visual detection range — FPV camera, better optics than shahed
+QUADCOPTER_VISUAL_RANGE = 8000.0
+QUADCOPTER_VISUAL_RANGE_SQ = QUADCOPTER_VISUAL_RANGE * QUADCOPTER_VISUAL_RANGE
+
 # Frigate escort zone — outside these bounds, tankers are considered safe
 ESCORT_ZONE_WEST = 50000.0
 ESCORT_ZONE_EAST = 110000.0
@@ -82,6 +86,8 @@ class BotAIProcessor(esper.Processor):
                 self._tanker_ai(ent, tf, bot)
             elif bot.behavior == "shahed_intercept":
                 self._shahed_ai(ent, tf, bot, frigate_transforms)
+            elif bot.behavior == "quadcopter_intercept":
+                self._quadcopter_ai(ent, tf, bot)
             elif bot.behavior == "escort":
                 self._escort_ai(ent, tf, bot)
 
@@ -129,6 +135,33 @@ class BotAIProcessor(esper.Processor):
                 bot.rudder = 0.0
         else:
             bot.rudder = 0.0  # jammed — can't steer
+
+        bot.throttle = 1.0
+
+    def _quadcopter_ai(self, ent: int, tf: Transform, bot: BotControl) -> None:
+        # Quadcopters are autonomous (not jammed by RF) and target both civilians and US forces
+        best_dist_sq = QUADCOPTER_VISUAL_RANGE_SQ
+        best_tf: Transform | None = None
+
+        for t_ent, (t_tf, t_faction, t_health) in esper.get_components(
+            Transform, Faction, Health
+        ):
+            if t_health.hp <= 0:
+                continue
+            if t_faction.name not in ("civilian", "us"):
+                continue
+            dx = t_tf.x - tf.x
+            dy = t_tf.y - tf.y
+            d_sq = dx * dx + dy * dy
+            if d_sq < best_dist_sq:
+                best_dist_sq = d_sq
+                best_tf = t_tf
+
+        if best_tf is not None:
+            bot.rudder = steer_toward(tf, best_tf.x, best_tf.y)
+        else:
+            # No target — head toward strait center
+            bot.rudder = steer_toward(tf, STRAIT_CENTER[0], STRAIT_CENTER[1])
 
         bot.throttle = 1.0
 

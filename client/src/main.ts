@@ -39,6 +39,7 @@ const VEHICLE_DEFAULTS: Record<
 	shahed: { size: 4, airborne: true, equilibriumSpeed: 80 },
 	speedboat: { size: 10, airborne: false, equilibriumSpeed: 26 },
 	frigate: { size: 100, airborne: false, equilibriumSpeed: 13.5 },
+	quadcopter: { size: 2, airborne: true, equilibriumSpeed: 22 },
 };
 
 function init() {
@@ -95,6 +96,7 @@ function init() {
 		shahed: { min: 0.08, max: 10, default: 2 },
 		speedboat: { min: 0.02, max: 5, default: 0.15 },
 		frigate: { min: 0.008, max: 3, default: 0.06 },
+		quadcopter: { min: 0.15, max: 15, default: 4 },
 	};
 	const DEFAULT_ZOOM_LIMITS = { min: 0.005, max: 2, default: 0.04 };
 	let zoomLimits = DEFAULT_ZOOM_LIMITS;
@@ -301,7 +303,7 @@ function init() {
 
 		// Update Three.js objects
 		threeMap.update(elapsedTime, cam.zoom);
-		threeVehicles.update(entities, assignedEntityId, FACTION_COLORS);
+		threeVehicles.update(entities, assignedEntityId, assignedVehicleType, FACTION_COLORS);
 		threeEffects.update(entities, dt, cam.zoom);
 
 		// Render Three.js scene (map + vehicles + effects)

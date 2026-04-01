@@ -63,6 +63,19 @@ IRAN_SPAWNS = [
     {"position": geo(25.50, 58.50), "heading": math.pi * 0.25, "label": "Konarak Coast"},
 ]
 
+QUADCOPTER_SPAWNS = [
+    {"position": (68318, 49582), "label": "Quad Launch West 1"},
+    {"position": (68142, 45506), "label": "Quad Launch West 2"},
+    {"position": (75799, 45777), "label": "Quad Launch Central 1"},
+    {"position": (75703, 42669), "label": "Quad Launch Central 2"},
+    {"position": (81352, 41673), "label": "Quad Launch Strait 1"},
+    {"position": (83221, 40040), "label": "Quad Launch Strait 2"},
+    {"position": (85960, 39450), "label": "Quad Launch Strait 3"},
+    {"position": (93416, 44246), "label": "Quad Launch East 1"},
+    {"position": (95389, 50894), "label": "Quad Launch East 2"},
+    {"position": (103823, 53352), "label": "Quad Launch East 3"},
+]
+
 TANKER_SPAWNS = [
     {"position": geo(26.50, 51.50), "heading": 0.0, "label": "Persian Gulf Port A"},
     {"position": geo(26.00, 52.00), "heading": 0.0, "label": "Persian Gulf Port B"},
@@ -125,6 +138,52 @@ def random_tanker_spawn() -> tuple[float, float, float]:
     y = TANKER_SPAWN_CENTER[1] + math.sin(angle) * dist
     x, y = _clamp_to_map(x, y)
     heading = TANKER_SPAWN_HEADING + random.uniform(-0.26, 0.26)
+    return x, y, heading
+
+
+QUADCOPTER_SCATTER_RADIUS = 500.0  # scatter around chosen launch site
+
+
+def random_quadcopter_spawn(
+    tanker_positions: list[tuple[float, float]],
+) -> tuple[float, float, float]:
+    """Return (x, y, heading) for a quadcopter, spawning at the launch site closest to a tanker.
+
+    Picks the QUADCOPTER_SPAWNS entry nearest to any tanker, scatters around it,
+    and aims toward that tanker. Falls back to a random spawn if no tankers exist.
+    """
+    best_spawn = None
+    best_tanker = None
+    best_dist_sq = float("inf")
+
+    for spawn in QUADCOPTER_SPAWNS:
+        sx, sy = spawn["position"]
+        for tx, ty in tanker_positions:
+            dx = tx - sx
+            dy = ty - sy
+            d_sq = dx * dx + dy * dy
+            if d_sq < best_dist_sq:
+                best_dist_sq = d_sq
+                best_spawn = spawn
+                best_tanker = (tx, ty)
+
+    if best_spawn is None:
+        best_spawn = random.choice(QUADCOPTER_SPAWNS)
+
+    sx, sy = best_spawn["position"]
+    # Scatter around the launch site
+    angle = random.uniform(0, 2 * math.pi)
+    dist = random.uniform(0, QUADCOPTER_SCATTER_RADIUS)
+    x = sx + math.cos(angle) * dist
+    y = sy + math.sin(angle) * dist
+    x, y = _clamp_to_map(x, y)
+
+    # Aim toward the nearest tanker, or strait center as fallback
+    if best_tanker is not None:
+        heading = math.atan2(best_tanker[1] - y, best_tanker[0] - x)
+    else:
+        heading = math.atan2(STRAIT_CENTER[1] - y, STRAIT_CENTER[0] - x)
+
     return x, y, heading
 
 

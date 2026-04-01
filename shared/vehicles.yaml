@@ -98,3 +98,23 @@ vehicles:
         radius: 4
     ai_behavior: shahed_intercept
     sprite: shahed
+
+  quadcopter:
+    name: FPV Quadcopter
+    faction: iran
+    based_on: FPV kamikaze drone
+    role: Close-range strike drone
+    cost_usd: 2_000
+    components:
+      health:
+        hp: 5
+        max_hp: 5
+      naval_physics:
+        max_speed: 22
+        turn_rate: 4.0
+        acceleration: 8
+        drag: 0.95
+      collidable:
+        radius: 2
+    ai_behavior: quadcopter_intercept
+    sprite: quadcopter

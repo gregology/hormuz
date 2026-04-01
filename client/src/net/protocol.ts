@@ -17,7 +17,7 @@ export const MSG_INPUT = 10;
 export const MSG_HEARTBEAT = 11;
 
 // Vehicle type index -> name
-const VEHICLE_TYPES = ["oil_tanker", "shahed", "speedboat", "frigate"] as const;
+const VEHICLE_TYPES = ["oil_tanker", "shahed", "speedboat", "frigate", "quadcopter"] as const;
 const FACTION_NAMES = ["civilian", "iran", "us"] as const;
 
 export interface EntitySnapshot {

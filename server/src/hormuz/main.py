@@ -20,7 +20,13 @@ from hormuz.components import (
     Transform,
     VehiclePhysics,
 )
-from hormuz.map_data import IRAN_SPAWNS, STRAIT_CENTER, random_oman_spawn, random_tanker_spawn
+from hormuz.map_data import (
+    IRAN_SPAWNS,
+    STRAIT_CENTER,
+    random_oman_spawn,
+    random_quadcopter_spawn,
+    random_tanker_spawn,
+)
 from hormuz.protocol import (
     MSG_INPUT,
     decode_client_message,
@@ -128,6 +134,28 @@ FRIGATE_PHYSICS = dict(
     rudder_flow_coefficient=0.5 * 5000.0 / (20.0 * 20.0),
 )
 
+QUADCOPTER_PHYSICS = dict(
+    vehicle_type="quadcopter",
+    max_speed=22.0,
+    acceleration=8.0,
+    drag=0.95,
+    turn_rate=4.0,
+    drift_factor=0.01,
+    lateral_drag=0.05,
+    min_turn_fraction=1.0,
+    cruise_speed=0.0,
+    airborne=True,
+    size=2.0,
+    angular_drag=0.08,
+    mass=20.0,
+    engine_power=360.0,
+    drag_coefficient=360.0 / (22.0 * 22.0),
+    propeller_offset=0.0,
+    rudder_max_angle=0.0,
+    moment_of_inertia=0.0,
+    rudder_flow_coefficient=0.0,
+)
+
 
 def setup_world() -> None:
     """Create all entities and register ECS processors."""
@@ -175,6 +203,22 @@ def setup_world() -> None:
             Health(10, 10),
             Collidable(COLLISION_POLYGONS["shahed"]),
             BotControl("shahed_intercept"),
+        )
+
+    # Spawn 10 quadcopters near tankers (closest launch site, scattered)
+    tanker_positions: list[tuple[float, float]] = []
+    for _, (tf, phys) in esper.get_components(Transform, VehiclePhysics):
+        if phys.vehicle_type == "oil_tanker":
+            tanker_positions.append((tf.x, tf.y))
+    for i in range(10):
+        x, y, heading = random_quadcopter_spawn(tanker_positions)
+        esper.create_entity(
+            Transform(x=x, y=y, heading=heading),
+            VehiclePhysics(**QUADCOPTER_PHYSICS),
+            Faction("iran"),
+            Health(5, 5),
+            Collidable(COLLISION_POLYGONS["quadcopter"]),
+            BotControl("quadcopter_intercept"),
         )
 
     # Spawn 3 frigates on Persian Gulf side
@@ -283,6 +327,14 @@ def _teleport_to_spawn(ent: int) -> None:
         spawn = random.choice(IRAN_SPAWNS)
         tf.x, tf.y = float(spawn["position"][0]), float(spawn["position"][1])
         tf.heading = spawn["heading"]
+    elif phys.vehicle_type == "quadcopter":
+        tanker_positions: list[tuple[float, float]] = []
+        for _, (t_tf, t_phys, t_health) in esper.get_components(
+            Transform, VehiclePhysics, Health
+        ):
+            if t_phys.vehicle_type == "oil_tanker" and t_health.hp > 0:
+                tanker_positions.append((t_tf.x, t_tf.y))
+        tf.x, tf.y, tf.heading = random_quadcopter_spawn(tanker_positions)
     else:
         tf.x, tf.y, tf.heading = random_tanker_spawn()
     tf.speed = 0.0
@@ -318,7 +370,7 @@ def assign_vehicle_type_to_player(conn_id: int, vehicle_type: str) -> int | None
     Picks randomly among matching vehicles, weighted toward the strait.
     Teleports the vehicle to a safe spawn so the player starts fresh.
     """
-    if vehicle_type not in ("oil_tanker", "shahed", "frigate"):
+    if vehicle_type not in ("oil_tanker", "shahed", "frigate", "quadcopter"):
         return None
 
     candidates = [
@@ -353,6 +405,8 @@ def release_vehicle(conn_id: int) -> None:
             behavior = "tanker_transit"
         elif phys.vehicle_type == "frigate":
             behavior = "escort"
+        elif phys.vehicle_type == "quadcopter":
+            behavior = "quadcopter_intercept"
         else:
             behavior = "shahed_intercept"
         esper.add_component(ent, BotControl(behavior, waypoint_index=waypoint_index))
@@ -378,15 +432,15 @@ def apply_input(conn_id: int, msg: dict) -> None:
     right = 1.0 if keys & 0x08 else 0.0
     pc.rudder = right - left
 
-    if phys.vehicle_type == "shahed":
-        # Shaheds use hold-to-move (W/S from bitmask)
+    if phys.vehicle_type in ("shahed", "quadcopter"):
+        # Drones use hold-to-move (W/S from bitmask)
         fwd = 1.0 if keys & 0x01 else 0.0
         rev = 1.0 if keys & 0x02 else 0.0
         pc.throttle = fwd - rev
         pc.autopilot = False
 
-        # Jamming — player shaheds lose steering near frigates
-        if pc.rudder != 0.0:
+        # Jamming — shaheds lose steering near frigates (quadcopters are autonomous)
+        if pc.rudder != 0.0 and phys.vehicle_type == "shahed":
             from hormuz.systems.combat import JAM_RADIUS_SQ
 
             tf = esper.component_for_entity(ent, Transform)

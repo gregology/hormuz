@@ -15,7 +15,7 @@ MSG_HEARTBEAT = 11
 MSG_RESPAWN_CHOICE = 12
 
 # Vehicle type indices (compact encoding for snapshots)
-VEHICLE_TYPE_INDEX = {"oil_tanker": 0, "shahed": 1, "speedboat": 2, "frigate": 3}
+VEHICLE_TYPE_INDEX = {"oil_tanker": 0, "shahed": 1, "speedboat": 2, "frigate": 3, "quadcopter": 4}
 VEHICLE_TYPE_NAME = {v: k for k, v in VEHICLE_TYPE_INDEX.items()}
 
 # Faction indices

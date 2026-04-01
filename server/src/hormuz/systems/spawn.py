@@ -20,6 +20,7 @@ from hormuz.map_data import (
     OMAN_DESTINATION,
     STRAIT_CENTER,
     random_oman_spawn,
+    random_quadcopter_spawn,
     random_tanker_spawn,
 )
 
@@ -38,6 +39,17 @@ class SpawnProcessor(esper.Processor):
         self.events.clear()
         self._check_tanker_destinations()
         self._tick_respawn_timers(dt)
+
+    @staticmethod
+    def _get_tanker_positions() -> list[tuple[float, float]]:
+        """Collect positions of all alive tankers for proximity-based spawning."""
+        positions: list[tuple[float, float]] = []
+        for _, (tf, phys, health) in esper.get_components(
+            Transform, VehiclePhysics, Health
+        ):
+            if phys.vehicle_type == "oil_tanker" and health.hp > 0:
+                positions.append((tf.x, tf.y))
+        return positions
 
     def _check_tanker_destinations(self) -> None:
         """Tankers near their destination turn around (loaded<->empty, reverse route)."""
@@ -115,11 +127,17 @@ class SpawnProcessor(esper.Processor):
                     x, y, heading = random_oman_spawn()
                 behavior = "escort"
             else:
-                spawn = random.choice(IRAN_SPAWNS)
-                x, y = spawn["position"]
-                # Head toward strait chokepoint — shaheds have no radar, converge on action
-                heading = math.atan2(STRAIT_CENTER[1] - y, STRAIT_CENTER[0] - x)
-                behavior = "shahed_intercept"
+                if phys.vehicle_type == "quadcopter":
+                    tanker_positions = self._get_tanker_positions()
+                    x, y, heading = random_quadcopter_spawn(tanker_positions)
+                    behavior = "quadcopter_intercept"
+                else:
+                    spawn = random.choice(IRAN_SPAWNS)
+                    x, y = spawn["position"]
+                    behavior = "shahed_intercept"
+                    heading = math.atan2(
+                        STRAIT_CENTER[1] - y, STRAIT_CENTER[0] - x
+                    )
 
             tf.x = float(x)
             tf.y = float(y)
