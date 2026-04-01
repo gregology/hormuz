@@ -8,11 +8,13 @@ import * as THREE from "three";
 import { ThreeEffectManager } from "./effects/manager";
 import { EntityStore } from "./game/entities";
 import { SnapshotInterpolator } from "./game/interpolation";
-import { type CameraMode, KeyboardManager } from "./input/keyboard";
+import { InputManager } from "./input/input-manager";
+import type { CameraMode } from "./input/keyboard";
 import { MAP } from "./map/data";
 import { getElevation } from "./map/heightmap";
 import { GameConnection } from "./net/connection";
 import { type Camera, createCamera } from "./render/camera";
+import { CiwsController } from "./render/ciws-controller";
 import { COLORS } from "./render/colors";
 import type { GameStats, VehicleInstruments } from "./render/hud";
 import { HUD } from "./render/hud";
@@ -76,10 +78,14 @@ function init() {
 	const threeEffects = new ThreeEffectManager();
 	threeScene.scene.add(threeEffects.root);
 
+	// --- CIWS autocannon controller ---
+	const ciwsController = new CiwsController();
+	threeScene.scene.add(ciwsController.root);
+
 	// --- Game state ---
 	const entityStore = new EntityStore();
 	const interpolator = new SnapshotInterpolator();
-	const keyboard = new KeyboardManager();
+	const input = new InputManager(container);
 	const conn = new GameConnection();
 
 	let assignedEntityId: number | null = null;
@@ -154,9 +160,10 @@ function init() {
 		cam.zoom = zoomLimits.default;
 
 		// Reset throttle and autopilot for the new vehicle
-		keyboard.throttleLevel = 0;
+		input.throttleLevel = 0;
 		autopilotOn = vehicleType === "oil_tanker";
-		keyboard.autopilotOn = autopilotOn;
+		input.autopilotOn = autopilotOn;
+		input.updateVehicleType(vehicleType);
 
 		// Snap camera to the new vehicle
 		const now = performance.now() / 1000;
@@ -185,7 +192,7 @@ function init() {
 	// --- Mouse wheel zoom ---
 	container.addEventListener("wheel", (e: WheelEvent) => {
 		e.preventDefault();
-		if (!spectating && keyboard.cameraMode !== "isometric") return;
+		if (!spectating && input.cameraMode !== "isometric") return;
 		const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
 		const limits = spectating ? SPECTATOR_ZOOM : zoomLimits;
 		cam.zoom = Math.max(
@@ -216,16 +223,17 @@ function init() {
 
 		// --- Autopilot logic (tankers only) ---
 		if (assignedVehicleType === "oil_tanker" && !spectating) {
-			if (keyboard.consumeAutopilotToggle()) {
-				autopilotOn = keyboard.autopilotOn;
+			if (input.consumeAutopilotToggle()) {
+				autopilotOn = !autopilotOn;
+				input.autopilotOn = autopilotOn;
 			}
-			if (keyboard.consumeSteerInput() && autopilotOn) {
+			if (input.consumeSteerInput() && autopilotOn) {
 				autopilotOn = false;
-				keyboard.autopilotOn = false;
+				input.autopilotOn = false;
 			}
 		} else {
-			keyboard.consumeAutopilotToggle();
-			keyboard.consumeSteerInput();
+			input.consumeAutopilotToggle();
+			input.consumeSteerInput();
 		}
 
 		// Send input to server
@@ -233,9 +241,9 @@ function init() {
 			assignedVehicleType === "oil_tanker" ||
 			assignedVehicleType === "frigate" ||
 			assignedVehicleType === "speedboat";
-		const throttleFloat = isShip ? keyboard.throttleFloat : 0.0;
+		const throttleFloat = isShip ? input.throttleFloat : 0.0;
 		conn.sendInput(
-			keyboard.getBitmask(),
+			input.getBitmask(),
 			throttleFloat,
 			autopilotOn && assignedVehicleType === "oil_tanker",
 		);
@@ -252,34 +260,33 @@ function init() {
 		}
 
 		// Spectator mode: press space to respawn
-		if (spectating && pendingAssign && keyboard.isDown(" ")) {
+		if (spectating && pendingAssign && input.isDown(" ")) {
 			applyAssignment(pendingAssign.entityId, pendingAssign.vehicleType);
 		}
 
 		// Consume camera mode change (resets to isometric when spectating)
-		const cameraMode = spectating ? "isometric" : keyboard.cameraMode;
-		keyboard.consumeCameraModeChange();
+		const cameraMode = spectating ? "isometric" : input.cameraMode;
+		input.consumeCameraModeChange();
 
 		// Camera: follow vehicle when playing, WASD pan when spectating
 		if (spectating) {
 			const panSpeed = 500 / cam.zoom;
-			if (keyboard.isDown("w") || keyboard.isDown("arrowup"))
+			if (input.isDown("w") || input.isDown("arrowup"))
 				cam.worldY -= panSpeed * dt;
-			if (keyboard.isDown("s") || keyboard.isDown("arrowdown"))
+			if (input.isDown("s") || input.isDown("arrowdown"))
 				cam.worldY += panSpeed * dt;
-			if (keyboard.isDown("a") || keyboard.isDown("arrowleft"))
+			if (input.isDown("a") || input.isDown("arrowleft"))
 				cam.worldX -= panSpeed * dt;
-			if (keyboard.isDown("d") || keyboard.isDown("arrowright"))
+			if (input.isDown("d") || input.isDown("arrowright"))
 				cam.worldX += panSpeed * dt;
 		} else if (assignedEntityId !== null) {
 			const target = entities.find((e) => e.id === assignedEntityId);
 			if (target) {
-				const followSpeed = 5;
 				const altOffset = VEHICLE_DEFAULTS[target.vehicleType]?.airborne
 					? 30
 					: 0;
-				cam.worldX += (target.x - altOffset - cam.worldX) * followSpeed * dt;
-				cam.worldY += (target.y - altOffset - cam.worldY) * followSpeed * dt;
+				cam.worldX = target.x - altOffset;
+				cam.worldY = target.y - altOffset;
 			}
 		}
 
@@ -297,7 +304,11 @@ function init() {
 
 				const dist = sz * PERSP.tpDistance;
 				const height = sz * PERSP.tpHeight;
-				_tPos.set(target.x - fwdX * dist, elev + height, target.y - fwdZ * dist);
+				_tPos.set(
+					target.x - fwdX * dist,
+					elev + height,
+					target.y - fwdZ * dist,
+				);
 				_tLook.set(target.x, elev + sz * 0.2, target.y);
 
 				if (prevCameraMode !== cameraMode) {
@@ -325,7 +336,18 @@ function init() {
 			effectZoom = cam.screenWidth / (SQRT6 * 2 * dist * Math.tan(halfFov));
 		}
 		threeMap.update(elapsedTime, effectZoom);
-		threeVehicles.update(entities, assignedEntityId, assignedVehicleType, FACTION_COLORS);
+		threeVehicles.update(
+			entities,
+			assignedEntityId,
+			assignedVehicleType,
+			FACTION_COLORS,
+		);
+		ciwsController.update(
+			entities,
+			(id) => threeVehicles.getCiwsTurret(id),
+			dt,
+			effectZoom,
+		);
 		threeEffects.update(entities, dt, effectZoom);
 
 		// Render Three.js scene (map + vehicles + effects)
@@ -344,6 +366,7 @@ function init() {
 
 		// HUD
 		hud.updateVehicle(spectating, pendingAssign !== null, assignedVehicleType);
+		input.updateSpectating(spectating, pendingAssign !== null);
 		hud.updateStats(warCost);
 
 		// Vehicle instruments — speed, heading, HP, flood
@@ -357,6 +380,7 @@ function init() {
 					maxHp: 0,
 					floodLevel: playerEntity.floodLevel ?? 0,
 					vehicleType: playerEntity.vehicleType,
+					batteryPct: playerEntity.batteryPct ?? -1,
 				};
 				hud.updateInstruments(instruments);
 			} else {
@@ -367,7 +391,7 @@ function init() {
 		}
 
 		const showShipHud = isShip && !spectating;
-		hud.updateThrottle(keyboard.throttleLevel, showShipHud);
+		hud.updateThrottle(input.throttleLevel, showShipHud);
 		hud.updateAutopilot(
 			autopilotOn,
 			assignedVehicleType === "oil_tanker" && !spectating,

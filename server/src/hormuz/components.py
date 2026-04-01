@@ -211,3 +211,14 @@ class RespawnTimer:
 
     def __init__(self, remaining: float = 3.0) -> None:
         self.remaining = remaining
+
+
+class Battery:
+    """Finite energy supply for airborne drones."""
+
+    __slots__ = ("charge", "drain_rate")
+
+    def __init__(self, charge: float = 100.0, drain_rate: float = 100.0 / 600.0) -> None:
+        self.charge = charge
+        # drain_rate is percent per second (default: 100% over 600s = 10 minutes)
+        self.drain_rate = drain_rate

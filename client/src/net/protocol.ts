@@ -17,7 +17,13 @@ export const MSG_INPUT = 10;
 export const MSG_HEARTBEAT = 11;
 
 // Vehicle type index -> name
-const VEHICLE_TYPES = ["oil_tanker", "shahed", "speedboat", "frigate", "quadcopter"] as const;
+const VEHICLE_TYPES = [
+	"oil_tanker",
+	"shahed",
+	"speedboat",
+	"frigate",
+	"quadcopter",
+] as const;
 const FACTION_NAMES = ["civilian", "iran", "us"] as const;
 
 export interface EntitySnapshot {
@@ -33,6 +39,7 @@ export interface EntitySnapshot {
 	angularVelocity: number;
 	floodLevel: number;
 	listAngle: number;
+	batteryPct: number;
 }
 
 export interface FullSnapshot {
@@ -87,6 +94,7 @@ export function decodeMessage(data: ArrayBuffer): ServerMessage | null {
 			angularVelocity: (e[9] as number) ?? 0,
 			floodLevel: (e[10] as number) ?? 0,
 			listAngle: (e[11] as number) ?? 0,
+			batteryPct: (e[12] as number) ?? -1,
 		}));
 		return { type: MSG_FULL_SNAPSHOT, tick, entities };
 	}
@@ -142,4 +150,3 @@ export function encodeInput(
 		autopilot ? 1 : 0,
 	]) as Uint8Array;
 }
-

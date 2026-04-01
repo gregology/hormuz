@@ -5,6 +5,7 @@ import math
 import esper
 
 from hormuz.components import (
+    Battery,
     BotControl,
     CargoState,
     Health,
@@ -13,6 +14,7 @@ from hormuz.components import (
     Transform,
     VehiclePhysics,
 )
+from hormuz.generated.vehicles import BREACHES_TO_SINK
 from hormuz.systems.bot_ai import run_tanker_ai
 
 # Re-export for combat.py import
@@ -22,7 +24,7 @@ TWO_PI = math.pi * 2
 
 # Flooding constants (match client FLOOD object)
 BREACH_RATE = 0.03
-MAX_LIST = 0.5
+MAX_LIST = 1.2
 LERP_RATE = 3.0
 BREACH_CLAMP_COUNT = 1
 FLOOD_DRAG_FACTOR = 1.5
@@ -36,9 +38,11 @@ class PhysicsProcessor(esper.Processor):
     def __init__(self) -> None:
         super().__init__()
         self.flood_kills: list[str] = []  # vehicle types killed by flooding
+        self.battery_kills: list[str] = []  # vehicle types killed by battery depletion
 
     def process(self, dt: float = 0.05) -> None:
         self.flood_kills.clear()
+        self.battery_kills.clear()
         for ent, (tf, phys) in esper.get_components(Transform, VehiclePhysics):
             throttle, rudder = self._get_input(ent)
 
@@ -65,6 +69,22 @@ class PhysicsProcessor(esper.Processor):
                         esper.remove_component(ent, PlayerControl)
                     if not esper.has_component(ent, RespawnTimer):
                         esper.add_component(ent, RespawnTimer(remaining=3.0))
+
+            # Battery depletion kills airborne drones
+            battery = esper.try_component(ent, Battery)
+            if battery is not None:
+                health = esper.try_component(ent, Health)
+                if health is not None and health.hp > 0:
+                    battery.charge = max(0.0, battery.charge - battery.drain_rate * dt)
+                    if battery.charge <= 0.0:
+                        health.hp = 0
+                        self.battery_kills.append(phys.vehicle_type)
+                        if esper.has_component(ent, BotControl):
+                            esper.remove_component(ent, BotControl)
+                        if esper.has_component(ent, PlayerControl):
+                            esper.remove_component(ent, PlayerControl)
+                        if not esper.has_component(ent, RespawnTimer):
+                            esper.add_component(ent, RespawnTimer(remaining=3.0))
 
     def _get_input(self, ent: int) -> tuple[float, float]:
         pc = esper.try_component(ent, PlayerControl)
@@ -185,9 +205,12 @@ def _update_flooding(tf: Transform, phys: VehiclePhysics, dt: float) -> None:
     if tf.hull_breaches == 0 or phys.airborne or phys.vehicle_type == "truck":
         return
 
+    # Flood level caps based on number of breaches — need BREACHES_TO_SINK breaches to fully sink
+    max_flood = min(tf.hull_breaches / BREACHES_TO_SINK, 1.0)
+
     # Water ingress accelerates as ship takes on more water
     ingress = tf.hull_breaches * BREACH_RATE * (1.0 + tf.flood_level)
-    tf.flood_level = min(tf.flood_level + ingress * dt, 1.0)
+    tf.flood_level = min(tf.flood_level + ingress * dt, max_flood)
 
     # List toward damaged side
     target_list = tf.breach_side * MAX_LIST * tf.flood_level

@@ -5,13 +5,7 @@
  * the Three.js canvas. Throttle bar and autopilot indicator for ships.
  */
 
-const MAX_HP: Record<string, number> = {
-	oil_tanker: 100,
-	shahed: 10,
-	speedboat: 30,
-	frigate: 300,
-	quadcopter: 5,
-};
+import { MAX_HP } from "../generated/vehicles";
 
 export interface GameStats {
 	totalUsd: number;
@@ -30,6 +24,7 @@ export interface VehicleInstruments {
 	maxHp: number;
 	floodLevel: number;
 	vehicleType: string;
+	batteryPct: number;
 }
 
 function headingToCardinal(radians: number): string {
@@ -53,6 +48,8 @@ function hpBarColor(fraction: number): string {
 export class HUD {
 	readonly root: HTMLDivElement;
 	private vehicleEl: HTMLDivElement;
+	private controlsEl: HTMLDivElement;
+	private tipEl: HTMLDivElement;
 
 	// Throttle bar
 	private throttleContainer: HTMLDivElement;
@@ -71,11 +68,20 @@ export class HUD {
 	private hpBarFlood: HTMLDivElement;
 	private hpLabel: HTMLDivElement;
 
+	// Battery bar (drones only)
+	private batteryRow: HTMLDivElement;
+	private batteryBarFill: HTMLDivElement;
+	private batteryLabel: HTMLDivElement;
+	private batteryIcon: HTMLDivElement;
+
 	// SITREP panel (top-right)
 	private sitrepPanel: HTMLDivElement;
 	private sitrepLines: Record<string, HTMLDivElement> = {};
 
+	private isMobile: boolean;
+
 	constructor(parent: HTMLElement) {
+		this.isMobile = navigator.maxTouchPoints > 0;
 		this.root = document.createElement("div");
 		this.root.id = "hud";
 		Object.assign(this.root.style, {
@@ -92,7 +98,20 @@ export class HUD {
 		} satisfies Partial<CSSStyleDeclaration>);
 
 		this.vehicleEl = document.createElement("div");
-		this.root.append(this.vehicleEl);
+		this.controlsEl = document.createElement("div");
+		Object.assign(this.controlsEl.style, {
+			fontSize: "12px",
+			color: "#88aa88",
+			marginTop: "2px",
+		} satisfies Partial<CSSStyleDeclaration>);
+		this.tipEl = document.createElement("div");
+		Object.assign(this.tipEl.style, {
+			fontSize: "12px",
+			color: "#aa9966",
+			marginTop: "2px",
+			fontStyle: "italic",
+		} satisfies Partial<CSSStyleDeclaration>);
+		this.root.append(this.vehicleEl, this.controlsEl, this.tipEl);
 		parent.appendChild(this.root);
 
 		// --- Throttle bar (right edge, vertical) ---
@@ -159,10 +178,11 @@ export class HUD {
 		parent.appendChild(this.autopilotBadge);
 
 		// --- Vehicle instruments panel (bottom-left) ---
+		const isMobile = navigator.maxTouchPoints > 0;
 		this.instrumentsPanel = document.createElement("div");
 		Object.assign(this.instrumentsPanel.style, {
 			position: "absolute",
-			bottom: "20px",
+			bottom: isMobile ? "200px" : "20px",
 			left: "16px",
 			fontFamily: "monospace",
 			fontSize: "13px",
@@ -223,7 +243,56 @@ export class HUD {
 		this.hpBarOuter.append(this.hpBarFill, this.hpBarFlood);
 		hpRow.append(this.hpLabel, this.hpBarOuter);
 
-		this.instrumentsPanel.append(this.speedEl, this.headingEl, hpRow);
+		// Battery bar
+		this.batteryRow = document.createElement("div");
+		Object.assign(this.batteryRow.style, {
+			display: "none",
+			alignItems: "center",
+			gap: "6px",
+			marginTop: "4px",
+		} satisfies Partial<CSSStyleDeclaration>);
+
+		this.batteryLabel = document.createElement("div");
+		this.batteryLabel.style.minWidth = "24px";
+
+		const batteryBarOuter = document.createElement("div");
+		Object.assign(batteryBarOuter.style, {
+			width: "120px",
+			height: "10px",
+			backgroundColor: "#222",
+			border: "1px solid #555",
+			borderRadius: "2px",
+			position: "relative",
+			overflow: "hidden",
+		} satisfies Partial<CSSStyleDeclaration>);
+
+		this.batteryBarFill = document.createElement("div");
+		Object.assign(this.batteryBarFill.style, {
+			height: "100%",
+			backgroundColor: "#00aaff",
+			position: "absolute",
+			top: "0",
+			left: "0",
+			transition: "width 0.15s, background-color 0.3s",
+		} satisfies Partial<CSSStyleDeclaration>);
+
+		batteryBarOuter.append(this.batteryBarFill);
+
+		this.batteryIcon = document.createElement("div");
+		this.batteryIcon.textContent = "BATT";
+		Object.assign(this.batteryIcon.style, {
+			fontSize: "10px",
+			color: "#668899",
+		} satisfies Partial<CSSStyleDeclaration>);
+
+		this.batteryRow.append(this.batteryLabel, batteryBarOuter, this.batteryIcon);
+
+		this.instrumentsPanel.append(
+			this.speedEl,
+			this.headingEl,
+			hpRow,
+			this.batteryRow,
+		);
 		parent.appendChild(this.instrumentsPanel);
 
 		// --- SITREP panel (top-right) ---
@@ -279,26 +348,48 @@ export class HUD {
 		hasPendingAssign: boolean,
 		vehicleType: string,
 	): void {
+		const typeLabel =
+			vehicleType === "oil_tanker"
+				? "Oil Tanker"
+				: vehicleType === "shahed"
+					? "Shahed Drone"
+					: vehicleType === "frigate"
+						? "Frigate"
+						: vehicleType === "quadcopter"
+							? "Quadcopter"
+							: vehicleType || "Spectating";
+
 		if (spectating) {
 			this.vehicleEl.textContent = hasPendingAssign
-				? "Destroyed -- press SPACE to respawn  |  scroll to zoom"
+				? this.isMobile
+					? "Destroyed -- tap RESPAWN"
+					: "Destroyed -- press SPACE to respawn  |  scroll to zoom"
 				: "Destroyed -- waiting for vehicle...";
+			this.controlsEl.textContent = this.isMobile
+				? ""
+				: "arrows pan  |  scroll zoom";
+			this.tipEl.textContent = "";
 		} else {
-			const typeLabel =
-				vehicleType === "oil_tanker"
-					? "Oil Tanker"
-					: vehicleType === "shahed"
-						? "Shahed Drone"
-						: vehicleType === "frigate"
-							? "Frigate"
-							: vehicleType === "quadcopter"
-								? "Quadcopter"
-								: vehicleType || "Spectating";
-			const controlHint =
-				vehicleType === "oil_tanker"
-					? "arrows to steer/throttle  |  P autopilot"
-					: "WASD to control";
-			this.vehicleEl.textContent = `You: ${typeLabel}  |  ${controlHint}`;
+			if (this.isMobile) {
+				this.vehicleEl.textContent = `You: ${typeLabel}`;
+				this.controlsEl.textContent = "";
+			} else {
+				const controlHint =
+					vehicleType === "oil_tanker"
+						? "arrows to steer/throttle  |  P autopilot"
+						: vehicleType === "frigate" || vehicleType === "speedboat"
+							? "arrows to steer/throttle"
+							: "arrows to move";
+				this.vehicleEl.textContent = `You: ${typeLabel}  |  ${controlHint}`;
+				this.controlsEl.textContent = "V camera  |  scroll zoom";
+			}
+
+			const TIPS: Partial<Record<string, string>> = {
+				shahed: this.isMobile
+					? "Frigates jam shaheds — you'll lose steering near them"
+					: "Tip: Frigates jam shaheds — you'll lose steering if you fly too close",
+			};
+			this.tipEl.textContent = TIPS[vehicleType] ?? "";
 		}
 	}
 
@@ -309,7 +400,8 @@ export class HUD {
 		}
 		this.instrumentsPanel.style.display = "block";
 
-		const { speed, heading, hp, maxHp, floodLevel, vehicleType } = instruments;
+		const { speed, heading, hp, maxHp, floodLevel, vehicleType, batteryPct } =
+			instruments;
 
 		// Speed — show equilibrium speed label based on vehicle type
 		const spd = Math.abs(speed).toFixed(1);
@@ -332,6 +424,20 @@ export class HUD {
 			this.hpBarFlood.style.width = `${floodLevel * 100}%`;
 		} else {
 			this.hpBarFlood.style.width = "0%";
+		}
+
+		// Battery/fuel bar (drones only — batteryPct >= 0 means entity has a battery/fuel)
+		if (batteryPct >= 0) {
+			this.batteryRow.style.display = "flex";
+			this.batteryIcon.textContent =
+				vehicleType === "shahed" ? "FUEL" : "BATT";
+			const pct = Math.max(0, Math.min(100, batteryPct));
+			this.batteryBarFill.style.width = `${pct}%`;
+			this.batteryBarFill.style.backgroundColor =
+				pct > 40 ? "#00aaff" : pct > 15 ? "#ffaa00" : "#ff3300";
+			this.batteryLabel.textContent = `${Math.round(pct)}%`;
+		} else {
+			this.batteryRow.style.display = "none";
 		}
 	}
 

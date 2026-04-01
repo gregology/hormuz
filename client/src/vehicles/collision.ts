@@ -12,63 +12,8 @@
 import { isLand, isWater } from "../map/terrain";
 import type { NavalVehicle, VehicleType } from "./physics";
 
-// ---------------------------------------------------------------------------
-// Collision polygons — local-space [forward, starboard], fractions of size.
-// Simplified from the render hull outlines (5-8 vertices each).
-// Vertices are in CCW winding order.
-// ---------------------------------------------------------------------------
-
-export const COLLISION_POLYGONS: Record<VehicleType, [number, number][]> = {
-	speedboat: [
-		[0.5, 0],
-		[0.2, 0.08],
-		[-0.2, 0.14],
-		[-0.42, 0.06],
-		[-0.42, -0.06],
-		[-0.2, -0.14],
-		[0.2, -0.08],
-	],
-	frigate: [
-		[0.5, 0],
-		[0.3, 0.045],
-		[-0.1, 0.08],
-		[-0.4, 0.065],
-		[-0.45, 0],
-		[-0.4, -0.065],
-		[-0.1, -0.08],
-		[0.3, -0.045],
-	],
-	oil_tanker: [
-		[0.5, 0],
-		[0.38, 0.085],
-		[0.1, 0.09],
-		[-0.3, 0.09],
-		[-0.46, 0],
-		[-0.3, -0.09],
-		[0.1, -0.09],
-		[0.38, -0.085],
-	],
-	truck: [
-		[0.44, 0.18],
-		[-0.48, 0.18],
-		[-0.48, -0.18],
-		[0.44, -0.18],
-	],
-	quadcopter: [
-		[0.38, 0.38],
-		[-0.38, 0.38],
-		[-0.38, -0.38],
-		[0.38, -0.38],
-	],
-	shahed: [
-		[0.5, 0],
-		[0.15, 0.1],
-		[-0.2, 0.35],
-		[-0.4, 0],
-		[-0.2, -0.35],
-		[0.15, -0.1],
-	],
-};
+export { COLLISION_POLYGONS } from "../generated/vehicles";
+import { COLLISION_POLYGONS } from "../generated/vehicles";
 
 // Pre-compute bounding radius per vehicle type
 const BOUNDING_RADIUS: Record<string, number> = {};

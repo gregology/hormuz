@@ -408,12 +408,12 @@ describe("force-based propulsion model", () => {
 // ---------------------------------------------------------------------------
 
 describe("propeller torque steering", () => {
-	it("outboard ship (speedboat) without throttle does not turn at speed", () => {
+	it("speedboat with rudder steers at speed without throttle", () => {
 		const boat = createSpeedboat(FLAT_X, FLAT_Y);
 		boat.speed = 20;
 		const h0 = boat.heading;
 		step(boat, { throttle: 0, rudder: 1 }, 30);
-		expect(boat.heading).toBe(h0);
+		expect(boat.heading).not.toBe(h0);
 	});
 
 	it("conventional rudder (frigate) steers at speed without throttle", () => {
@@ -475,12 +475,13 @@ describe("flooding simulation", () => {
 		expect(ship.floodLevel).toBeGreaterThan(0);
 	});
 
-	it("flood level reaches 1.0 after sufficient time", () => {
+	it("flood level caps at breach fraction, not enough breaches cannot sink", () => {
 		const ship = createSpeedboat(FLAT_X, FLAT_Y);
 		addBreach(ship, 0);
-		// Run for ~40 seconds (well beyond single-breach sink time)
 		for (let i = 0; i < 2400; i++) updateFlooding(ship, DT);
-		expect(ship.floodLevel).toBe(1);
+		// 1 breach caps well below 1.0 — ship won't sink from flooding alone
+		expect(ship.floodLevel).toBeGreaterThan(0);
+		expect(ship.floodLevel).toBeLessThan(0.5);
 	});
 
 	it("multiple breaches sink faster than one", () => {
@@ -518,11 +519,9 @@ describe("flooding simulation", () => {
 		expect(ship.listAngle).toBe(0);
 	});
 
-	it("flood level clamped at 1.0", () => {
+	it("flood level reaches 1.0 with enough breaches to sink", () => {
 		const ship = createSpeedboat(FLAT_X, FLAT_Y);
-		addBreach(ship, 0);
-		addBreach(ship, 0);
-		addBreach(ship, 0);
+		for (let i = 0; i < 12; i++) addBreach(ship, 0);
 		for (let i = 0; i < 6000; i++) updateFlooding(ship, DT);
 		expect(ship.floodLevel).toBe(1);
 	});

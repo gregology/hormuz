@@ -17,6 +17,7 @@ export interface EntityState {
 	angularVelocity: number;
 	floodLevel?: number;
 	listAngle?: number;
+	batteryPct?: number;
 }
 
 export class EntityStore {

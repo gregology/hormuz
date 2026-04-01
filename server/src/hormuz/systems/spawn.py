@@ -6,6 +6,7 @@ import random
 import esper
 
 from hormuz.components import (
+    Battery,
     BotControl,
     CargoState,
     Faction,
@@ -150,6 +151,11 @@ class SpawnProcessor(esper.Processor):
             tf.hull_breaches = 0
             tf.breach_side = 0.0
             health.hp = health.max_hp
+
+            # Reset battery
+            battery = esper.try_component(ent, Battery)
+            if battery is not None:
+                battery.charge = 100.0
 
             # Restore bot control
             if not esper.has_component(ent, BotControl):

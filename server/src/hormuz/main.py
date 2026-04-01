@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from hormuz.components import (
+    Battery,
     BotControl,
     CargoState,
     Collidable,
@@ -20,10 +21,15 @@ from hormuz.components import (
     Transform,
     VehiclePhysics,
 )
-from hormuz.generated.vehicles import VEHICLES
+from hormuz.generated.vehicles import (
+    COLLISION_POLYGONS,
+    MAX_HP,
+    VEHICLE_PHYSICS,
+    VEHICLES,
+    WORLD_SPAWNS,
+)
 from hormuz.map_data import (
     IRAN_SPAWNS,
-    STRAIT_CENTER,
     random_oman_spawn,
     random_quadcopter_spawn,
     random_tanker_spawn,
@@ -37,7 +43,7 @@ from hormuz.protocol import (
     encode_war_cost,
 )
 from hormuz.systems.bot_ai import BotAIProcessor
-from hormuz.systems.collision import COLLISION_POLYGONS, CollisionProcessor
+from hormuz.systems.collision import CollisionProcessor
 from hormuz.systems.combat import CombatProcessor
 from hormuz.systems.grounding import GroundingProcessor
 from hormuz.systems.physics import PhysicsProcessor
@@ -70,96 +76,6 @@ game_state = {
 
 start_time = time.monotonic()
 
-# --- Vehicle physics params (match client factory functions exactly) ---
-
-OIL_TANKER_PHYSICS = dict(
-    vehicle_type="oil_tanker",
-    max_speed=15.0,
-    acceleration=2.0,
-    drag=0.97,
-    turn_rate=0.0,
-    drift_factor=0.0,
-    lateral_drag=0.45,
-    min_turn_fraction=0.0,
-    cruise_speed=0.0,
-    airborne=False,
-    size=220.0,
-    angular_drag=0.30,
-    mass=2200.0,
-    engine_power=4400.0,
-    drag_coefficient=4400.0 / (15.0 * 15.0),
-    propeller_offset=-0.4,
-    rudder_max_angle=0.6,
-    moment_of_inertia=3600000.0,
-    rudder_flow_coefficient=0.5 * 4400.0 / (15.0 * 15.0),
-)
-
-SHAHED_PHYSICS = dict(
-    vehicle_type="shahed",
-    max_speed=80.0,
-    acceleration=10.0,
-    drag=0.95,
-    turn_rate=0.5,
-    drift_factor=0.02,
-    lateral_drag=0.1,
-    min_turn_fraction=1.0,
-    cruise_speed=68.0,
-    airborne=True,
-    size=4.0,
-    angular_drag=0.10,
-    mass=40.0,
-    engine_power=400.0,
-    drag_coefficient=400.0 / (80.0 * 80.0),
-    propeller_offset=0.0,
-    rudder_max_angle=0.0,
-    moment_of_inertia=0.0,
-    rudder_flow_coefficient=0.0,
-)
-
-FRIGATE_PHYSICS = dict(
-    vehicle_type="frigate",
-    max_speed=20.0,
-    acceleration=2.0,
-    drag=0.95,
-    turn_rate=0.0,
-    drift_factor=0.0,
-    lateral_drag=0.2,
-    min_turn_fraction=0.0,
-    cruise_speed=0.0,
-    airborne=False,
-    size=100.0,
-    angular_drag=0.25,
-    mass=1000.0,
-    engine_power=5000.0,
-    drag_coefficient=5000.0 / (20.0 * 20.0),
-    propeller_offset=-0.4,
-    rudder_max_angle=0.6,
-    moment_of_inertia=435000.0,
-    rudder_flow_coefficient=0.5 * 5000.0 / (20.0 * 20.0),
-)
-
-QUADCOPTER_PHYSICS = dict(
-    vehicle_type="quadcopter",
-    max_speed=22.0,
-    acceleration=8.0,
-    drag=0.95,
-    turn_rate=4.0,
-    drift_factor=0.01,
-    lateral_drag=0.05,
-    min_turn_fraction=1.0,
-    cruise_speed=0.0,
-    airborne=True,
-    size=2.0,
-    angular_drag=0.08,
-    mass=20.0,
-    engine_power=360.0,
-    drag_coefficient=360.0 / (22.0 * 22.0),
-    propeller_offset=0.0,
-    rudder_max_angle=0.0,
-    moment_of_inertia=0.0,
-    rudder_flow_coefficient=0.0,
-)
-
 
 def setup_world() -> None:
     """Create all entities and register ECS processors."""
@@ -170,90 +86,92 @@ def setup_world() -> None:
     esper.add_processor(CollisionProcessor(), priority=2)
     esper.add_processor(SpawnProcessor(), priority=1)
 
-    # Spawn 10 loaded tankers heading outbound (Persian Gulf -> Oman)
-    for i in range(10):
+    tanker_spawns = WORLD_SPAWNS["oil_tanker"]
+    for i in range(tanker_spawns["outbound"]):
         x, y, heading = random_tanker_spawn()
         esper.create_entity(
             Transform(x=x, y=y, heading=heading),
-            VehiclePhysics(**OIL_TANKER_PHYSICS),
+            VehiclePhysics(**VEHICLE_PHYSICS["oil_tanker"]),
             Faction("civilian"),
-            Health(100, 100),
+            Health(MAX_HP["oil_tanker"], MAX_HP["oil_tanker"]),
             Collidable(COLLISION_POLYGONS["oil_tanker"]),
             BotControl("tanker_transit"),
             CargoState(loaded=True, destination="oman"),
         )
 
-    # Spawn 10 empty tankers heading inbound (Oman -> Persian Gulf)
-    for i in range(10):
+    for i in range(tanker_spawns["inbound"]):
         x, y, heading = random_oman_spawn()
         esper.create_entity(
             Transform(x=x, y=y, heading=heading),
-            VehiclePhysics(**OIL_TANKER_PHYSICS),
+            VehiclePhysics(**VEHICLE_PHYSICS["oil_tanker"]),
             Faction("civilian"),
-            Health(100, 100),
+            Health(MAX_HP["oil_tanker"], MAX_HP["oil_tanker"]),
             Collidable(COLLISION_POLYGONS["oil_tanker"]),
             BotControl("tanker_transit"),
             CargoState(loaded=False, destination="gulf"),
         )
 
-    # Spawn 5 shaheds
-    for i in range(5):
+    for i in range(WORLD_SPAWNS["shahed"]):
         spawn = IRAN_SPAWNS[i % len(IRAN_SPAWNS)]
         x, y = spawn["position"]
         esper.create_entity(
             Transform(x=float(x), y=float(y), heading=spawn["heading"]),
-            VehiclePhysics(**SHAHED_PHYSICS),
+            VehiclePhysics(**VEHICLE_PHYSICS["shahed"]),
             Faction("iran"),
-            Health(10, 10),
+            Health(MAX_HP["shahed"], MAX_HP["shahed"]),
             Collidable(COLLISION_POLYGONS["shahed"]),
             BotControl("shahed_intercept"),
+            Battery(),
         )
 
-    # Spawn 10 quadcopters near tankers (closest launch site, scattered)
     tanker_positions: list[tuple[float, float]] = []
     for _, (tf, phys) in esper.get_components(Transform, VehiclePhysics):
         if phys.vehicle_type == "oil_tanker":
             tanker_positions.append((tf.x, tf.y))
-    for i in range(10):
+    for i in range(WORLD_SPAWNS["quadcopter"]):
         x, y, heading = random_quadcopter_spawn(tanker_positions)
         esper.create_entity(
             Transform(x=x, y=y, heading=heading),
-            VehiclePhysics(**QUADCOPTER_PHYSICS),
+            VehiclePhysics(**VEHICLE_PHYSICS["quadcopter"]),
             Faction("iran"),
-            Health(5, 5),
+            Health(MAX_HP["quadcopter"], MAX_HP["quadcopter"]),
             Collidable(COLLISION_POLYGONS["quadcopter"]),
             BotControl("quadcopter_intercept"),
+            Battery(),
         )
 
-    # Spawn 3 frigates on Persian Gulf side
-    for i in range(3):
+    frigate_spawns = WORLD_SPAWNS["frigate"]
+    for i in range(frigate_spawns["gulf"]):
         x, y, heading = random_tanker_spawn()
         esper.create_entity(
             Transform(x=x, y=y, heading=heading),
-            VehiclePhysics(**FRIGATE_PHYSICS),
+            VehiclePhysics(**VEHICLE_PHYSICS["frigate"]),
             Faction("us"),
-            Health(300, 300),
+            Health(MAX_HP["frigate"], MAX_HP["frigate"]),
             Collidable(COLLISION_POLYGONS["frigate"]),
             BotControl("escort"),
             PatrolZone(
-                center_x=71300.0, center_y=46800.0,
-                radius=15000.0, zone_id="strait_west",
+                center_x=71300.0,
+                center_y=46800.0,
+                radius=15000.0,
+                zone_id="strait_west",
             ),
         )
 
-    # Spawn 2 frigates on Gulf of Oman side
-    for i in range(2):
+    for i in range(frigate_spawns["oman"]):
         x, y, heading = random_oman_spawn()
         esper.create_entity(
             Transform(x=x, y=y, heading=heading),
-            VehiclePhysics(**FRIGATE_PHYSICS),
+            VehiclePhysics(**VEHICLE_PHYSICS["frigate"]),
             Faction("us"),
-            Health(300, 300),
+            Health(MAX_HP["frigate"], MAX_HP["frigate"]),
             Collidable(COLLISION_POLYGONS["frigate"]),
             BotControl("escort"),
             PatrolZone(
-                center_x=112850.0, center_y=62424.0,
-                radius=15000.0, zone_id="oman_approach",
+                center_x=112850.0,
+                center_y=62424.0,
+                radius=15000.0,
+                zone_id="oman_approach",
             ),
         )
 
@@ -267,6 +185,8 @@ def build_snapshot() -> bytes:
     for ent, (tf, phys, health, faction) in esper.get_components(
         Transform, VehiclePhysics, Health, Faction
     ):
+        battery = esper.try_component(ent, Battery)
+        battery_pct = round(battery.charge, 1) if battery else -1.0
         entities.append(
             (
                 ent,
@@ -281,25 +201,38 @@ def build_snapshot() -> bytes:
                 health.hp,
                 tf.flood_level,
                 tf.list_angle,
+                battery_pct,
             )
         )
     return encode_full_snapshot(game_state["tick"], entities)
 
 
-def _proximity_weight(ent: int) -> float:
-    """Weight for random selection: closer to the strait = higher weight."""
+ENEMY_FACTIONS: dict[str, set[str]] = {
+    "civilian": {"iran"},
+    "iran": {"civilian", "us"},
+    "us": {"iran"},
+}
+
+
+def _nearest_enemy_distance(ent: int) -> float:
+    """Return distance to the nearest enemy entity. Infinity if no enemies exist."""
     tf = esper.component_for_entity(ent, Transform)
-    dx = tf.x - STRAIT_CENTER[0]
-    dy = tf.y - STRAIT_CENTER[1]
-    dist = (dx * dx + dy * dy) ** 0.5
-    # Inverse distance weighting — cap minimum to avoid division by near-zero
-    return 1.0 / max(dist, 500.0)
+    faction = esper.component_for_entity(ent, Faction)
+    enemies = ENEMY_FACTIONS.get(faction.name, set())
+    best = float("inf")
+    for _, (e_tf, e_faction, e_health) in esper.get_components(Transform, Faction, Health):
+        if e_health.hp > 0 and e_faction.name in enemies:
+            dx = tf.x - e_tf.x
+            dy = tf.y - e_tf.y
+            dist = dx * dx + dy * dy
+            if dist < best:
+                best = dist
+    return best
 
 
-def _pick_weighted(candidates: list[int]) -> int:
-    """Pick a random entity from candidates, weighted by strait proximity."""
-    weights = [_proximity_weight(ent) for ent in candidates]
-    return random.choices(candidates, weights=weights, k=1)[0]
+def _pick_nearest_to_enemy(candidates: list[int]) -> int:
+    """Pick the candidate closest to its nearest enemy."""
+    return min(candidates, key=_nearest_enemy_distance)
 
 
 def _assign_entity(conn_id: int, ent: int) -> None:
@@ -333,9 +266,7 @@ def _teleport_to_spawn(ent: int) -> None:
         tf.heading = spawn["heading"]
     elif phys.vehicle_type == "quadcopter":
         tanker_positions: list[tuple[float, float]] = []
-        for _, (t_tf, t_phys, t_health) in esper.get_components(
-            Transform, VehiclePhysics, Health
-        ):
+        for _, (t_tf, t_phys, t_health) in esper.get_components(Transform, VehiclePhysics, Health):
             if t_phys.vehicle_type == "oil_tanker" and t_health.hp > 0:
                 tanker_positions.append((t_tf.x, t_tf.y))
         tf.x, tf.y, tf.heading = random_quadcopter_spawn(tanker_positions)
@@ -344,24 +275,26 @@ def _teleport_to_spawn(ent: int) -> None:
     tf.speed = 0.0
     tf.drift = 0.0
     tf.angular_velocity = 0.0
+    battery = esper.try_component(ent, Battery)
+    if battery is not None:
+        battery.charge = 100.0
 
 
 def assign_vehicle_to_player(conn_id: int, teleport: bool = False) -> int | None:
     """Find a bot-controlled entity and assign it to a human player.
 
-    Picks randomly, weighted toward vehicles closer to the strait.
-    If teleport is True, moves the vehicle to a safe spawn point.
+    Picks a random vehicle type (equal probability, limited to types with living
+    bots), then within that type picks the bot closest to its nearest enemy.
     """
-    candidates = [
-        ent
-        for ent, (bot, phys, health) in esper.get_components(
-            BotControl, VehiclePhysics, Health
-        )
-        if health.hp > 0
-    ]
-    if not candidates:
+    # Group living bots by vehicle type
+    by_type: dict[str, list[int]] = {}
+    for ent, (bot, phys, health) in esper.get_components(BotControl, VehiclePhysics, Health):
+        if health.hp > 0:
+            by_type.setdefault(phys.vehicle_type, []).append(ent)
+    if not by_type:
         return None
-    ent = _pick_weighted(candidates)
+    vehicle_type = random.choice(list(by_type.keys()))
+    ent = _pick_nearest_to_enemy(by_type[vehicle_type])
     _assign_entity(conn_id, ent)
     if teleport:
         _teleport_to_spawn(ent)
@@ -379,15 +312,13 @@ def assign_vehicle_type_to_player(conn_id: int, vehicle_type: str) -> int | None
 
     candidates = [
         ent
-        for ent, (bot, phys, health) in esper.get_components(
-            BotControl, VehiclePhysics, Health
-        )
+        for ent, (bot, phys, health) in esper.get_components(BotControl, VehiclePhysics, Health)
         if health.hp > 0 and phys.vehicle_type == vehicle_type
     ]
     if not candidates:
         return assign_vehicle_to_player(conn_id, teleport=True)
 
-    ent = _pick_weighted(candidates)
+    ent = _pick_nearest_to_enemy(candidates)
     _assign_entity(conn_id, ent)
     _teleport_to_spawn(ent)
     return ent

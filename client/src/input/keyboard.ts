@@ -143,4 +143,11 @@ export class KeyboardManager {
 		this._cameraModeChanged = false;
 		return changed;
 	}
+
+	/** Cycle to the next camera mode (same as pressing V). */
+	cycleCameraMode(): void {
+		const idx = CAMERA_MODES.indexOf(this._cameraMode);
+		this._cameraMode = CAMERA_MODES[(idx + 1) % CAMERA_MODES.length];
+		this._cameraModeChanged = true;
+	}
 }

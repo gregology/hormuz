@@ -11,60 +11,7 @@ import math
 import esper
 
 from hormuz.components import Collidable, Health, Transform, VehiclePhysics
-
-# Collision polygons per vehicle type — local-space [forward, starboard],
-# fractions of vehicle size. CCW winding order.
-COLLISION_POLYGONS: dict[str, tuple[tuple[float, float], ...]] = {
-    "speedboat": (
-        (0.5, 0),
-        (0.2, 0.08),
-        (-0.2, 0.14),
-        (-0.42, 0.06),
-        (-0.42, -0.06),
-        (-0.2, -0.14),
-        (0.2, -0.08),
-    ),
-    "frigate": (
-        (0.5, 0),
-        (0.3, 0.045),
-        (-0.1, 0.08),
-        (-0.4, 0.065),
-        (-0.45, 0),
-        (-0.4, -0.065),
-        (-0.1, -0.08),
-        (0.3, -0.045),
-    ),
-    "oil_tanker": (
-        (0.5, 0),
-        (0.38, 0.085),
-        (0.1, 0.09),
-        (-0.3, 0.09),
-        (-0.46, 0),
-        (-0.3, -0.09),
-        (0.1, -0.09),
-        (0.38, -0.085),
-    ),
-    "truck": (
-        (0.44, 0.18),
-        (-0.48, 0.18),
-        (-0.48, -0.18),
-        (0.44, -0.18),
-    ),
-    "quadcopter": (
-        (0.38, 0.38),
-        (-0.38, 0.38),
-        (-0.38, -0.38),
-        (0.38, -0.38),
-    ),
-    "shahed": (
-        (0.5, 0),
-        (0.15, 0.1),
-        (-0.2, 0.35),
-        (-0.4, 0),
-        (-0.2, -0.35),
-        (0.15, -0.1),
-    ),
-}
+from hormuz.generated.vehicles import COLLISION_POLYGONS as COLLISION_POLYGONS
 
 RESTITUTION = 0.3
 FRICTION = 0.4
@@ -106,9 +53,7 @@ def _transform_polygon(
     ]
 
 
-def _project_polygon(
-    poly: list[tuple[float, float]], ax: float, ay: float
-) -> tuple[float, float]:
+def _project_polygon(poly: list[tuple[float, float]], ax: float, ay: float) -> tuple[float, float]:
     mn = mx = poly[0][0] * ax + poly[0][1] * ay
     for i in range(1, len(poly)):
         d = poly[i][0] * ax + poly[i][1] * ay

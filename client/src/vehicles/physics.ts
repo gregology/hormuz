@@ -16,15 +16,14 @@
  * decelerate uphill and accelerate downhill.
  */
 
+import {
+	BREACHES_TO_SINK,
+	VEHICLE_PHYSICS,
+	type VehicleType,
+} from "../generated/vehicles";
 import { getTerrainGradient } from "../map/heightmap";
 
-export type VehicleType =
-	| "speedboat"
-	| "frigate"
-	| "oil_tanker"
-	| "truck"
-	| "quadcopter"
-	| "shahed";
+export type { VehicleType } from "../generated/vehicles";
 
 export interface NavalVehicle {
 	vehicleType: VehicleType;
@@ -116,8 +115,8 @@ export function equilibriumSpeed(v: NavalVehicle): number {
 export const FLOOD = {
 	/** Water ingress rate per breach per second. Single breach: ~30s to sink. */
 	breachRate: 0.03,
-	/** Max roll angle from asymmetric flooding (~29°). */
-	maxList: 0.5,
+	/** Max roll angle from asymmetric flooding (~69°). */
+	maxList: 1.2,
 	/** How quickly list angle develops (exponential lerp rate). */
 	lerpRate: 3,
 	/** Same-side hits needed for maximum list. */
@@ -139,9 +138,12 @@ export function addBreach(v: NavalVehicle, side: number): void {
 export function updateFlooding(v: NavalVehicle, dt: number): void {
 	if (v.hullBreaches === 0 || v.airborne || v.vehicleType === "truck") return;
 
+	// Flood level caps based on number of breaches — need BREACHES_TO_SINK breaches to fully sink
+	const maxFlood = Math.min(v.hullBreaches / BREACHES_TO_SINK, 1);
+
 	// Water ingress accelerates as ship takes on more water
 	const ingress = v.hullBreaches * FLOOD.breachRate * (1 + v.floodLevel);
-	v.floodLevel = Math.min(v.floodLevel + ingress * dt, 1);
+	v.floodLevel = Math.min(v.floodLevel + ingress * dt, maxFlood);
 
 	// List toward damaged side, proportional to flood level
 	const targetList = v.breachSide * FLOOD.maxList * v.floodLevel;
@@ -157,30 +159,20 @@ export function updateFlooding(v: NavalVehicle, dt: number): void {
 	v.speed -= (floodDrag / v.mass) * dt;
 }
 
-export function createSpeedboat(x: number, y: number): NavalVehicle {
+export function createVehicle(
+	type: VehicleType,
+	x: number,
+	y: number,
+): NavalVehicle {
 	return {
-		vehicleType: "speedboat",
+		...VEHICLE_PHYSICS[type],
+		vehicleType: type,
 		x,
 		y,
 		heading: 0,
 		speed: 0,
 		drift: 0,
-		mass: 100,
-		enginePower: 1200,
-		dragCoefficient: 1200 / (26 * 26),
-		turnRate: 0,
-		driftFactor: 0,
-		lateralDrag: 0.12,
-		minTurnFraction: 0,
-		cruiseSpeed: 0,
-		airborne: false,
-		size: 10,
 		angularVelocity: 0,
-		angularDrag: 0.15,
-		propellerOffset: -0.4,
-		rudderMaxAngle: 0.6,
-		momentOfInertia: 714,
-		rudderFlowCoefficient: 0, // outboard steering
 		floodLevel: 0,
 		listAngle: 0,
 		hullBreaches: 0,
@@ -188,164 +180,19 @@ export function createSpeedboat(x: number, y: number): NavalVehicle {
 	};
 }
 
-export function createFrigate(x: number, y: number): NavalVehicle {
-	// ~10x longer than speedboat (real: 150m vs 15m)
-	return {
-		vehicleType: "frigate",
-		x,
-		y,
-		heading: 0,
-		speed: 0,
-		drift: 0,
-		mass: 1000,
-		enginePower: 5000,
-		dragCoefficient: 5000 / (20 * 20),
-		turnRate: 0,
-		driftFactor: 0,
-		lateralDrag: 0.2,
-		minTurnFraction: 0,
-		cruiseSpeed: 0,
-		airborne: false,
-		size: 100,
-		angularVelocity: 0,
-		angularDrag: 0.25,
-		propellerOffset: -0.4,
-		rudderMaxAngle: 0.6,
-		momentOfInertia: 435000,
-		rudderFlowCoefficient: 0.5 * 5000 / (20 * 20),
-		floodLevel: 0,
-		listAngle: 0,
-		hullBreaches: 0,
-		breachSide: 0,
-	};
-}
-
-export function createOilTanker(x: number, y: number): NavalVehicle {
-	// ~22x longer than speedboat (real: 330m vs 15m)
-	return {
-		vehicleType: "oil_tanker",
-		x,
-		y,
-		heading: 0,
-		speed: 0,
-		drift: 0,
-		mass: 2200,
-		enginePower: 4400,
-		dragCoefficient: 4400 / (15 * 15),
-		turnRate: 0,
-		driftFactor: 0,
-		lateralDrag: 0.45,
-		minTurnFraction: 0,
-		cruiseSpeed: 0,
-		airborne: false,
-		size: 220,
-		angularVelocity: 0,
-		angularDrag: 0.3,
-		propellerOffset: -0.4,
-		rudderMaxAngle: 0.6,
-		momentOfInertia: 3600000,
-		rudderFlowCoefficient: 0.5 * 4400 / (15 * 15), // ~50% of thrust effect at cruise
-		floodLevel: 0,
-		listAngle: 0,
-		hullBreaches: 0,
-		breachSide: 0,
-	};
-}
-
-export function createTruck(x: number, y: number): NavalVehicle {
-	// ~7m box truck (about half a speedboat's length)
-	return {
-		vehicleType: "truck",
-		x,
-		y,
-		heading: 0,
-		speed: 0,
-		drift: 0,
-		mass: 50,
-		enginePower: 400,
-		dragCoefficient: 400 / (18 * 18),
-		turnRate: 0.8,
-		driftFactor: 0.015,
-		lateralDrag: 0.04,
-		minTurnFraction: 0.6,
-		cruiseSpeed: 0,
-		airborne: false,
-		size: 5,
-		angularVelocity: 0,
-		angularDrag: 0.1,
-		propellerOffset: 0,
-		rudderMaxAngle: 0,
-		momentOfInertia: 0,
-		rudderFlowCoefficient: 0,
-		floodLevel: 0,
-		listAngle: 0,
-		hullBreaches: 0,
-		breachSide: 0,
-	};
-}
-
-export function createQuadcopter(x: number, y: number): NavalVehicle {
-	return {
-		vehicleType: "quadcopter",
-		x,
-		y,
-		heading: 0,
-		speed: 0,
-		drift: 0,
-		mass: 20,
-		enginePower: 360,
-		dragCoefficient: 360 / (22 * 22),
-		turnRate: 4.0,
-		driftFactor: 0.01,
-		lateralDrag: 0.05,
-		minTurnFraction: 1.0,
-		cruiseSpeed: 0,
-		airborne: true,
-		size: 2,
-		angularVelocity: 0,
-		angularDrag: 0.08,
-		propellerOffset: 0,
-		rudderMaxAngle: 0,
-		momentOfInertia: 0,
-		rudderFlowCoefficient: 0,
-		floodLevel: 0,
-		listAngle: 0,
-		hullBreaches: 0,
-		breachSide: 0,
-	};
-}
-
-export function createShahed(x: number, y: number): NavalVehicle {
-	// Shahed-136 style loitering munition — fixed-wing, always moving forward
-	return {
-		vehicleType: "shahed",
-		x,
-		y,
-		heading: 0,
-		speed: 0,
-		drift: 0,
-		mass: 40,
-		enginePower: 400,
-		dragCoefficient: 400 / (80 * 80),
-		turnRate: 0.5,
-		driftFactor: 0.02,
-		lateralDrag: 0.1,
-		minTurnFraction: 1.0,
-		cruiseSpeed: 68,
-		airborne: true,
-		size: 4,
-		angularVelocity: 0,
-		angularDrag: 0.1,
-		propellerOffset: 0,
-		rudderMaxAngle: 0,
-		momentOfInertia: 0,
-		rudderFlowCoefficient: 0,
-		floodLevel: 0,
-		listAngle: 0,
-		hullBreaches: 0,
-		breachSide: 0,
-	};
-}
+// Backward-compat aliases
+export const createSpeedboat = (x: number, y: number) =>
+	createVehicle("speedboat", x, y);
+export const createFrigate = (x: number, y: number) =>
+	createVehicle("frigate", x, y);
+export const createOilTanker = (x: number, y: number) =>
+	createVehicle("oil_tanker", x, y);
+export const createTruck = (x: number, y: number) =>
+	createVehicle("truck", x, y);
+export const createQuadcopter = (x: number, y: number) =>
+	createVehicle("quadcopter", x, y);
+export const createShahed = (x: number, y: number) =>
+	createVehicle("shahed", x, y);
 
 export interface VehicleInput {
 	throttle: number; // -1 to 1 (forward/reverse)
