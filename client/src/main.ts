@@ -201,6 +201,37 @@ function init() {
 		);
 	});
 
+	// --- Pinch-to-zoom (mobile) ---
+	let pinchStartDist = 0;
+	let pinchStartZoom = 0;
+
+	container.addEventListener("touchstart", (e: TouchEvent) => {
+		if (e.touches.length === 2) {
+			const dx = e.touches[1].clientX - e.touches[0].clientX;
+			const dy = e.touches[1].clientY - e.touches[0].clientY;
+			pinchStartDist = Math.hypot(dx, dy);
+			pinchStartZoom = cam.zoom;
+		}
+	});
+
+	container.addEventListener("touchmove", (e: TouchEvent) => {
+		if (e.touches.length !== 2 || pinchStartDist === 0) return;
+		if (!spectating && input.cameraMode !== "isometric") return;
+		const dx = e.touches[1].clientX - e.touches[0].clientX;
+		const dy = e.touches[1].clientY - e.touches[0].clientY;
+		const dist = Math.hypot(dx, dy);
+		const scale = dist / pinchStartDist;
+		const limits = spectating ? SPECTATOR_ZOOM : zoomLimits;
+		cam.zoom = Math.max(
+			limits.min,
+			Math.min(limits.max, pinchStartZoom * scale),
+		);
+	});
+
+	container.addEventListener("touchend", () => {
+		pinchStartDist = 0;
+	});
+
 	// --- Resize handler ---
 	window.addEventListener("resize", () => {
 		const w = window.innerWidth;
