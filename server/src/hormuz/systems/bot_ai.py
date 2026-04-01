@@ -10,10 +10,19 @@ from hormuz.map_data import (
     LANE_INBOUND,
     LANE_OUTBOUND,
     OMAN_DESTINATION,
+    STRAIT_CENTER,
 )
 from hormuz.systems.combat import JAM_RADIUS_SQ
 
 ESCORT_RADIUS = 500.0  # desired orbit distance from escorted tanker
+
+# Shahed visual detection range — no radar, must see targets visually
+SHAHED_VISUAL_RANGE = 5000.0
+SHAHED_VISUAL_RANGE_SQ = SHAHED_VISUAL_RANGE * SHAHED_VISUAL_RANGE
+
+# Frigate escort zone — outside these bounds, tankers are considered safe
+ESCORT_ZONE_WEST = 50000.0
+ESCORT_ZONE_EAST = 110000.0
 
 
 def steer_toward(tf: Transform, target_x: float, target_y: float) -> float:
@@ -132,14 +141,22 @@ class BotAIProcessor(esper.Processor):
                 health = esper.try_component(bot.target_entity, Health)
                 if health is None or health.hp <= 0:
                     bot.target_entity = 0
+                else:
+                    # Release tanker that has left the danger zone (safe now)
+                    t_tf = esper.component_for_entity(bot.target_entity, Transform)
+                    if t_tf.x < ESCORT_ZONE_WEST or t_tf.x > ESCORT_ZONE_EAST:
+                        bot.target_entity = 0
 
-        # Acquire nearest alive tanker if no target
+        # Acquire nearest alive tanker within the danger zone
         if bot.target_entity == 0:
             best_dist_sq = float("inf")
             for t_ent, (t_tf, t_phys, t_health) in esper.get_components(
                 Transform, VehiclePhysics, Health
             ):
                 if t_phys.vehicle_type != "oil_tanker" or t_health.hp <= 0:
+                    continue
+                # Only escort tankers in the danger zone
+                if t_tf.x < ESCORT_ZONE_WEST or t_tf.x > ESCORT_ZONE_EAST:
                     continue
                 dx = t_tf.x - tf.x
                 dy = t_tf.y - tf.y
@@ -149,8 +166,9 @@ class BotAIProcessor(esper.Processor):
                     bot.target_entity = t_ent
 
         if bot.target_entity == 0:
-            bot.throttle = 0.0
-            bot.rudder = 0.0
+            # No tanker to escort — head back toward strait center
+            bot.rudder = steer_toward(tf, STRAIT_CENTER[0], STRAIT_CENTER[1])
+            bot.throttle = 0.7
             return
 
         target_tf = esper.component_for_entity(bot.target_entity, Transform)

@@ -20,6 +20,18 @@ import {
 } from "./vehicle-meshes";
 
 // ---------------------------------------------------------------------------
+// Frigate radar detection — shared awareness across all frigates
+// ---------------------------------------------------------------------------
+
+const FRIGATE_RADAR_RANGE = 10000;
+const FRIGATE_RADAR_RANGE_SQ = FRIGATE_RADAR_RANGE * FRIGATE_RADAR_RANGE;
+
+// Detection indicator ring (world-space units)
+const DETECTION_RING_INNER = 80;
+const DETECTION_RING_OUTER = 100;
+const DETECTION_RING_SEGMENTS = 32;
+
+// ---------------------------------------------------------------------------
 // Vehicle properties (size and airborne status per vehicle type)
 // ---------------------------------------------------------------------------
 
@@ -51,9 +63,26 @@ interface VehicleEntry {
 export class ThreeVehicleRenderer {
 	readonly root: THREE.Group;
 	private pool = new Map<number, VehicleEntry>();
+	private detectionIndicators = new Map<number, THREE.Mesh>();
+	private detectionGeo: THREE.RingGeometry;
+	private detectionMat: THREE.MeshBasicMaterial;
 
 	constructor() {
 		this.root = new THREE.Group();
+		this.detectionGeo = new THREE.RingGeometry(
+			DETECTION_RING_INNER,
+			DETECTION_RING_OUTER,
+			DETECTION_RING_SEGMENTS,
+		);
+		// Rotate from XY plane to XZ plane (flat on ground)
+		this.detectionGeo.rotateX(-Math.PI / 2);
+		this.detectionMat = new THREE.MeshBasicMaterial({
+			color: 0xff0000,
+			side: THREE.DoubleSide,
+			transparent: true,
+			opacity: 0.6,
+			depthWrite: false,
+		});
 	}
 
 	/**
@@ -69,6 +98,16 @@ export class ThreeVehicleRenderer {
 		factionColors: Record<string, number>,
 	): void {
 		const activeIds = new Set<number>();
+
+		// Collect frigate positions for radar detection
+		const frigatePositions: { x: number; y: number }[] = [];
+		for (const e of entities) {
+			if (e.hp > 0 && e.vehicleType === "frigate") {
+				frigatePositions.push({ x: e.x, y: e.y });
+			}
+		}
+
+		const detectedShahedIds = new Set<number>();
 
 		for (const e of entities) {
 			if (e.hp <= 0) continue;
@@ -117,6 +156,41 @@ export class ThreeVehicleRenderer {
 				setVehicleColor(entry.group, color);
 				entry.currentColor = color;
 			}
+
+			// Radar detection: check if this shahed is within any frigate's radar range
+			if (e.vehicleType === "shahed") {
+				for (const fp of frigatePositions) {
+					const dx = fp.x - e.x;
+					const dy = fp.y - e.y;
+					if (dx * dx + dy * dy < FRIGATE_RADAR_RANGE_SQ) {
+						detectedShahedIds.add(e.id);
+						break;
+					}
+				}
+			}
+		}
+
+		// Update detection indicator rings
+		for (const e of entities) {
+			if (e.hp <= 0 || e.vehicleType !== "shahed") continue;
+
+			if (detectedShahedIds.has(e.id)) {
+				let ring = this.detectionIndicators.get(e.id);
+				if (!ring) {
+					ring = new THREE.Mesh(this.detectionGeo, this.detectionMat);
+					ring.renderOrder = 5;
+					this.root.add(ring);
+					this.detectionIndicators.set(e.id, ring);
+				}
+				const elevation = getElevation(e.x, e.y) + 31;
+				ring.position.set(e.x, elevation, e.y);
+			} else {
+				const ring = this.detectionIndicators.get(e.id);
+				if (ring) {
+					this.root.remove(ring);
+					this.detectionIndicators.delete(e.id);
+				}
+			}
 		}
 
 		// Remove entities no longer alive
@@ -125,6 +199,13 @@ export class ThreeVehicleRenderer {
 				this.root.remove(entry.group);
 				disposeVehicleMesh(entry.group);
 				this.pool.delete(id);
+			}
+		}
+		// Remove detection indicators for dead/removed shaheds
+		for (const [id, ring] of this.detectionIndicators) {
+			if (!activeIds.has(id)) {
+				this.root.remove(ring);
+				this.detectionIndicators.delete(id);
 			}
 		}
 	}
@@ -136,5 +217,11 @@ export class ThreeVehicleRenderer {
 			disposeVehicleMesh(entry.group);
 		}
 		this.pool.clear();
+		for (const [, ring] of this.detectionIndicators) {
+			this.root.remove(ring);
+		}
+		this.detectionIndicators.clear();
+		this.detectionGeo.dispose();
+		this.detectionMat.dispose();
 	}
 }

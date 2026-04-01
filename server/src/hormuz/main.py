@@ -20,7 +20,7 @@ from hormuz.components import (
     Transform,
     VehiclePhysics,
 )
-from hormuz.map_data import IRAN_SPAWNS, random_oman_spawn, random_tanker_spawn
+from hormuz.map_data import IRAN_SPAWNS, STRAIT_CENTER, random_oman_spawn, random_tanker_spawn
 from hormuz.protocol import (
     MSG_INPUT,
     decode_client_message,
@@ -236,10 +236,6 @@ def build_snapshot() -> bytes:
             )
         )
     return encode_full_snapshot(game_state["tick"], entities)
-
-
-# Center of action — the strait narrows where tanker lanes converge and shaheds attack
-STRAIT_CENTER = (85000.0, 37000.0)
 
 
 def _proximity_weight(ent: int) -> float:

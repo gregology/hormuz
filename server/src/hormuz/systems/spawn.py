@@ -18,6 +18,7 @@ from hormuz.map_data import (
     GULF_DESTINATION,
     IRAN_SPAWNS,
     OMAN_DESTINATION,
+    STRAIT_CENTER,
     random_oman_spawn,
     random_tanker_spawn,
 )
@@ -116,7 +117,8 @@ class SpawnProcessor(esper.Processor):
             else:
                 spawn = random.choice(IRAN_SPAWNS)
                 x, y = spawn["position"]
-                heading = spawn["heading"]
+                # Head toward strait chokepoint — shaheds have no radar, converge on action
+                heading = math.atan2(STRAIT_CENTER[1] - y, STRAIT_CENTER[0] - x)
                 behavior = "shahed_intercept"
 
             tf.x = float(x)

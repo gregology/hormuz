@@ -55,7 +55,7 @@ export const DEFAULT_LAYERS: MapLayers = {
 	showDepthZones: true,
 	showShippingLanes: true,
 	showHazards: true,
-	showSpawnPoints: true,
+	showSpawnPoints: false,
 	showTerrain: true,
 	showGrid: false,
 	gridSize: 1000,
@@ -191,8 +191,8 @@ export class ThreeMapRenderer {
 		this.hazardGroup = this.buildHazards();
 		this.laneGroup = this.buildLanes();
 		this.gridGroup = this.buildGrid(layers.gridSize);
-		this.buildBases();
 		this.spawnGroup = this.buildSpawns();
+		this.buildBases(this.spawnGroup);
 
 		this.setLayers(layers);
 	}
@@ -527,7 +527,7 @@ export class ThreeMapRenderer {
 		return group;
 	}
 
-	private buildBases(): void {
+	private buildBases(group: THREE.Group): void {
 		const m = this.mat(
 			new THREE.MeshBasicMaterial({
 				color: COLORS.spawnUS,
@@ -544,7 +544,7 @@ export class ThreeMapRenderer {
 			const mesh = new THREE.Mesh(g, m);
 			mesh.position.set(base.position[0], Y_MARKERS, base.position[1]);
 			mesh.renderOrder = 6;
-			this.root.add(mesh);
+			group.add(mesh);
 		}
 	}
 
