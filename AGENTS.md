@@ -66,12 +66,13 @@ hormuz/
     src/
       render/          # Rendering (camera, colors, shaders, scene, vehicle models + renderers)
         shaders/       # GLSL shaders (vertex + fragment)
+        ciws-controller.ts  # Client-side CIWS turret targeting + tracer particles
       vehicles/        # Physics engine + collision (reference implementation)
       effects/         # Visual effects system (wake trails, explosions, sinking)
       map/             # Geographic data, terrain, heightmap, coastlines
       net/             # WebSocket connection + MessagePack protocol
       game/            # Entity state store + snapshot interpolation
-      input/           # Keyboard input manager
+      input/           # Input system (keyboard, touch, unified input manager)
       generated/       # Auto-generated from YAML
   playground/          # Dev sandbox (same renderer, lil-gui controls)
 ```
@@ -201,13 +202,14 @@ Decisions that have already been made (do not revisit without explicit request):
 - **Coastlines:** Generated from Natural Earth 10m data (not hand-traced)
 - **Terrain elevation:** Grid heightmap from NOAA ETOPO1 data, gameplay-scaled (non-linear compression + smoothing). Hillshade rendered as GPU-interpolated texture sprite. Vehicles gain height offset + pitch on slopes. Physics applies gradient force (uphill deceleration, downhill acceleration).
 - **Terrain classification (land/water):** Ray-casting point-in-polygon against coastline polygons (`client/src/map/terrain.ts`), not the heightmap grid. The heightmap is too coarse (500-unit cells) for terrain type detection — coastline polygons are the visual ground truth.
-- **Collision:** Ships bounce off land, trucks bounce off water (using polygon terrain classifier). Airborne vehicles ignore terrain. Vehicle-vehicle collisions use SAT (Separating Axis Theorem) on convex polygons with impulse-based rigid body resolution (restitution, friction, angular velocity). Each vehicle type has a collision polygon defined in `COLLISION_POLYGONS` in both `collision.ts` and `collision.py`. Contact points are computed geometrically by SAT, producing natural torque on off-center hits.
+- **Collision:** Ships bounce off land, trucks bounce off water (using polygon terrain classifier). Airborne vehicles ignore terrain. Vehicle-vehicle collisions use SAT (Separating Axis Theorem) on convex polygons with impulse-based rigid body resolution (restitution, friction, angular velocity). Each vehicle type has a collision polygon defined in `shared/vehicles.yaml` and generated into `COLLISION_POLYGONS` in both `generated/vehicles.ts` and `generated/vehicles.py`. Contact points are computed geometrically by SAT, producing natural torque on off-center hits.
 - **Server-authoritative simulation:** Server runs all physics at 20Hz. Clients send input and render interpolated state. Client physics code (`vehicles/physics.ts`) is the reference implementation; server physics (`systems/physics.py`) is the authoritative port. Client-side prediction may be added later as a layer on top — the server code won't change.
 - **ECS processor order:** BotAI (priority 5) → Physics (4) → Collision (3) → Combat (2) → Spawn (1). Network broadcast happens after `esper.process()` in the async game loop. Higher priority = runs first.
-- **Snapshot protocol:** Full snapshots sent at 20Hz to all clients (msgpack arrays). Delta snapshots deferred until entity count requires it. Each entity includes `angular_velocity` (field index 9), `flood_level` (index 10), and `list_angle` (index 11).
+- **Snapshot protocol:** Full snapshots sent at 20Hz to all clients (msgpack arrays). Delta snapshots deferred until entity count requires it. Each entity includes `angular_velocity` (field index 9), `flood_level` (index 10), `list_angle` (index 11), and `battery_pct` (index 12).
 - **Visual effects:** Client-side procedural effect system. `ThreeEffectManager` (`effects/manager.ts`) owns a `THREE.Group` and handles continuous effects (wake trails, stern churn) tied to entity state and transient effects (explosions, sinking) spawned from game events or HP changes. Each effect implements `ThreeEffect` (owns Three.js objects, update receives zoom for screen-pixel sizing). Wake trails use ribbon mesh geometry; particles use `THREE.Points` with custom ShaderMaterial.
 - **Angular velocity:** `Transform` has an `angular_velocity` field (server + client). Collision impulses and propeller torque both set it; `PhysicsProcessor` applies it to heading each tick and dampens via `angular_drag` (per-vehicle parameter on `VehiclePhysics`). This allows ships to spin realistically after off-center impacts and turn via rudder-deflected thrust.
-- **Flooding:** `Transform` has `flood_level`, `list_angle`, `hull_breaches`, `breach_side` fields. `PhysicsProcessor` runs `_update_flooding` each tick — water ingress accelerates with flood level, list angle lerps toward damaged side, additional drag slows the ship. When `flood_level >= 1.0`, the entity dies. Combat creates hull breaches on tankers (instead of instant kills); shaheds still die instantly on impact. Tuning constants (`BREACH_RATE`, `MAX_LIST`, `FLOOD_DRAG_FACTOR`, etc.) are in `physics.py` (server) and exported from `physics.ts` (client).
+- **Flooding:** `Transform` has `flood_level`, `list_angle`, `hull_breaches`, `breach_side` fields. `PhysicsProcessor` runs `_update_flooding` each tick — water ingress accelerates with flood level, list angle lerps toward damaged side, additional drag slows the ship. Flood level caps based on `hull_breaches / BREACHES_TO_SINK` (from YAML) — multiple breaches are needed to fully sink. When `flood_level >= 1.0`, the entity dies. Combat creates hull breaches on tankers (instead of instant kills); shaheds still die instantly on impact. `BREACHES_TO_SINK` is defined in `shared/vehicles.yaml` and generated; visual-only flooding constants (`breachRate`, `maxList`, `lerpRate`, etc.) remain in `physics.ts` (client) and `physics.py` (server).
+- **Battery:** Airborne drones have a `Battery` component (finite energy supply). `charge` drains over time via `drain_rate`; when depleted the drone dies. `battery_pct` is broadcast in snapshots for client HUD display.
 
 ## Conventions
 
