@@ -25,6 +25,16 @@ from hormuz.systems.collision import _sat_collision, _transform_polygon
 JAM_RADIUS = 2000.0
 JAM_RADIUS_SQ = JAM_RADIUS * JAM_RADIUS
 
+# --- Radar detection (must detect before engaging) ---
+RADAR_RANGE_SHAHED = 10000.0
+RADAR_RANGE_SHAHED_SQ = RADAR_RANGE_SHAHED * RADAR_RANGE_SHAHED
+RADAR_RANGE_QUADCOPTER = 750.0
+RADAR_RANGE_QUADCOPTER_SQ = RADAR_RANGE_QUADCOPTER * RADAR_RANGE_QUADCOPTER
+RADAR_RANGE_SQ: dict[str, float] = {
+    "shahed": RADAR_RANGE_SHAHED_SQ,
+    "quadcopter": RADAR_RANGE_QUADCOPTER_SQ,
+}
+
 # --- Autocannon ---
 AUTOCANNON_RANGE = 1500.0
 AUTOCANNON_RANGE_SQ = AUTOCANNON_RANGE * AUTOCANNON_RANGE
@@ -136,28 +146,31 @@ class CombatProcessor(esper.Processor):
 
             state.cooldown -= dt
 
-            # Validate current target (alive and in range?)
+            # Validate current target (alive, on radar, and in autocannon range?)
             if state.target is not None:
                 valid = False
-                for s_ent, s_tf, _, _ in shaheds:
+                for s_ent, s_tf, s_phys, _ in shaheds:
                     if s_ent == state.target:
                         dx = s_tf.x - f_tf.x
                         dy = s_tf.y - f_tf.y
-                        if dx * dx + dy * dy <= AUTOCANNON_RANGE_SQ:
+                        d_sq = dx * dx + dy * dy
+                        radar_sq = RADAR_RANGE_SQ.get(s_phys.vehicle_type, 0.0)
+                        if d_sq <= AUTOCANNON_RANGE_SQ and d_sq <= radar_sq:
                             valid = True
                         break
                 if not valid:
                     state.target = None
 
-            # Acquire new target — nearest shahed in range
+            # Acquire new target — nearest drone on radar and in autocannon range
             if state.target is None:
                 best_dist_sq = AUTOCANNON_RANGE_SQ
                 best_ent: int | None = None
-                for s_ent, s_tf, _, _ in shaheds:
+                for s_ent, s_tf, s_phys, _ in shaheds:
                     dx = s_tf.x - f_tf.x
                     dy = s_tf.y - f_tf.y
                     d_sq = dx * dx + dy * dy
-                    if d_sq <= best_dist_sq:
+                    radar_sq = RADAR_RANGE_SQ.get(s_phys.vehicle_type, 0.0)
+                    if d_sq <= best_dist_sq and d_sq <= radar_sq:
                         best_dist_sq = d_sq
                         best_ent = s_ent
                 state.target = best_ent
