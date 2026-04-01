@@ -57,8 +57,25 @@ def encode_assign_vehicle(entity_id: int, vehicle_type: str) -> bytes:
     return msgpack.packb([MSG_ASSIGN_VEHICLE, entity_id, vehicle_type])
 
 
-def encode_war_cost(total_usd: int, tankers_delivered: int, tankers_sunk: int) -> bytes:
-    return msgpack.packb([MSG_WAR_COST, total_usd, tankers_delivered, tankers_sunk])
+def encode_war_cost(
+    total_usd: int,
+    tankers_delivered: int,
+    tankers_sunk: int,
+    frigates_sunk: int,
+    shaheds_intercepted: int,
+    quadcopters_intercepted: int,
+    players_online: int,
+) -> bytes:
+    return msgpack.packb([
+        MSG_WAR_COST,
+        total_usd,
+        tankers_delivered,
+        tankers_sunk,
+        frigates_sunk,
+        shaheds_intercepted,
+        quadcopters_intercepted,
+        players_online,
+    ])
 
 
 def encode_event(event_type: str, x: float, y: float, *extra: float) -> bytes:

@@ -14,6 +14,7 @@ import { getElevation } from "./map/heightmap";
 import { GameConnection } from "./net/connection";
 import { type Camera, createCamera } from "./render/camera";
 import { COLORS } from "./render/colors";
+import type { GameStats, VehicleInstruments } from "./render/hud";
 import { HUD } from "./render/hud";
 import {
 	DEFAULT_LAYERS,
@@ -83,7 +84,15 @@ function init() {
 
 	let assignedEntityId: number | null = null;
 	let assignedVehicleType = "";
-	let warCost = { totalUsd: 0, tankersDelivered: 0, tankersSunk: 0 };
+	let warCost: GameStats = {
+		totalUsd: 0,
+		tankersDelivered: 0,
+		tankersSunk: 0,
+		frigatesSunk: 0,
+		shahedsIntercepted: 0,
+		quadcoptersIntercepted: 0,
+		playersOnline: 0,
+	};
 	let elapsedTime = 0;
 	let autopilotOn = true;
 
@@ -322,13 +331,27 @@ function init() {
 
 		// HUD
 		hud.updateVehicle(spectating, pendingAssign !== null, assignedVehicleType);
-		hud.updateCost(
-			warCost.totalUsd,
-			warCost.tankersDelivered,
-			warCost.tankersSunk,
-		);
-		const entityCount = entities.filter((e) => e.hp > 0).length;
-		hud.updateStatus(entityCount, cam.zoom);
+		hud.updateStats(warCost);
+
+		// Vehicle instruments — speed, heading, HP, flood
+		if (!spectating && assignedEntityId !== null) {
+			const playerEntity = entities.find((e) => e.id === assignedEntityId);
+			if (playerEntity) {
+				const instruments: VehicleInstruments = {
+					speed: playerEntity.speed,
+					heading: playerEntity.heading,
+					hp: playerEntity.hp,
+					maxHp: 0,
+					floodLevel: playerEntity.floodLevel ?? 0,
+					vehicleType: playerEntity.vehicleType,
+				};
+				hud.updateInstruments(instruments);
+			} else {
+				hud.updateInstruments(null);
+			}
+		} else {
+			hud.updateInstruments(null);
+		}
 
 		const showShipHud = isShip && !spectating;
 		hud.updateThrottle(keyboard.throttleLevel, showShipHud);

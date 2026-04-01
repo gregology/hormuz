@@ -33,7 +33,12 @@ EMPTY_DRAG_FACTOR = 0.6  # 60% of loaded drag (sits higher, less wetted surface)
 
 
 class PhysicsProcessor(esper.Processor):
+    def __init__(self) -> None:
+        super().__init__()
+        self.flood_kills: list[str] = []  # vehicle types killed by flooding
+
     def process(self, dt: float = 0.05) -> None:
+        self.flood_kills.clear()
         for ent, (tf, phys) in esper.get_components(Transform, VehiclePhysics):
             throttle, rudder = self._get_input(ent)
 
@@ -53,6 +58,7 @@ class PhysicsProcessor(esper.Processor):
                 health = esper.try_component(ent, Health)
                 if health is not None and health.hp > 0:
                     health.hp = 0
+                    self.flood_kills.append(phys.vehicle_type)
                     if esper.has_component(ent, BotControl):
                         esper.remove_component(ent, BotControl)
                     if esper.has_component(ent, PlayerControl):

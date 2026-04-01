@@ -67,11 +67,13 @@ class CombatProcessor(esper.Processor):
     def __init__(self) -> None:
         super().__init__()
         self.events: list[dict] = []
+        self.kills: list[dict] = []  # {"victim_type": str, "cause": str}
         self._projectiles: list[_Projectile] = []
         self._autocannon: dict[int, _AutocannonState] = {}
 
     def process(self, dt: float = 0.05) -> None:
         self.events.clear()
+        self.kills.clear()
 
         # Gather live entities by type
         shaheds: list[tuple[int, Transform, VehiclePhysics, Collidable]] = []
@@ -251,6 +253,10 @@ class CombatProcessor(esper.Processor):
                     if health.hp <= 0:
                         self._kill(s_ent)
                         killed.add(s_ent)
+                        self.kills.append({
+                            "victim_type": s_phys.vehicle_type,
+                            "cause": "autocannon",
+                        })
                     self.events.append({"type": "explosion", "x": s_tf.x, "y": s_tf.y})
                     hit = True
                     break
@@ -377,6 +383,10 @@ class CombatProcessor(esper.Processor):
                 t_health.hp = max(0, t_health.hp - QUADCOPTER_HP_DAMAGE)
                 if t_health.hp <= 0:
                     self._kill(t_ent)
+                    self.kills.append({
+                        "victim_type": t_phys.vehicle_type,
+                        "cause": "quadcopter",
+                    })
 
                 # Apply hull breaches (tankers flood/list/slow, frigates don't)
                 if breach_count > 0:

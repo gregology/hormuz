@@ -52,6 +52,10 @@ export interface WarCost {
 	totalUsd: number;
 	tankersDelivered: number;
 	tankersSunk: number;
+	frigatesSunk: number;
+	shahedsIntercepted: number;
+	quadcoptersIntercepted: number;
+	playersOnline: number;
 }
 
 export interface GameEvent {
@@ -101,6 +105,10 @@ export function decodeMessage(data: ArrayBuffer): ServerMessage | null {
 			totalUsd: msg[1] as number,
 			tankersDelivered: msg[2] as number,
 			tankersSunk: msg[3] as number,
+			frigatesSunk: (msg[4] as number) ?? 0,
+			shahedsIntercepted: (msg[5] as number) ?? 0,
+			quadcoptersIntercepted: (msg[6] as number) ?? 0,
+			playersOnline: (msg[7] as number) ?? 0,
 		};
 	}
 

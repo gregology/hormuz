@@ -20,6 +20,7 @@ from hormuz.components import (
     Transform,
     VehiclePhysics,
 )
+from hormuz.generated.vehicles import VEHICLES
 from hormuz.map_data import (
     IRAN_SPAWNS,
     STRAIT_CENTER,
@@ -61,6 +62,9 @@ game_state = {
     "war_cost_usd": 0,
     "tankers_delivered": 0,
     "tankers_sunk": 0,
+    "frigates_sunk": 0,
+    "shaheds_intercepted": 0,
+    "quadcopters_intercepted": 0,
     "uptime_seconds": 0.0,
 }
 
@@ -491,17 +495,36 @@ async def game_loop() -> None:
 
         esper.process(dt=TICK_INTERVAL)
 
-        # Update war cost from processors
+        # Update stats from processors
         spawn_proc = esper.get_processor(SpawnProcessor)
         combat_proc = esper.get_processor(CombatProcessor)
+        physics_proc = esper.get_processor(PhysicsProcessor)
         game_state["tankers_delivered"] = spawn_proc.tankers_delivered
-        game_state["tankers_sunk"] += len(
-            [e for e in combat_proc.events if e["type"] == "explosion"]
-        )
-        tanker_cost = 150_000_000
-        shahed_cost = 50_000
+
+        # Count kills by victim type (combat kills + flood kills)
+        for kill in combat_proc.kills:
+            vtype = kill["victim_type"]
+            if vtype == "oil_tanker":
+                game_state["tankers_sunk"] += 1
+            elif vtype == "frigate":
+                game_state["frigates_sunk"] += 1
+            elif vtype == "shahed" and kill["cause"] == "autocannon":
+                game_state["shaheds_intercepted"] += 1
+            elif vtype == "quadcopter" and kill["cause"] == "autocannon":
+                game_state["quadcopters_intercepted"] += 1
+        for vtype in physics_proc.flood_kills:
+            if vtype == "oil_tanker":
+                game_state["tankers_sunk"] += 1
+            elif vtype == "frigate":
+                game_state["frigates_sunk"] += 1
+
+        # War cost = sum of cost_usd for all destroyed vehicles + delivered cargo value
+        tanker_cost = VEHICLES["oil_tanker"].cost_usd
         game_state["war_cost_usd"] = (
-            game_state["tankers_sunk"] * (tanker_cost + shahed_cost)
+            game_state["tankers_sunk"] * tanker_cost
+            + game_state["frigates_sunk"] * VEHICLES["frigate"].cost_usd
+            + game_state["shaheds_intercepted"] * VEHICLES["shahed"].cost_usd
+            + game_state["quadcopters_intercepted"] * VEHICLES["quadcopter"].cost_usd
             + spawn_proc.tankers_delivered * tanker_cost
         )
 
@@ -546,13 +569,17 @@ async def game_loop() -> None:
         for event in spawn_proc.events:
             await broadcast(encode_event(event["type"], event["x"], event["y"]))
 
-        # Broadcast war cost every second (every 20 ticks)
+        # Broadcast stats every second (every 20 ticks)
         if game_state["tick"] % TICK_RATE == 0:
             await broadcast(
                 encode_war_cost(
                     game_state["war_cost_usd"],
                     game_state["tankers_delivered"],
                     game_state["tankers_sunk"],
+                    game_state["frigates_sunk"],
+                    game_state["shaheds_intercepted"],
+                    game_state["quadcopters_intercepted"],
+                    len(player_entities),
                 )
             )
 
@@ -580,6 +607,9 @@ async def status() -> JSONResponse:
             "war_cost_usd": game_state["war_cost_usd"],
             "tankers_delivered": game_state["tankers_delivered"],
             "tankers_sunk": game_state["tankers_sunk"],
+            "frigates_sunk": game_state["frigates_sunk"],
+            "shaheds_intercepted": game_state["shaheds_intercepted"],
+            "quadcopters_intercepted": game_state["quadcopters_intercepted"],
             "entities": len(list(esper.get_component(Transform))),
             "players": len(player_entities),
             "uptime_seconds": game_state["uptime_seconds"],
@@ -623,12 +653,16 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     # Send full snapshot
     await websocket.send_bytes(build_snapshot())
 
-    # Send current war cost
+    # Send current stats
     await websocket.send_bytes(
         encode_war_cost(
             game_state["war_cost_usd"],
             game_state["tankers_delivered"],
             game_state["tankers_sunk"],
+            game_state["frigates_sunk"],
+            game_state["shaheds_intercepted"],
+            game_state["quadcopters_intercepted"],
+            len(player_entities),
         )
     )
 
