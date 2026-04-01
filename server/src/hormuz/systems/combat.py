@@ -27,6 +27,7 @@ from hormuz.generated.vehicles import (
     AUTOCANNON_PROJECTILE_SPEED,
     AUTOCANNON_RANGE,
     AUTOCANNON_SPREAD,
+    BREACHES_TO_SINK,
     JAM_RADIUS,
     QUADCOPTER_FRIGATE_BREACHES,
     QUADCOPTER_HP_DAMAGE,
@@ -280,7 +281,7 @@ class CombatProcessor(esper.Processor):
         tankers: list[tuple[int, Transform, VehiclePhysics, Collidable]],
         frigates: list[tuple[int, Transform, VehiclePhysics, Collidable]],
     ) -> None:
-        targets = [(ent, tf, phys, col, 3) for ent, tf, phys, col in tankers] + [
+        targets = [(ent, tf, phys, col, BREACHES_TO_SINK) for ent, tf, phys, col in tankers] + [
             (ent, tf, phys, col, 2) for ent, tf, phys, col in frigates
         ]
 

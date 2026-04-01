@@ -270,6 +270,6 @@ combat:
   jam_radius: 2000
   breaches_to_sink: 12
   quadcopter_damage:
-    hp_damage: 25
+    hp_damage: 13
     tanker_breaches: 1
     frigate_breaches: 0
