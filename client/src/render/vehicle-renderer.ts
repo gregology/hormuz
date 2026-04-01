@@ -140,7 +140,7 @@ export class ThreeVehicleRenderer {
 
 			// Flooding: ship rides lower as it takes on water
 			const floodLevel = e.floodLevel ?? 0;
-			const draftOffset = floodLevel * info.size * 0.15;
+			const draftOffset = floodLevel * info.size * 0.08;
 
 			// Position: game (x, y) → Three.js (x, elevation, y)
 			entry.group.position.set(e.x, elevation - draftOffset, e.y);
