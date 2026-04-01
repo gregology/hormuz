@@ -185,6 +185,7 @@ function init() {
 	// --- Mouse wheel zoom ---
 	container.addEventListener("wheel", (e: WheelEvent) => {
 		e.preventDefault();
+		if (!spectating && keyboard.cameraMode !== "isometric") return;
 		const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
 		const limits = spectating ? SPECTATOR_ZOOM : zoomLimits;
 		cam.zoom = Math.max(
@@ -311,9 +312,21 @@ function init() {
 		prevCameraMode = cameraMode;
 
 		// Update Three.js objects
-		threeMap.update(elapsedTime, cam.zoom);
+		// In perspective mode, compute an equivalent ortho zoom so effects
+		// (wake ribbons, water shader) are sized consistently with the view.
+		const SQRT6 = 2.449489742783178;
+		let effectZoom: number;
+		if (cameraMode === "isometric") {
+			effectZoom = cam.zoom;
+		} else {
+			const sz = VEHICLE_DEFAULTS[assignedVehicleType ?? ""]?.size ?? 50;
+			const dist = sz * PERSP.tpDistance;
+			const halfFov = (threeScene.perspCamera.fov * Math.PI) / 360;
+			effectZoom = cam.screenWidth / (SQRT6 * 2 * dist * Math.tan(halfFov));
+		}
+		threeMap.update(elapsedTime, effectZoom);
 		threeVehicles.update(entities, assignedEntityId, assignedVehicleType, FACTION_COLORS);
-		threeEffects.update(entities, dt, cam.zoom);
+		threeEffects.update(entities, dt, effectZoom);
 
 		// Render Three.js scene (map + vehicles + effects)
 		if (cameraMode === "isometric") {
