@@ -5,7 +5,7 @@
  * the Three.js canvas. Throttle bar and autopilot indicator for ships.
  */
 
-import { MAX_HP } from "../generated/vehicles";
+import { MAX_HP, type VehicleType } from "../generated/vehicles";
 
 export interface GameStats {
 	totalUsd: number;
@@ -413,7 +413,7 @@ export class HUD {
 		this.headingEl.textContent = `HDG  ${String(deg).padStart(3, "0")}° ${cardinal}`;
 
 		// HP bar
-		const effectiveMax = maxHp || MAX_HP[vehicleType] || 100;
+		const effectiveMax = maxHp || MAX_HP[vehicleType as VehicleType] || 100;
 		const fraction = Math.max(0, hp / effectiveMax);
 		this.hpBarFill.style.width = `${fraction * 100}%`;
 		this.hpBarFill.style.backgroundColor = hpBarColor(fraction);

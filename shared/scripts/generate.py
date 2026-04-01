@@ -245,7 +245,7 @@ def generate_ts_vehicles(vehicles: dict, combat: dict, world: dict) -> str:
     lines.append("  readonly basedOn: string;")
     lines.append("  readonly role: string;")
     lines.append("  readonly costUsd: number;")
-    lines.append("  readonly components: Record<string, Record<string, unknown>>;")
+    lines.append("  readonly components: Record<string, unknown>;")
     lines.append("  readonly aiBehavior: string;")
     lines.append("  readonly sprite: string;")
     lines.append("}")

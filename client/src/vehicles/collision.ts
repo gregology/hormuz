@@ -10,7 +10,7 @@
  */
 
 import { isLand, isWater } from "../map/terrain";
-import type { NavalVehicle, VehicleType } from "./physics";
+import type { NavalVehicle } from "./physics";
 
 export { COLLISION_POLYGONS } from "../generated/vehicles";
 import { COLLISION_POLYGONS } from "../generated/vehicles";
@@ -41,7 +41,7 @@ interface SATResult {
 
 /** Transform local-space polygon to world space. */
 function transformPolygon(
-	verts: [number, number][],
+	verts: readonly (readonly [number, number])[],
 	x: number,
 	y: number,
 	heading: number,
