@@ -11,6 +11,7 @@
 
 import * as THREE from "three";
 import type { EntityState } from "../game/entities";
+import { RADAR_DETECTION, VEHICLE_PHYSICS } from "../generated/vehicles";
 import { getElevation, getSlopeAlongHeading } from "../map/heightmap";
 import type { VehicleType } from "../vehicles/physics";
 import {
@@ -20,16 +21,12 @@ import {
 } from "./vehicle-meshes";
 
 // ---------------------------------------------------------------------------
-// Frigate radar detection — shared awareness across all frigates
+// Frigate radar detection — derived from YAML
 // ---------------------------------------------------------------------------
 
-const FRIGATE_RADAR_RANGE = 10000;
-const FRIGATE_RADAR_RANGE_SQ = FRIGATE_RADAR_RANGE * FRIGATE_RADAR_RANGE;
-
-// Quadcopters are much smaller — not detected until very close
-const QUADCOPTER_RADAR_RANGE = 750;
-const QUADCOPTER_RADAR_RANGE_SQ =
-	QUADCOPTER_RADAR_RANGE * QUADCOPTER_RADAR_RANGE;
+const RADAR_RANGE_SQ: Record<string, number> = Object.fromEntries(
+	Object.entries(RADAR_DETECTION).map(([k, v]) => [k, v * v]),
+);
 
 // Detection indicator ring (world-space units)
 const DETECTION_RING_INNER = 80;
@@ -37,17 +34,16 @@ const DETECTION_RING_OUTER = 100;
 const DETECTION_RING_SEGMENTS = 32;
 
 // ---------------------------------------------------------------------------
-// Vehicle properties (size and airborne status per vehicle type)
+// Vehicle properties — derived from YAML
 // ---------------------------------------------------------------------------
 
-const VEHICLE_INFO: Record<string, { size: number; airborne: boolean }> = {
-	oil_tanker: { size: 220, airborne: false },
-	shahed: { size: 4, airborne: true },
-	speedboat: { size: 10, airborne: false },
-	frigate: { size: 100, airborne: false },
-	truck: { size: 5, airborne: false },
-	quadcopter: { size: 2, airborne: true },
-};
+const VEHICLE_INFO: Record<string, { size: number; airborne: boolean }> =
+	Object.fromEntries(
+		Object.entries(VEHICLE_PHYSICS).map(([k, v]) => [
+			k,
+			{ size: v.size, airborne: v.airborne },
+		]),
+	);
 
 const DEFAULT_INFO = { size: 10, airborne: false };
 
@@ -168,22 +164,24 @@ export class ThreeVehicleRenderer {
 				entry.currentColor = color;
 			}
 
+			// Quadcopter front light blink
+			if (e.vehicleType === "quadcopter") {
+				const light = entry.group.userData.frontLight as THREE.Mesh | undefined;
+				if (light) {
+					const t = performance.now() / 1000;
+					(light.material as THREE.MeshBasicMaterial).opacity =
+						Math.sin(t * 8) > 0 ? 0.9 : 0.05;
+				}
+			}
+
 			// Radar detection: only computed for frigate players
 			if (showDetectionRings) {
-				if (e.vehicleType === "shahed") {
+				const rangeSq = RADAR_RANGE_SQ[e.vehicleType];
+				if (rangeSq !== undefined) {
 					for (const fp of frigatePositions) {
 						const dx = fp.x - e.x;
 						const dy = fp.y - e.y;
-						if (dx * dx + dy * dy < FRIGATE_RADAR_RANGE_SQ) {
-							detectedDroneIds.add(e.id);
-							break;
-						}
-					}
-				} else if (e.vehicleType === "quadcopter") {
-					for (const fp of frigatePositions) {
-						const dx = fp.x - e.x;
-						const dy = fp.y - e.y;
-						if (dx * dx + dy * dy < QUADCOPTER_RADAR_RANGE_SQ) {
+						if (dx * dx + dy * dy < rangeSq) {
 							detectedDroneIds.add(e.id);
 							break;
 						}
@@ -234,6 +232,13 @@ export class ThreeVehicleRenderer {
 				this.detectionIndicators.delete(id);
 			}
 		}
+	}
+
+	/** Get the CIWS turret group for a frigate entity (null if not a frigate or not pooled). */
+	getCiwsTurret(entityId: number): THREE.Group | null {
+		const entry = this.pool.get(entityId);
+		if (!entry) return null;
+		return (entry.group.userData.ciwsTurret as THREE.Group) ?? null;
 	}
 
 	/** Clean up all GPU resources. */

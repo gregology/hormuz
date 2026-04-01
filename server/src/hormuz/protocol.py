@@ -32,7 +32,7 @@ def encode_full_snapshot(
     for entry in entities:
         (
             eid, vtype, faction, x, y, heading, speed, drift,
-            angular_velocity, hp, flood_level, list_angle,
+            angular_velocity, hp, flood_level, list_angle, battery_pct,
         ) = entry
         packed.append(
             [
@@ -48,6 +48,7 @@ def encode_full_snapshot(
                 round(angular_velocity, 3),
                 round(flood_level, 2),
                 round(list_angle, 3),
+                battery_pct,
             ]
         )
     return msgpack.packb([MSG_FULL_SNAPSHOT, tick, packed])

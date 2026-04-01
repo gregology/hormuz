@@ -182,6 +182,47 @@ function createTopOutline(outline: LP[], topHeight: number): THREE.LineLoop {
 }
 
 // ---------------------------------------------------------------------------
+// CIWS turret (Phalanx-style) — rotatable child group for frigates
+// ---------------------------------------------------------------------------
+
+const CIWS_GUN_METAL = 0x445566;
+const CIWS_DARK_METAL = 0x334455;
+const CIWS_DOME_WHITE = 0xdddddd;
+
+/** Position of the CIWS turret center on the frigate deck (model-space fractions). */
+export const CIWS_TURRET_POS = { x: 0.05, y: 0.14, z: 0 };
+
+/** Muzzle tip offset from the turret group origin (turret-local space). */
+export const CIWS_MUZZLE_OFFSET = { x: 0.05, y: 0.015, z: 0 };
+
+function createCiwsTurret(): THREE.Group {
+	const turret = new THREE.Group();
+
+	// Gun mount housing
+	const housingGeo = new THREE.BoxGeometry(0.025, 0.04, 0.022);
+	const housingMat = new THREE.MeshBasicMaterial({ color: CIWS_GUN_METAL });
+	const housing = new THREE.Mesh(housingGeo, housingMat);
+	housing.position.set(0, 0.02, 0);
+	turret.add(housing);
+
+	// Radome (tapered white cylinder — the distinctive Phalanx dome)
+	const domeGeo = new THREE.CylinderGeometry(0.008, 0.011, 0.05, 8);
+	const domeMat = new THREE.MeshBasicMaterial({ color: CIWS_DOME_WHITE });
+	const dome = new THREE.Mesh(domeGeo, domeMat);
+	dome.position.set(-0.002, 0.065, 0);
+	turret.add(dome);
+
+	// Barrel assembly
+	const barrelGeo = new THREE.BoxGeometry(0.04, 0.005, 0.005);
+	const barrelMat = new THREE.MeshBasicMaterial({ color: CIWS_DARK_METAL });
+	const barrel = new THREE.Mesh(barrelGeo, barrelMat);
+	barrel.position.set(0.03, 0.015, 0);
+	turret.add(barrel);
+
+	return turret;
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -213,10 +254,26 @@ export function createVehicleMesh(vehicleType: VehicleType): THREE.Group {
 
 	for (const detail of model.details) {
 		if (detail.kind === "line") {
-			group.add(createLineDetail(detail));
+			const line = createLineDetail(detail);
+			if (detail.tag) group.userData[detail.tag] = line;
+			group.add(line);
 		} else {
-			group.add(createCircleDetail(detail));
+			const mesh = createCircleDetail(detail);
+			if (detail.tag) group.userData[detail.tag] = mesh;
+			group.add(mesh);
 		}
+	}
+
+	// Frigate: add rotatable CIWS turret just fore of superstructure
+	if (vehicleType === "frigate") {
+		const ciwsTurret = createCiwsTurret();
+		ciwsTurret.position.set(
+			CIWS_TURRET_POS.x,
+			CIWS_TURRET_POS.y,
+			CIWS_TURRET_POS.z,
+		);
+		group.add(ciwsTurret);
+		group.userData.ciwsTurret = ciwsTurret;
 	}
 
 	// Store references for color updates

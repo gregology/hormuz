@@ -40,6 +40,8 @@ export interface FlatDetail {
 	color: number;
 	width?: number;
 	alpha: number;
+	/** Optional identifier for runtime lookup (e.g. animated lights). */
+	tag?: string;
 }
 
 export interface VehicleModel {
@@ -73,92 +75,194 @@ const PIPE = 0x887766;
 // ---------------------------------------------------------------------------
 
 function speedboatModel(): VehicleModel {
+	// Taregh-class (Boghammar) — 13m deep-V planing hull, narrow beam,
+	// bow-mounted DShK, 107mm MRL on pilothouse roof, twin stern drives
+
 	const keel: LP[] = [
-		[0.42, 0],
+		[0.45, 0],
 		[0.3, -0.02],
-		[0.0, -0.04],
-		[-0.2, -0.05],
-		[-0.38, -0.03],
-		[-0.38, 0.03],
-		[-0.2, 0.05],
-		[0.0, 0.04],
+		[0.1, -0.04],
+		[-0.1, -0.05],
+		[-0.3, -0.05],
+		[-0.42, -0.03],
+		[-0.42, 0.03],
+		[-0.3, 0.05],
+		[-0.1, 0.05],
+		[0.1, 0.04],
 		[0.3, 0.02],
 	];
 
+	// Sharp bow, max beam aft of center, flat transom stern
 	const hull: LP[] = [
 		[0.5, 0],
-		[0.38, -0.04],
-		[0.2, -0.08],
-		[0.0, -0.11],
-		[-0.2, -0.13],
-		[-0.3, -0.14],
-		[-0.4, -0.1],
-		[-0.42, -0.04],
-		[-0.42, 0.04],
-		[-0.4, 0.1],
-		[-0.3, 0.14],
-		[-0.2, 0.13],
-		[0.0, 0.11],
-		[0.2, 0.08],
-		[0.38, 0.04],
+		[0.4, -0.03],
+		[0.25, -0.065],
+		[0.1, -0.09],
+		[-0.1, -0.105],
+		[-0.3, -0.1],
+		[-0.42, -0.08],
+		[-0.44, -0.06],
+		[-0.44, 0.06],
+		[-0.42, 0.08],
+		[-0.3, 0.1],
+		[-0.1, 0.105],
+		[0.1, 0.09],
+		[0.25, 0.065],
+		[0.4, 0.03],
 	];
 
-	const cockpit: LP[] = [
-		[0.0, -0.06],
-		[-0.15, -0.07],
-		[-0.18, -0.04],
-		[-0.18, 0.04],
-		[-0.15, 0.07],
-		[0.0, 0.06],
+	// Raised bow platform where DShK is mounted
+	const foredeck: LP[] = [
+		[0.42, -0.02],
+		[0.28, -0.05],
+		[0.12, -0.07],
+		[0.12, 0.07],
+		[0.28, 0.05],
+		[0.42, 0.02],
+	];
+
+	// Small enclosed cabin, slightly aft of center
+	const pilothouse: LP[] = [
+		[0.02, -0.055],
+		[-0.12, -0.06],
+		[-0.14, -0.045],
+		[-0.14, 0.045],
+		[-0.12, 0.06],
+		[0.02, 0.055],
+	];
+
+	// 107mm 12-tube rocket launcher housing on pilothouse roof
+	const mrl: LP[] = [
+		[-0.02, -0.028],
+		[-0.1, -0.028],
+		[-0.1, 0.028],
+		[-0.02, 0.028],
 	];
 
 	return {
 		blocks: [
 			{
 				outline: keel,
-				baseHeight: -0.15,
+				baseHeight: -0.12,
 				topHeight: 0,
-				topColor: darken(STEEL, 0.5),
-				sideAlpha: 0.7,
+				topColor: darken(STEEL, 0.4),
+				sideAlpha: 0.6,
 			},
-			{ outline: hull, baseHeight: 0, topHeight: 0.3 },
+			{ outline: hull, baseHeight: 0, topHeight: 0.22 },
 			{
-				outline: cockpit,
-				baseHeight: 0.3,
-				topHeight: 0.5,
+				outline: foredeck,
+				baseHeight: 0.22,
+				topHeight: 0.28,
+				topColor: DECK_GREY,
+			},
+			{
+				outline: pilothouse,
+				baseHeight: 0.22,
+				topHeight: 0.42,
 				topColor: DECK_GREY,
 				topAlpha: 0.9,
 			},
+			{
+				outline: mrl,
+				baseHeight: 0.42,
+				topHeight: 0.48,
+				topColor: GUN_METAL,
+			},
 		],
 		details: [
+			// DShK 12.7mm gun mount pedestal (bow)
+			{
+				kind: "circle",
+				height: 0.3,
+				cx: 0.3,
+				cy: 0,
+				r: 0.02,
+				color: GUN_METAL,
+				alpha: 0.9,
+			},
+			// DShK barrel extending forward
 			{
 				kind: "line",
-				height: 0.5,
-				x1: 0.0,
-				y1: -0.055,
-				x2: 0.0,
-				y2: 0.055,
+				height: 0.3,
+				x1: 0.3,
+				y1: 0,
+				x2: 0.46,
+				y2: 0,
+				color: GUN_METAL,
+				width: 1.5,
+				alpha: 0.9,
+			},
+			// Pilothouse windscreen
+			{
+				kind: "line",
+				height: 0.42,
+				x1: 0.02,
+				y1: -0.05,
+				x2: 0.02,
+				y2: 0.05,
 				color: GLASS,
 				width: 1.5,
 				alpha: 0.8,
 			},
+			// MRL tube clusters (port row)
 			{
 				kind: "circle",
-				height: 0.25,
-				cx: -0.42,
-				cy: -0.03,
-				r: 0.025,
-				color: GUN_METAL,
-				alpha: 0.7,
+				height: 0.49,
+				cx: -0.045,
+				cy: -0.015,
+				r: 0.012,
+				color: darken(GUN_METAL, 0.6),
+				alpha: 0.8,
 			},
+			// MRL tube clusters (starboard row)
 			{
 				kind: "circle",
-				height: 0.25,
-				cx: -0.42,
-				cy: 0.03,
-				r: 0.025,
-				color: GUN_METAL,
-				alpha: 0.7,
+				height: 0.49,
+				cx: -0.045,
+				cy: 0.015,
+				r: 0.012,
+				color: darken(GUN_METAL, 0.6),
+				alpha: 0.8,
+			},
+			// MRL tube clusters (port row aft)
+			{
+				kind: "circle",
+				height: 0.49,
+				cx: -0.075,
+				cy: -0.015,
+				r: 0.012,
+				color: darken(GUN_METAL, 0.6),
+				alpha: 0.8,
+			},
+			// MRL tube clusters (starboard row aft)
+			{
+				kind: "circle",
+				height: 0.49,
+				cx: -0.075,
+				cy: 0.015,
+				r: 0.012,
+				color: darken(GUN_METAL, 0.6),
+				alpha: 0.8,
+			},
+			// Port engine
+			{
+				kind: "circle",
+				height: 0.18,
+				cx: -0.44,
+				cy: -0.035,
+				r: 0.02,
+				color: 0x333333,
+				alpha: 0.8,
+			},
+			// Starboard engine
+			{
+				kind: "circle",
+				height: 0.18,
+				cx: -0.44,
+				cy: 0.035,
+				r: 0.02,
+				color: 0x333333,
+				alpha: 0.8,
 			},
 		],
 	};
@@ -731,6 +835,17 @@ function quadcopterModel(): VehicleModel {
 				r: 0.025,
 				color: 0x222222,
 				alpha: 0.8,
+			},
+			// Front navigation light (animated blink)
+			{
+				kind: "circle",
+				height: 0.36,
+				cx: 0.2,
+				cy: 0,
+				r: 0.12,
+				color: 0xff2200,
+				alpha: 1.0,
+				tag: "frontLight",
 			},
 		],
 	};

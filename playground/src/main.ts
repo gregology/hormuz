@@ -9,6 +9,7 @@ import {
 	createCamera,
 	screenToWorld,
 } from "../../client/src/render/camera";
+import { CiwsController } from "../../client/src/render/ciws-controller";
 import { COLORS } from "../../client/src/render/colors";
 import {
 	DEFAULT_LAYERS,
@@ -27,12 +28,7 @@ import {
 	type NavalVehicle,
 	type VehicleInput,
 	addBreach,
-	createFrigate,
-	createOilTanker,
-	createQuadcopter,
-	createShahed,
-	createSpeedboat,
-	createTruck,
+	createVehicle,
 	equilibriumSpeed,
 	updateFlooding,
 	updateVehicle,
@@ -82,6 +78,10 @@ function init() {
 	const threeEffects = new ThreeEffectManager();
 	threeScene.scene.add(threeEffects.root);
 
+	// ---- CIWS autocannon controller ----
+	const ciwsController = new CiwsController();
+	threeScene.scene.add(ciwsController.root);
+
 	// ---- Perspective camera (for first/third-person views) ----
 	const perspCamera = new THREE.PerspectiveCamera(
 		60,
@@ -119,7 +119,7 @@ function init() {
 		{
 			key: "speedboat",
 			label: "Speedboat",
-			vehicle: createSpeedboat(75746, 42781),
+			vehicle: createVehicle("speedboat", 75746, 42781),
 			color: FACTION_COLORS.speedboat,
 			hp: 100,
 			respawnTimer: 0,
@@ -127,7 +127,7 @@ function init() {
 		{
 			key: "frigate",
 			label: "Frigate",
-			vehicle: createFrigate(75540, 43226),
+			vehicle: createVehicle("frigate", 75540, 43226),
 			color: FACTION_COLORS.frigate,
 			hp: 100,
 			respawnTimer: 0,
@@ -135,7 +135,7 @@ function init() {
 		{
 			key: "tanker",
 			label: "Oil Tanker",
-			vehicle: createOilTanker(75500, 43000),
+			vehicle: createVehicle("oil_tanker", 75500, 43000),
 			color: FACTION_COLORS.tanker,
 			hp: 100,
 			respawnTimer: 0,
@@ -143,7 +143,7 @@ function init() {
 		{
 			key: "truck",
 			label: "Box Truck",
-			vehicle: createTruck(75698, 42649),
+			vehicle: createVehicle("truck", 75698, 42649),
 			color: FACTION_COLORS.truck,
 			hp: 100,
 			respawnTimer: 0,
@@ -151,7 +151,7 @@ function init() {
 		{
 			key: "quadcopter",
 			label: "Quadcopter",
-			vehicle: createQuadcopter(75700, 42900),
+			vehicle: createVehicle("quadcopter", 75700, 42900),
 			color: FACTION_COLORS.quadcopter,
 			hp: 100,
 			respawnTimer: 0,
@@ -159,7 +159,7 @@ function init() {
 		{
 			key: "shahed",
 			label: "Shahed Drone",
-			vehicle: createShahed(75600, 42850),
+			vehicle: createVehicle("shahed", 75600, 42850),
 			color: FACTION_COLORS.shahed,
 			hp: 100,
 			respawnTimer: 0,
@@ -513,8 +513,63 @@ function init() {
 	floodingFolder.add(FLOOD, "floodDragFactor", 0, 3).name("Flood Drag Factor");
 	floodingFolder.add(FLOOD, "lerpRate", 0.5, 10).name("List Lerp Rate");
 
+	// CIWS tuning folder
+	const ciwsFolder = gui.addFolder("CIWS Autocannon");
+	const cp = ciwsController.params;
+	ciwsFolder.add(cp, "rotationSpeed", 0.5, 12).name("Rotation (rad/s)");
+	ciwsFolder.add(cp, "burstCooldown", 0.1, 2).name("Burst Cooldown (s)");
+	ciwsFolder.add(cp, "burstDuration", 0.05, 1).name("Burst Duration (s)");
+	ciwsFolder.add(cp, "tracerRate", 5, 100).step(1).name("Tracer Rate (/s)");
+	ciwsFolder.add(cp, "range", 200, 3000).name("Range");
+	ciwsFolder.add(cp, "projectileSpeed", 50, 1000).name("Projectile Speed");
+	ciwsFolder.add(cp, "spread", 0, 0.2).name("Spread (rad)");
+	ciwsFolder.add(cp, "aimTolerance", 0.01, 0.5).name("Aim Tolerance (rad)");
+	ciwsFolder.add(cp, "tracerMaxAge", 0.3, 5).name("Tracer MaxAge (s)");
+	ciwsFolder.add(cp, "tracerSize", 1, 15).name("Tracer Size (px)");
+	ciwsFolder.add(cp, "muzzleFlashScale", 1, 10).name("Flash Scale");
+	ciwsFolder
+		.add(cp, "muzzleFlashDuration", 0.02, 0.2)
+		.name("Flash Duration (s)");
+
 	// Presets
 	const presets = {
+		"CIWS Demo"() {
+			// Position frigate heading east with some speed
+			const frig = vehicles[1].vehicle;
+			frig.x = 75540;
+			frig.y = 43226;
+			frig.heading = 0;
+			frig.speed = 8;
+			frig.drift = 0;
+			frig.angularVelocity = 0;
+			vehicles[1].hp = 100;
+
+			// Position shahed approaching from the east
+			const shahed = vehicles[5].vehicle;
+			shahed.x = 75540 + 1000;
+			shahed.y = 43226 + 200;
+			shahed.heading = Math.PI; // heading west toward frigate
+			shahed.speed = 80;
+			shahed.drift = 0;
+			shahed.angularVelocity = 0;
+			vehicles[5].hp = 100;
+
+			// Position quadcopter from the south
+			const quad = vehicles[4].vehicle;
+			quad.x = 75540 - 300;
+			quad.y = 43226 + 500;
+			quad.heading = -Math.PI / 2; // heading north toward frigate
+			quad.speed = 22;
+			quad.drift = 0;
+			quad.angularVelocity = 0;
+			vehicles[4].hp = 100;
+
+			activeIndex = 1;
+			mode.freeCamera = false;
+			mode.cameraFollow = true;
+			cam.zoom = 0.12;
+			rebuildVehicleFolder();
+		},
 		"Full Map"() {
 			mode.freeCamera = true;
 			mode.cameraFollow = false;
@@ -557,6 +612,7 @@ function init() {
 	};
 
 	const presetsFolder = gui.addFolder("Presets");
+	presetsFolder.add(presets, "CIWS Demo");
 	presetsFolder.add(presets, "Full Map");
 	presetsFolder.add(presets, "Strait");
 	presetsFolder.add(presets, "Follow Vehicle");
@@ -728,8 +784,7 @@ function init() {
 			} else {
 				// Non-ships use hold-to-move
 				if (keysDown.has("w") || keysDown.has("arrowup")) input.throttle = 1;
-				if (keysDown.has("s") || keysDown.has("arrowdown"))
-					input.throttle = -1;
+				if (keysDown.has("s") || keysDown.has("arrowdown")) input.throttle = -1;
 			}
 			// Autopilot controls steering only — rudder is 0 (go straight)
 			// When off, player steers manually
@@ -880,7 +935,18 @@ function init() {
 		// -- Update Three.js renderers --
 		elapsedTime += rawDt;
 		threeMap.update(elapsedTime, cam.zoom);
-		threeVehicles.update(entityStates, activeIndex, vehicles[activeIndex].vehicle.vehicleType, FACTION_COLORS);
+		threeVehicles.update(
+			entityStates,
+			activeIndex,
+			vehicles[activeIndex].vehicle.vehicleType,
+			FACTION_COLORS,
+		);
+		ciwsController.update(
+			entityStates,
+			(id) => threeVehicles.getCiwsTurret(id),
+			dt,
+			cam.zoom,
+		);
 		threeEffects.update(entityStates, dt, cam.zoom);
 
 		// -- Collision debug wireframes --

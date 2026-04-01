@@ -243,7 +243,7 @@ class TestFlooding:
         assert tf.flood_level == 0.0
 
     def test_flooding_kills_entity(self):
-        tf = Transform(x=0, y=0, heading=0, hull_breaches=5)
+        tf = Transform(x=0, y=0, heading=0, hull_breaches=12)
         phys = _make_tanker_physics()
         health = Health(hp=100, max_hp=100)
         bot = BotControl("tanker_transit", throttle=0.0, rudder=0.0)

@@ -1,4 +1,4 @@
-# Vehicle definitions — single source of truth
+# Vehicle & combat definitions — single source of truth
 # Run `pnpm generate` to emit Python + TypeScript from this file
 
 vehicles:
@@ -12,13 +12,31 @@ vehicles:
       health:
         hp: 100
         max_hp: 100
-      naval_physics:
-        max_speed: 3.5
-        turn_radius: 80
-        acceleration: 0.5
-        drag: 0.97
-      collidable:
-        radius: 75
+      physics:
+        mass: 2200
+        engine_power: 4400
+        max_speed: 15
+        turn_rate: 0
+        drift_factor: 0
+        lateral_drag: 0.45
+        min_turn_fraction: 0
+        cruise_speed: 0
+        airborne: false
+        size: 220
+        angular_drag: 0.3
+        propeller_offset: -0.4
+        rudder_max_angle: 0.6
+        moment_of_inertia: 3600000
+        rudder_flow_factor: 0.5
+      collision_polygon:
+        - [0.5, 0]
+        - [0.38, 0.085]
+        - [0.1, 0.09]
+        - [-0.3, 0.09]
+        - [-0.46, 0]
+        - [-0.3, -0.09]
+        - [0.1, -0.09]
+        - [0.38, -0.085]
       oil_cargo:
         loaded: true
         spill_on_death: true
@@ -28,25 +46,51 @@ vehicles:
   speedboat:
     name: Speedboat
     faction: iran
-    based_on: Taregh-class
+    based_on: Taregh-class (Boghammar)
     role: Fast attack craft
     cost_usd: 500_000
     components:
       health:
         hp: 30
         max_hp: 30
-      naval_physics:
-        max_speed: 11
-        turn_radius: 5
-        acceleration: 5
-        drag: 0.9
-      weapon:
+      physics:
+        mass: 120
+        engine_power: 2000
+        max_speed: 46
+        turn_rate: 0
+        drift_factor: 0
+        lateral_drag: 0.12
+        min_turn_fraction: 0
+        cruise_speed: 0
+        airborne: false
+        size: 13
+        angular_drag: 0.15
+        propeller_offset: -0.4
+        rudder_max_angle: 0.65
+        moment_of_inertia: 850
+        rudder_flow_factor: 0.4
+      collision_polygon:
+        - [0.5, 0]
+        - [0.25, 0.065]
+        - [-0.1, 0.105]
+        - [-0.44, 0.06]
+        - [-0.44, -0.06]
+        - [-0.1, -0.105]
+        - [0.25, -0.065]
+      bow_gun:
         type: direct_fire
-        damage: 10
-        range: 150
-        cooldown: 0.5
-      collidable:
-        radius: 5
+        name: DShK 12.7mm
+        damage: 8
+        range: 200
+        cooldown: 0.3
+        arc: forward
+      rpg:
+        type: rpg
+        name: RPG-7
+        damage: 25
+        range: 100
+        cooldown: 3.0
+        arc: all
     ai_behavior: swarm_attack
     sprite: speedboat_iran
 
@@ -60,21 +104,38 @@ vehicles:
       health:
         hp: 300
         max_hp: 300
-      naval_physics:
-        max_speed: 7
-        turn_radius: 30
-        acceleration: 2
-        drag: 0.95
+      physics:
+        mass: 1000
+        engine_power: 7500
+        max_speed: 25
+        turn_rate: 0
+        drift_factor: 0
+        lateral_drag: 0.2
+        min_turn_fraction: 0
+        cruise_speed: 0
+        airborne: false
+        size: 100
+        angular_drag: 0.25
+        propeller_offset: -0.4
+        rudder_max_angle: 0.6
+        moment_of_inertia: 435000
+        rudder_flow_factor: 0.5
+      collision_polygon:
+        - [0.5, 0]
+        - [0.3, 0.045]
+        - [-0.1, 0.08]
+        - [-0.4, 0.065]
+        - [-0.45, 0]
+        - [-0.4, -0.065]
+        - [-0.1, -0.08]
+        - [0.3, -0.045]
       weapon:
         type: direct_fire
         damage: 40
         range: 400
         cooldown: 1.5
       rf_jammer:
-        jam_radius: 200
         active: true
-      collidable:
-        radius: 40
     ai_behavior: escort
     sprite: frigate_us
 
@@ -88,14 +149,30 @@ vehicles:
       health:
         hp: 10
         max_hp: 10
-      naval_physics:
-        max_speed: 40
-        cruise_speed: 34
+      physics:
+        mass: 40
+        engine_power: 600
+        max_speed: 80
         turn_rate: 0.5
-        acceleration: 5
-        drag: 0.95
-      collidable:
-        radius: 4
+        drift_factor: 0.02
+        lateral_drag: 0.1
+        min_turn_fraction: 1.0
+        cruise_speed: 80
+        airborne: true
+        size: 4
+        angular_drag: 0.1
+        propeller_offset: 0
+        rudder_max_angle: 0
+        moment_of_inertia: 0
+        rudder_flow_factor: 0
+      collision_polygon:
+        - [0.5, 0]
+        - [0.15, 0.1]
+        - [-0.2, 0.35]
+        - [-0.4, 0]
+        - [-0.2, -0.35]
+        - [0.15, -0.1]
+      radar_detection_range: 10000
     ai_behavior: shahed_intercept
     sprite: shahed
 
@@ -109,12 +186,90 @@ vehicles:
       health:
         hp: 5
         max_hp: 5
-      naval_physics:
-        max_speed: 22
+      physics:
+        mass: 20
+        engine_power: 400
+        max_speed: 30
         turn_rate: 4.0
-        acceleration: 8
-        drag: 0.95
-      collidable:
-        radius: 2
+        drift_factor: 0.01
+        lateral_drag: 0.05
+        min_turn_fraction: 1.0
+        cruise_speed: 0
+        airborne: true
+        size: 2
+        angular_drag: 0.08
+        propeller_offset: 0
+        rudder_max_angle: 0
+        moment_of_inertia: 0
+        rudder_flow_factor: 0
+      collision_polygon:
+        - [0.38, 0.38]
+        - [-0.38, 0.38]
+        - [-0.38, -0.38]
+        - [0.38, -0.38]
+      radar_detection_range: 750
     ai_behavior: quadcopter_intercept
     sprite: quadcopter
+
+  truck:
+    name: Supply Truck
+    faction: iran
+    based_on: Military cargo truck
+    role: Ground logistics
+    cost_usd: 50_000
+    components:
+      health:
+        hp: 50
+        max_hp: 50
+      physics:
+        mass: 50
+        engine_power: 400
+        max_speed: 18
+        turn_rate: 0.8
+        drift_factor: 0.015
+        lateral_drag: 0.04
+        min_turn_fraction: 0.6
+        cruise_speed: 0
+        airborne: false
+        size: 5
+        angular_drag: 0.1
+        propeller_offset: 0
+        rudder_max_angle: 0
+        moment_of_inertia: 0
+        rudder_flow_factor: 0
+      collision_polygon:
+        - [0.44, 0.18]
+        - [-0.48, 0.18]
+        - [-0.48, -0.18]
+        - [0.44, -0.18]
+    ai_behavior: ground_logistics
+    sprite: truck
+
+world:
+  spawns:
+    oil_tanker:
+      outbound: 10
+      inbound: 10
+    shahed: 8
+    quadcopter: 10
+    frigate:
+      gulf: 4
+      oman: 4
+
+combat:
+  autocannon:
+    range: 1500
+    cooldown: 0.5
+    projectile_speed: 300
+    projectile_lifetime: 6
+    damage: 10
+    hit_radius:
+      shahed: 10
+      quadcopter: 3
+    spread: 0.02
+  jam_radius: 2000
+  breaches_to_sink: 12
+  quadcopter_damage:
+    hp_damage: 25
+    tanker_breaches: 1
+    frigate_breaches: 0

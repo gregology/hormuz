@@ -93,7 +93,7 @@ OMAN_DESTINATION = (112850.0, 62424.0)  # Gulf of Oman turnaround
 GULF_DESTINATION = (71300.0, 46800.0)  # Persian Gulf turnaround (same as spawn center)
 
 # Center of action — the strait narrows where tanker lanes converge
-STRAIT_CENTER = (85000.0, 37000.0)
+STRAIT_CENTER = (83884.0, 42518.0)
 
 # ---------------------------------------------------------------------------
 # Shipping lanes (Traffic Separation Scheme)
