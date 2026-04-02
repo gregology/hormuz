@@ -5,16 +5,20 @@
 FROM python:3.12-slim AS codegen
 
 WORKDIR /build
-COPY shared/ shared/
 
 # Create output directories the scripts expect
 RUN mkdir -p server/src/hormuz/generated client/src/generated client/src/map
 
 RUN pip install --no-cache-dir pyyaml shapely requests numpy scipy
 
-RUN python shared/scripts/generate.py && \
-    python shared/scripts/generate_coastlines.py && \
+# Coastline + heightmap scripts change rarely — cache this layer
+COPY shared/scripts/generate_coastlines.py shared/scripts/generate_heightmap.py shared/scripts/
+RUN python shared/scripts/generate_coastlines.py && \
     python shared/scripts/generate_heightmap.py
+
+# Vehicle codegen changes often but is fast
+COPY shared/ shared/
+RUN python shared/scripts/generate.py
 
 # --- Stage 2: server image ---
 FROM python:3.12-slim
