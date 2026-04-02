@@ -84,9 +84,8 @@ export class KeyboardManager {
 
 	getBitmask(): number {
 		let mask = 0;
-		// W/S for shahed hold-to-move (ArrowUp/Down now control stepped throttle)
-		if (this.keys.has("w")) mask |= 0x01;
-		if (this.keys.has("s")) mask |= 0x02;
+		if (this.keys.has("w") || this.keys.has("arrowup")) mask |= 0x01;
+		if (this.keys.has("s") || this.keys.has("arrowdown")) mask |= 0x02;
 		if (this.keys.has("a") || this.keys.has("arrowleft")) mask |= 0x04;
 		if (this.keys.has("d") || this.keys.has("arrowright")) mask |= 0x08;
 		if (this.keys.has(" ")) mask |= 0x10;

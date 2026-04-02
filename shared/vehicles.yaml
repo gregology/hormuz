@@ -255,7 +255,7 @@ world:
         tanker_transit: 5
         follow_escort_lead: 5
     shahed: 8
-    quadcopter: 10
+    quadcopter: 8
     frigate:
       gulf:
         escort: 1

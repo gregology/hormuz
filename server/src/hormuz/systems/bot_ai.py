@@ -35,7 +35,7 @@ FOLLOW_ESCORT_RANGE_SQ = FOLLOW_ESCORT_RANGE * FOLLOW_ESCORT_RANGE
 
 # QRF (Quick Reaction Force) patrol/engagement zones
 QRF_PATROL_RADIUS = 2000.0
-QRF_ENGAGE_RADIUS = 2000.0
+QRF_ENGAGE_RADIUS = 5000.0
 QRF_ENGAGE_RADIUS_SQ = QRF_ENGAGE_RADIUS * QRF_ENGAGE_RADIUS
 QRF_ZONES: dict[str, tuple[float, float]] = {
     "west_strait_qrf": (79612.0, 42615.0),
@@ -49,7 +49,7 @@ ESCORT_FOLLOW_DIST = 100.0  # desired following distance
 
 # --- Collision avoidance constants ---
 # Friendly vessel: avoidance radius = (our_size + their_size) * this factor
-AVOID_VESSEL_FACTOR = 1.5
+AVOID_VESSEL_FACTOR = 0.8
 AVOID_VESSEL_STRENGTH = 0.5  # max rudder adjustment from vessel avoidance
 
 # Land: probe angles relative to heading (radians), ~0°, ±20°, ±40°
