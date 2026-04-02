@@ -12,6 +12,7 @@ from hormuz.components import (
     Faction,
     Health,
     RespawnTimer,
+    SpawnConfig,
     Transform,
     VehiclePhysics,
 )
@@ -104,7 +105,15 @@ class SpawnProcessor(esper.Processor):
             if timer.remaining > 0:
                 continue
 
-            # Respawn
+            # Resolve behavior from SpawnConfig (persistent) or vehicle default
+            spawn_cfg = esper.try_component(ent, SpawnConfig)
+            if spawn_cfg is not None:
+                behavior = spawn_cfg.behavior
+            else:
+                from hormuz.generated.vehicles import VEHICLES
+                behavior = VEHICLES[phys.vehicle_type].ai_behavior
+
+            # Respawn position based on vehicle type
             if faction.name == "civilian":
                 # 50/50 chance to spawn at either end
                 if random.random() < 0.5:
@@ -113,7 +122,6 @@ class SpawnProcessor(esper.Processor):
                 else:
                     x, y, heading = random_oman_spawn()
                     loaded, destination = False, "gulf"
-                behavior = "tanker_transit"
                 # Update cargo state
                 cargo = esper.try_component(ent, CargoState)
                 if cargo is not None:
@@ -126,16 +134,13 @@ class SpawnProcessor(esper.Processor):
                     x, y, heading = random_tanker_spawn()
                 else:
                     x, y, heading = random_oman_spawn()
-                behavior = "escort"
             else:
                 if phys.vehicle_type == "quadcopter":
                     tanker_positions = self._get_tanker_positions()
                     x, y, heading = random_quadcopter_spawn(tanker_positions)
-                    behavior = "quadcopter_intercept"
                 else:
                     spawn = random.choice(IRAN_SPAWNS)
                     x, y = spawn["position"]
-                    behavior = "shahed_intercept"
                     heading = math.atan2(
                         STRAIT_CENTER[1] - y, STRAIT_CENTER[0] - x
                     )

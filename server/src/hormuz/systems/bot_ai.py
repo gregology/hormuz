@@ -5,6 +5,7 @@ import math
 import esper
 
 from hormuz.components import BotControl, CargoState, Faction, Health, Transform, VehiclePhysics
+from hormuz.generated.terrain_grid import is_land
 from hormuz.map_data import (
     GULF_DESTINATION,
     LANE_INBOUND,
@@ -27,6 +28,33 @@ QUADCOPTER_VISUAL_RANGE_SQ = QUADCOPTER_VISUAL_RANGE * QUADCOPTER_VISUAL_RANGE
 # Frigate escort zone — outside these bounds, tankers are considered safe
 ESCORT_ZONE_WEST = 50000.0
 ESCORT_ZONE_EAST = 110000.0
+
+# Follow-escort-lead: max distance to latch onto an escort_lead
+FOLLOW_ESCORT_RANGE = 250.0
+FOLLOW_ESCORT_RANGE_SQ = FOLLOW_ESCORT_RANGE * FOLLOW_ESCORT_RANGE
+
+# QRF (Quick Reaction Force) patrol/engagement zones
+QRF_PATROL_RADIUS = 2000.0
+QRF_ENGAGE_RADIUS = 2000.0
+QRF_ENGAGE_RADIUS_SQ = QRF_ENGAGE_RADIUS * QRF_ENGAGE_RADIUS
+QRF_ZONES: dict[str, tuple[float, float]] = {
+    "west_strait_qrf": (79612.0, 42615.0),
+    "east_strait_qrf": (91909.0, 48418.0),
+}
+
+# escort_follow: range to detect and follow an escort_lead
+ESCORT_FOLLOW_RANGE = 100.0
+ESCORT_FOLLOW_RANGE_SQ = ESCORT_FOLLOW_RANGE * ESCORT_FOLLOW_RANGE
+ESCORT_FOLLOW_DIST = 100.0  # desired following distance
+
+# --- Collision avoidance constants ---
+# Friendly vessel: avoidance radius = (our_size + their_size) * this factor
+AVOID_VESSEL_FACTOR = 1.5
+AVOID_VESSEL_STRENGTH = 0.5  # max rudder adjustment from vessel avoidance
+
+# Land: probe angles relative to heading (radians), ~0°, ±20°, ±40°
+_LAND_PROBE_ANGLES = (0.0, -0.35, 0.35, -0.7, 0.7)
+AVOID_LAND_STRENGTH = 0.8  # max rudder adjustment from land avoidance
 
 
 def steer_toward(tf: Transform, target_x: float, target_y: float) -> float:
@@ -81,15 +109,45 @@ class BotAIProcessor(esper.Processor):
             if phys.vehicle_type == "frigate" and health.hp > 0:
                 frigate_transforms.append(tf)
 
+        # Collect escort_lead positions + headings for follow_escort_lead tankers
+        escort_leads: list[Transform] = []
+        for _, (tf, bot) in esper.get_components(Transform, BotControl):
+            if bot.behavior == "escort_lead":
+                escort_leads.append(tf)
+
+        # Behavior dispatch
         for ent, (tf, bot) in esper.get_components(Transform, BotControl):
             if bot.behavior == "tanker_transit":
                 self._tanker_ai(ent, tf, bot)
+            elif bot.behavior == "follow_escort_lead":
+                self._follow_escort_lead_ai(ent, tf, bot, escort_leads)
             elif bot.behavior == "shahed_intercept":
                 self._shahed_ai(ent, tf, bot, frigate_transforms)
             elif bot.behavior == "quadcopter_intercept":
                 self._quadcopter_ai(ent, tf, bot)
             elif bot.behavior == "escort":
                 self._escort_ai(ent, tf, bot)
+            elif bot.behavior == "escort_follow":
+                self._escort_follow_ai(ent, tf, bot, escort_leads)
+            elif bot.behavior == "escort_lead":
+                self._escort_lead_ai(ent, tf, bot)
+            elif bot.behavior in QRF_ZONES:
+                self._qrf_ai(ent, tf, bot, QRF_ZONES[bot.behavior])
+
+        # --- Collision avoidance post-processing ---
+        # Collect all alive non-airborne ships (bot + player) for vessel avoidance
+        ships: list[tuple[int, Transform, VehiclePhysics, str]] = []
+        for ent, (tf, phys, health, faction) in esper.get_components(
+            Transform, VehiclePhysics, Health, Faction
+        ):
+            if not phys.airborne and health.hp > 0:
+                ships.append((ent, tf, phys, faction.name))
+
+        for ent, (tf, bot, phys, faction) in esper.get_components(
+            Transform, BotControl, VehiclePhysics, Faction
+        ):
+            if not phys.airborne:
+                self._apply_avoidance(ent, tf, bot, phys, faction.name, ships)
 
     def _tanker_ai(self, ent: int, tf: Transform, bot: BotControl) -> None:
         cargo = esper.try_component(ent, CargoState)
@@ -227,3 +285,252 @@ class BotAIProcessor(esper.Processor):
                 bot.throttle = 0.3
             else:
                 bot.throttle = 0.7
+
+    def _escort_lead_ai(self, ent: int, tf: Transform, bot: BotControl) -> None:
+        """Sweep back and forth along shipping lanes at 80% throttle."""
+        cargo = esper.try_component(ent, CargoState)
+        # Use CargoState.destination to track current direction; default outbound
+        if cargo is None:
+            esper.add_component(ent, CargoState(loaded=False, destination="oman"))
+            cargo = esper.component_for_entity(ent, CargoState)
+
+        route, exit_point = _ROUTE_CONFIG.get(cargo.destination, _ROUTE_CONFIG["oman"])
+
+        if bot.waypoint_index < len(route):
+            wx, wy = route[bot.waypoint_index]
+            dx = wx - tf.x
+            dy = wy - tf.y
+            if dx * dx + dy * dy < WAYPOINT_ADVANCE_DIST_SQ:
+                bot.waypoint_index += 1
+
+        if bot.waypoint_index < len(route):
+            wx, wy = route[bot.waypoint_index]
+            bot.rudder = steer_toward(tf, wx, wy)
+        else:
+            # Reached the end — reverse direction
+            if cargo.destination == "oman":
+                cargo.destination = "gulf"
+            else:
+                cargo.destination = "oman"
+            bot.waypoint_index = 0
+            route, _ = _ROUTE_CONFIG[cargo.destination]
+            wx, wy = route[0]
+            bot.rudder = steer_toward(tf, wx, wy)
+
+        bot.throttle = 0.55
+
+    def _follow_escort_lead_ai(
+        self,
+        ent: int,
+        tf: Transform,
+        bot: BotControl,
+        escort_leads: list[Transform],
+    ) -> None:
+        """Follow a nearby escort_lead that is ahead in the direction of travel."""
+        cargo = esper.try_component(ent, CargoState)
+        destination = cargo.destination if cargo else "oman"
+        outbound = destination == "oman"
+
+        # Find nearest escort_lead that is ahead and within range
+        best_lead: Transform | None = None
+        best_dist_sq = FOLLOW_ESCORT_RANGE_SQ
+
+        for lead_tf in escort_leads:
+            # "Ahead" means further east if outbound, further west if inbound
+            if outbound and lead_tf.x <= tf.x:
+                continue
+            if not outbound and lead_tf.x >= tf.x:
+                continue
+
+            dx = lead_tf.x - tf.x
+            dy = lead_tf.y - tf.y
+            d_sq = dx * dx + dy * dy
+            if d_sq < best_dist_sq:
+                best_dist_sq = d_sq
+                best_lead = lead_tf
+
+        if best_lead is not None:
+            # Follow the escort — steer toward it and match its speed
+            bot.rudder = steer_toward(tf, best_lead.x, best_lead.y)
+            dist = math.sqrt(best_dist_sq)
+            # Slow down when close, speed up when falling behind
+            if dist < 50.0:
+                bot.throttle = 0.6
+            elif dist < 150.0:
+                bot.throttle = 0.8
+            else:
+                bot.throttle = 1.0
+        else:
+            # No escort_lead nearby — fall back to normal tanker waypoint following
+            bot.throttle, bot.rudder, bot.waypoint_index = run_tanker_ai(
+                tf, bot.waypoint_index, destination
+            )
+
+    def _qrf_ai(
+        self,
+        ent: int,
+        tf: Transform,
+        bot: BotControl,
+        zone_center: tuple[float, float],
+    ) -> None:
+        """Patrol around a fixed point; engage any enemy that enters the zone."""
+        cx, cy = zone_center
+
+        # Check for enemies within engagement radius of the zone center
+        best_dist_sq = QRF_ENGAGE_RADIUS_SQ
+        best_tf: Transform | None = None
+        for _, (t_tf, t_faction, t_health) in esper.get_components(Transform, Faction, Health):
+            if t_health.hp <= 0 or t_faction.name in ("us", "civilian"):
+                continue
+            dx = t_tf.x - cx
+            dy = t_tf.y - cy
+            d_sq = dx * dx + dy * dy
+            if d_sq < best_dist_sq:
+                best_dist_sq = d_sq
+                best_tf = t_tf
+
+        if best_tf is not None:
+            # Engage — head toward enemy
+            bot.rudder = steer_toward(tf, best_tf.x, best_tf.y)
+            bot.throttle = 1.0
+            return
+
+        # No threat — orbit patrol zone
+        dx = tf.x - cx
+        dy = tf.y - cy
+        dist = math.sqrt(dx * dx + dy * dy)
+
+        if dist > QRF_PATROL_RADIUS * 2:
+            # Far from zone — head back
+            bot.rudder = steer_toward(tf, cx, cy)
+            bot.throttle = 1.0
+        else:
+            # Orbit clockwise around zone center
+            angle = math.atan2(dy, dx)
+            orbit_angle = angle + 0.5
+            orbit_x = cx + math.cos(orbit_angle) * QRF_PATROL_RADIUS
+            orbit_y = cy + math.sin(orbit_angle) * QRF_PATROL_RADIUS
+            bot.rudder = steer_toward(tf, orbit_x, orbit_y)
+
+            if dist > QRF_PATROL_RADIUS * 1.3:
+                bot.throttle = 1.0
+            elif dist < QRF_PATROL_RADIUS * 0.7:
+                bot.throttle = 0.3
+            else:
+                bot.throttle = 0.7
+
+    def _escort_follow_ai(
+        self,
+        ent: int,
+        tf: Transform,
+        bot: BotControl,
+        escort_leads: list[Transform],
+    ) -> None:
+        """Like escort, but follows a nearby escort_lead frigate when within range."""
+        # Check for nearby escort_lead to follow
+        best_lead: Transform | None = None
+        best_dist_sq = ESCORT_FOLLOW_RANGE_SQ
+
+        for lead_tf in escort_leads:
+            dx = lead_tf.x - tf.x
+            dy = lead_tf.y - tf.y
+            d_sq = dx * dx + dy * dy
+            if d_sq < best_dist_sq:
+                best_dist_sq = d_sq
+                best_lead = lead_tf
+
+        if best_lead is not None:
+            # Follow the escort_lead at the desired distance
+            dist = math.sqrt(best_dist_sq)
+            bot.rudder = steer_toward(tf, best_lead.x, best_lead.y)
+            if dist < ESCORT_FOLLOW_DIST * 0.5:
+                bot.throttle = 0.3
+            elif dist < ESCORT_FOLLOW_DIST * 0.8:
+                bot.throttle = 0.6
+            else:
+                bot.throttle = 1.0
+        else:
+            # No escort_lead nearby — fall back to normal escort behavior
+            self._escort_ai(ent, tf, bot)
+
+    def _apply_avoidance(
+        self,
+        ent: int,
+        tf: Transform,
+        bot: BotControl,
+        phys: VehiclePhysics,
+        faction_name: str,
+        ships: list[tuple[int, Transform, VehiclePhysics, str]],
+    ) -> None:
+        """Adjust rudder/throttle to avoid friendly vessels and land."""
+        cos_h = math.cos(tf.heading)
+        sin_h = math.sin(tf.heading)
+        size = phys.size
+        rudder_adjust = 0.0
+
+        # --- Friendly vessel avoidance ---
+        for other_ent, other_tf, other_phys, other_faction in ships:
+            if other_ent == ent or other_faction != faction_name:
+                continue
+
+            dx = other_tf.x - tf.x
+            dy = other_tf.y - tf.y
+            min_dist = (size + other_phys.size) * AVOID_VESSEL_FACTOR
+            dist_sq = dx * dx + dy * dy
+            if dist_sq > min_dist * min_dist:
+                continue
+
+            # Only avoid vessels ahead of us (dot product with heading > 0)
+            dot = dx * cos_h + dy * sin_h
+            if dot <= 0:
+                continue
+
+            # Cross product determines which side: positive = to the right
+            cross = cos_h * dy - sin_h * dx
+            dist = math.sqrt(dist_sq)
+            strength = (1.0 - dist / min_dist) * AVOID_VESSEL_STRENGTH
+
+            if cross >= 0:
+                rudder_adjust -= strength  # other is right, steer left
+            else:
+                rudder_adjust += strength  # other is left, steer right
+
+        # --- Land avoidance ---
+        probe_dist = size * 3.0 + abs(tf.speed) * 3.0
+        land_score = 0.0  # positive = more land to the right, steer left
+        forward_blocked = False
+
+        for angle_offset in _LAND_PROBE_ANGLES:
+            probe_angle = tf.heading + angle_offset
+            px = tf.x + math.cos(probe_angle) * probe_dist
+            py = tf.y + math.sin(probe_angle) * probe_dist
+            if is_land(px, py):
+                if abs(angle_offset) < 0.1:
+                    forward_blocked = True
+                elif angle_offset > 0:
+                    land_score += 1.0  # land to the right
+                else:
+                    land_score -= 1.0  # land to the left
+
+        if forward_blocked or land_score != 0.0:
+            if land_score > 0:
+                rudder_adjust -= AVOID_LAND_STRENGTH  # land right, steer left
+            elif land_score < 0:
+                rudder_adjust += AVOID_LAND_STRENGTH  # land left, steer right
+            elif forward_blocked:
+                # Land dead ahead, both sides equally blocked — probe wider to break tie
+                left_clear = not is_land(
+                    tf.x + math.cos(tf.heading - math.pi / 3) * probe_dist,
+                    tf.y + math.sin(tf.heading - math.pi / 3) * probe_dist,
+                )
+                if left_clear:
+                    rudder_adjust -= AVOID_LAND_STRENGTH
+                else:
+                    rudder_adjust += AVOID_LAND_STRENGTH
+
+            if forward_blocked:
+                bot.throttle *= 0.5
+
+        # Apply combined adjustment
+        if rudder_adjust != 0.0:
+            bot.rudder = max(-1.0, min(1.0, bot.rudder + rudder_adjust))

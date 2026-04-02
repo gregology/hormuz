@@ -64,8 +64,8 @@ IRAN_SPAWNS = [
 ]
 
 QUADCOPTER_SPAWNS = [
-    {"position": (68318, 49582), "label": "Quad Launch West 1"},
-    {"position": (68142, 45506), "label": "Quad Launch West 2"},
+    # {"position": (68318, 49582), "label": "Quad Launch West 1"},
+    # {"position": (68142, 45506), "label": "Quad Launch West 2"},
     {"position": (75799, 45777), "label": "Quad Launch Central 1"},
     {"position": (75703, 42669), "label": "Quad Launch Central 2"},
     {"position": (81352, 41673), "label": "Quad Launch Strait 1"},

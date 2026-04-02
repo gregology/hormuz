@@ -248,13 +248,25 @@ vehicles:
 world:
   spawns:
     oil_tanker:
-      outbound: 10
-      inbound: 10
+      outbound:
+        tanker_transit: 5
+        follow_escort_lead: 5
+      inbound:
+        tanker_transit: 5
+        follow_escort_lead: 5
     shahed: 8
     quadcopter: 10
     frigate:
-      gulf: 4
-      oman: 4
+      gulf:
+        escort: 1
+        escort_lead: 1
+        escort_follow: 1
+        west_strait_qrf: 1
+      oman:
+        escort: 1
+        escort_follow: 1
+        east_strait_qrf: 1
+        escort_lead: 1
 
 combat:
   autocannon:

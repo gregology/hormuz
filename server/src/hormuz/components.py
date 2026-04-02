@@ -204,6 +204,15 @@ class PatrolZone:
         self.zone_id = zone_id
 
 
+class SpawnConfig:
+    """Identity of an entity's role in the world — survives player takeover and respawn."""
+
+    __slots__ = ("behavior",)
+
+    def __init__(self, behavior: str) -> None:
+        self.behavior = behavior
+
+
 class RespawnTimer:
     """Countdown to respawn after death or delivery."""
 

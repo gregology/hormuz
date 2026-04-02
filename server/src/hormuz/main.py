@@ -18,6 +18,7 @@ from hormuz.components import (
     Health,
     PatrolZone,
     PlayerControl,
+    SpawnConfig,
     Transform,
     VehiclePhysics,
 )
@@ -77,6 +78,19 @@ game_state = {
 start_time = time.monotonic()
 
 
+def _expand_spawn_group(
+    value: int | dict[str, int], vehicle_type: str
+) -> list[tuple[str, int]]:
+    """Expand a spawn group value into (behavior, count) pairs.
+
+    If value is an int, uses the vehicle's default ai_behavior.
+    If value is a dict, keys are behavior names and values are counts.
+    """
+    if isinstance(value, int):
+        return [(VEHICLES[vehicle_type].ai_behavior, value)]
+    return list(value.items())
+
+
 def setup_world() -> None:
     """Create all entities and register ECS processors."""
     esper.add_processor(BotAIProcessor(), priority=6)
@@ -86,31 +100,37 @@ def setup_world() -> None:
     esper.add_processor(CollisionProcessor(), priority=2)
     esper.add_processor(SpawnProcessor(), priority=1)
 
+    # --- Oil tankers ---
     tanker_spawns = WORLD_SPAWNS["oil_tanker"]
-    for i in range(tanker_spawns["outbound"]):
-        x, y, heading = random_tanker_spawn()
-        esper.create_entity(
-            Transform(x=x, y=y, heading=heading),
-            VehiclePhysics(**VEHICLE_PHYSICS["oil_tanker"]),
-            Faction("civilian"),
-            Health(MAX_HP["oil_tanker"], MAX_HP["oil_tanker"]),
-            Collidable(COLLISION_POLYGONS["oil_tanker"]),
-            BotControl("tanker_transit"),
-            CargoState(loaded=True, destination="oman"),
-        )
+    for behavior, count in _expand_spawn_group(tanker_spawns["outbound"], "oil_tanker"):
+        for _ in range(count):
+            x, y, heading = random_tanker_spawn()
+            esper.create_entity(
+                Transform(x=x, y=y, heading=heading),
+                VehiclePhysics(**VEHICLE_PHYSICS["oil_tanker"]),
+                Faction("civilian"),
+                Health(MAX_HP["oil_tanker"], MAX_HP["oil_tanker"]),
+                Collidable(COLLISION_POLYGONS["oil_tanker"]),
+                BotControl(behavior),
+                SpawnConfig(behavior),
+                CargoState(loaded=True, destination="oman"),
+            )
 
-    for i in range(tanker_spawns["inbound"]):
-        x, y, heading = random_oman_spawn()
-        esper.create_entity(
-            Transform(x=x, y=y, heading=heading),
-            VehiclePhysics(**VEHICLE_PHYSICS["oil_tanker"]),
-            Faction("civilian"),
-            Health(MAX_HP["oil_tanker"], MAX_HP["oil_tanker"]),
-            Collidable(COLLISION_POLYGONS["oil_tanker"]),
-            BotControl("tanker_transit"),
-            CargoState(loaded=False, destination="gulf"),
-        )
+    for behavior, count in _expand_spawn_group(tanker_spawns["inbound"], "oil_tanker"):
+        for _ in range(count):
+            x, y, heading = random_oman_spawn()
+            esper.create_entity(
+                Transform(x=x, y=y, heading=heading),
+                VehiclePhysics(**VEHICLE_PHYSICS["oil_tanker"]),
+                Faction("civilian"),
+                Health(MAX_HP["oil_tanker"], MAX_HP["oil_tanker"]),
+                Collidable(COLLISION_POLYGONS["oil_tanker"]),
+                BotControl(behavior),
+                SpawnConfig(behavior),
+                CargoState(loaded=False, destination="gulf"),
+            )
 
+    # --- Shaheds ---
     for i in range(WORLD_SPAWNS["shahed"]):
         spawn = IRAN_SPAWNS[i % len(IRAN_SPAWNS)]
         x, y = spawn["position"]
@@ -121,9 +141,11 @@ def setup_world() -> None:
             Health(MAX_HP["shahed"], MAX_HP["shahed"]),
             Collidable(COLLISION_POLYGONS["shahed"]),
             BotControl("shahed_intercept"),
+            SpawnConfig("shahed_intercept"),
             Battery(),
         )
 
+    # --- Quadcopters ---
     tanker_positions: list[tuple[float, float]] = []
     for _, (tf, phys) in esper.get_components(Transform, VehiclePhysics):
         if phys.vehicle_type == "oil_tanker":
@@ -137,43 +159,49 @@ def setup_world() -> None:
             Health(MAX_HP["quadcopter"], MAX_HP["quadcopter"]),
             Collidable(COLLISION_POLYGONS["quadcopter"]),
             BotControl("quadcopter_intercept"),
+            SpawnConfig("quadcopter_intercept"),
             Battery(),
         )
 
+    # --- Frigates ---
     frigate_spawns = WORLD_SPAWNS["frigate"]
-    for i in range(frigate_spawns["gulf"]):
-        x, y, heading = random_tanker_spawn()
-        esper.create_entity(
-            Transform(x=x, y=y, heading=heading),
-            VehiclePhysics(**VEHICLE_PHYSICS["frigate"]),
-            Faction("us"),
-            Health(MAX_HP["frigate"], MAX_HP["frigate"]),
-            Collidable(COLLISION_POLYGONS["frigate"]),
-            BotControl("escort"),
-            PatrolZone(
-                center_x=71300.0,
-                center_y=46800.0,
-                radius=15000.0,
-                zone_id="strait_west",
-            ),
-        )
+    for behavior, count in _expand_spawn_group(frigate_spawns["gulf"], "frigate"):
+        for _ in range(count):
+            x, y, heading = random_tanker_spawn()
+            esper.create_entity(
+                Transform(x=x, y=y, heading=heading),
+                VehiclePhysics(**VEHICLE_PHYSICS["frigate"]),
+                Faction("us"),
+                Health(MAX_HP["frigate"], MAX_HP["frigate"]),
+                Collidable(COLLISION_POLYGONS["frigate"]),
+                BotControl(behavior),
+                SpawnConfig(behavior),
+                PatrolZone(
+                    center_x=71300.0,
+                    center_y=46800.0,
+                    radius=15000.0,
+                    zone_id="strait_west",
+                ),
+            )
 
-    for i in range(frigate_spawns["oman"]):
-        x, y, heading = random_oman_spawn()
-        esper.create_entity(
-            Transform(x=x, y=y, heading=heading),
-            VehiclePhysics(**VEHICLE_PHYSICS["frigate"]),
-            Faction("us"),
-            Health(MAX_HP["frigate"], MAX_HP["frigate"]),
-            Collidable(COLLISION_POLYGONS["frigate"]),
-            BotControl("escort"),
-            PatrolZone(
-                center_x=112850.0,
-                center_y=62424.0,
-                radius=15000.0,
-                zone_id="oman_approach",
-            ),
-        )
+    for behavior, count in _expand_spawn_group(frigate_spawns["oman"], "frigate"):
+        for _ in range(count):
+            x, y, heading = random_oman_spawn()
+            esper.create_entity(
+                Transform(x=x, y=y, heading=heading),
+                VehiclePhysics(**VEHICLE_PHYSICS["frigate"]),
+                Faction("us"),
+                Health(MAX_HP["frigate"], MAX_HP["frigate"]),
+                Collidable(COLLISION_POLYGONS["frigate"]),
+                BotControl(behavior),
+                SpawnConfig(behavior),
+                PatrolZone(
+                    center_x=112850.0,
+                    center_y=62424.0,
+                    radius=15000.0,
+                    zone_id="oman_approach",
+                ),
+            )
 
 
 # --- Networking helpers ---
@@ -335,15 +363,12 @@ def release_vehicle(conn_id: int) -> None:
         waypoint_index = pc.waypoint_index
         esper.remove_component(ent, PlayerControl)
     if not esper.has_component(ent, BotControl):
-        phys = esper.component_for_entity(ent, VehiclePhysics)
-        if phys.vehicle_type == "oil_tanker":
-            behavior = "tanker_transit"
-        elif phys.vehicle_type == "frigate":
-            behavior = "escort"
-        elif phys.vehicle_type == "quadcopter":
-            behavior = "quadcopter_intercept"
+        spawn_cfg = esper.try_component(ent, SpawnConfig)
+        if spawn_cfg is not None:
+            behavior = spawn_cfg.behavior
         else:
-            behavior = "shahed_intercept"
+            phys = esper.component_for_entity(ent, VehiclePhysics)
+            behavior = VEHICLES[phys.vehicle_type].ai_behavior
         esper.add_component(ent, BotControl(behavior, waypoint_index=waypoint_index))
 
 
