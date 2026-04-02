@@ -1,233 +1,140 @@
 """ECS components for the Hormuz game server."""
 
+from dataclasses import dataclass, field
 
+
+@dataclass(slots=True)
 class Transform:
     """Position and orientation in world space."""
 
-    __slots__ = (
-        "x", "y", "heading", "speed", "drift", "angular_velocity",
-        "flood_level", "list_angle", "hull_breaches", "breach_side",
-    )
-
-    def __init__(
-        self,
-        x: float,
-        y: float,
-        heading: float = 0.0,
-        speed: float = 0.0,
-        drift: float = 0.0,
-        angular_velocity: float = 0.0,
-        flood_level: float = 0.0,
-        list_angle: float = 0.0,
-        hull_breaches: int = 0,
-        breach_side: float = 0.0,
-    ) -> None:
-        self.x = x
-        self.y = y
-        self.heading = heading
-        self.speed = speed
-        self.drift = drift
-        self.angular_velocity = angular_velocity
-        self.flood_level = flood_level
-        self.list_angle = list_angle
-        self.hull_breaches = hull_breaches
-        self.breach_side = breach_side
+    x: float
+    y: float
+    heading: float = 0.0
+    speed: float = 0.0
+    drift: float = 0.0
+    angular_velocity: float = 0.0
+    flood_level: float = 0.0
+    list_angle: float = 0.0
+    hull_breaches: int = 0
+    breach_side: float = 0.0
 
 
+@dataclass(slots=True)
 class VehiclePhysics:
     """Physics parameters — immutable per vehicle type."""
 
-    __slots__ = (
-        "vehicle_type",
-        "max_speed",
-        "acceleration",
-        "drag",
-        "turn_rate",
-        "drift_factor",
-        "lateral_drag",
-        "min_turn_fraction",
-        "cruise_speed",
-        "airborne",
-        "size",
-        "angular_drag",
-        # Force-based propulsion (Phase 1)
-        "mass",
-        "engine_power",
-        "drag_coefficient",
-        # Propeller torque steering (Phase 2)
-        "propeller_offset",
-        "rudder_max_angle",
-        "moment_of_inertia",
-        "rudder_flow_coefficient",
-    )
-
-    def __init__(
-        self,
-        vehicle_type: str,
-        max_speed: float = 0.0,
-        acceleration: float = 0.0,
-        drag: float = 0.95,
-        turn_rate: float = 0.0,
-        drift_factor: float = 0.0,
-        lateral_drag: float = 0.1,
-        min_turn_fraction: float = 0.0,
-        cruise_speed: float = 0.0,
-        airborne: bool = False,
-        size: float = 10.0,
-        angular_drag: float = 0.15,
-        mass: float = 100.0,
-        engine_power: float = 0.0,
-        drag_coefficient: float = 1.0,
-        propeller_offset: float = 0.0,
-        rudder_max_angle: float = 0.0,
-        moment_of_inertia: float = 0.0,
-        rudder_flow_coefficient: float = 0.0,
-    ) -> None:
-        self.vehicle_type = vehicle_type
-        self.max_speed = max_speed
-        self.acceleration = acceleration
-        self.drag = drag
-        self.turn_rate = turn_rate
-        self.drift_factor = drift_factor
-        self.lateral_drag = lateral_drag
-        self.min_turn_fraction = min_turn_fraction
-        self.cruise_speed = cruise_speed
-        self.airborne = airborne
-        self.size = size
-        self.angular_drag = angular_drag
-        self.mass = mass
-        self.engine_power = engine_power
-        self.drag_coefficient = drag_coefficient
-        self.propeller_offset = propeller_offset
-        self.rudder_max_angle = rudder_max_angle
-        self.moment_of_inertia = moment_of_inertia
-        self.rudder_flow_coefficient = rudder_flow_coefficient
+    vehicle_type: str
+    max_speed: float = 0.0
+    acceleration: float = 0.0
+    drag: float = 0.95
+    turn_rate: float = 0.0
+    drift_factor: float = 0.0
+    lateral_drag: float = 0.1
+    min_turn_fraction: float = 0.0
+    cruise_speed: float = 0.0
+    airborne: bool = False
+    size: float = 10.0
+    angular_drag: float = 0.15
+    # Force-based propulsion (Phase 1)
+    mass: float = 100.0
+    engine_power: float = 0.0
+    drag_coefficient: float = 1.0
+    # Propeller torque steering (Phase 2)
+    propeller_offset: float = 0.0
+    rudder_max_angle: float = 0.0
+    moment_of_inertia: float = 0.0
+    rudder_flow_coefficient: float = 0.0
 
 
+@dataclass(slots=True)
 class Faction:
     """Which faction this entity belongs to."""
 
-    __slots__ = ("name",)
-
-    def __init__(self, name: str) -> None:
-        self.name = name
+    name: str
 
 
+@dataclass(slots=True)
 class Health:
     """Destructible entity."""
 
-    __slots__ = ("hp", "max_hp")
-
-    def __init__(self, hp: int, max_hp: int) -> None:
-        self.hp = hp
-        self.max_hp = max_hp
+    hp: int
+    max_hp: int
 
 
+@dataclass(slots=True)
 class Collidable:
     """Convex polygon collision boundary in local space."""
 
-    __slots__ = ("vertices", "bounding_radius")
+    vertices: tuple[tuple[float, float], ...]
+    bounding_radius: float = field(init=False)
 
-    def __init__(self, vertices: tuple[tuple[float, float], ...]) -> None:
-        self.vertices = vertices
-        self.bounding_radius = max(
-            (x * x + y * y) ** 0.5 for x, y in vertices
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "bounding_radius",
+            max((x * x + y * y) ** 0.5 for x, y in self.vertices),
         )
 
 
+@dataclass(slots=True)
 class BotControl:
     """AI-controlled entity. Removed when a human takes over."""
 
-    __slots__ = ("behavior", "throttle", "rudder", "waypoint_index", "target_entity")
-
-    def __init__(
-        self,
-        behavior: str,
-        throttle: float = 0.0,
-        rudder: float = 0.0,
-        waypoint_index: int = 0,
-        target_entity: int = 0,
-    ) -> None:
-        self.behavior = behavior
-        self.throttle = throttle
-        self.rudder = rudder
-        self.waypoint_index = waypoint_index
-        self.target_entity = target_entity
+    behavior: str
+    throttle: float = 0.0
+    rudder: float = 0.0
+    waypoint_index: int = 0
+    target_entity: int = 0
 
 
+@dataclass(slots=True)
 class PlayerControl:
     """Human-controlled entity."""
 
-    __slots__ = ("connection_id", "throttle", "rudder", "autopilot", "waypoint_index")
-
-    def __init__(
-        self,
-        connection_id: int,
-        throttle: float = 0.0,
-        rudder: float = 0.0,
-        autopilot: bool = False,
-        waypoint_index: int = 0,
-    ) -> None:
-        self.connection_id = connection_id
-        self.throttle = throttle
-        self.rudder = rudder
-        self.autopilot = autopilot
-        self.waypoint_index = waypoint_index
+    connection_id: int
+    throttle: float = 0.0
+    rudder: float = 0.0
+    autopilot: bool = False
+    waypoint_index: int = 0
 
 
+@dataclass(slots=True)
 class CargoState:
     """Tanker cargo state — affects physics (mass, drag) and route."""
 
-    __slots__ = ("loaded", "destination")
-
-    def __init__(self, loaded: bool = True, destination: str = "oman") -> None:
-        self.loaded = loaded
-        # "oman" = heading to Gulf of Oman, "gulf" = heading back to Persian Gulf
-        self.destination = destination
+    loaded: bool = True
+    # "oman" = heading to Gulf of Oman, "gulf" = heading back to Persian Gulf
+    destination: str = "oman"
 
 
+@dataclass(slots=True)
 class PatrolZone:
     """Assigned patrol area for frigates (future AI behavior)."""
 
-    __slots__ = ("center_x", "center_y", "radius", "zone_id")
-
-    def __init__(
-        self,
-        center_x: float,
-        center_y: float,
-        radius: float,
-        zone_id: str,
-    ) -> None:
-        self.center_x = center_x
-        self.center_y = center_y
-        self.radius = radius
-        self.zone_id = zone_id
+    center_x: float
+    center_y: float
+    radius: float
+    zone_id: str
 
 
+@dataclass(slots=True)
 class SpawnConfig:
     """Identity of an entity's role in the world — survives player takeover and respawn."""
 
-    __slots__ = ("behavior",)
-
-    def __init__(self, behavior: str) -> None:
-        self.behavior = behavior
+    behavior: str
 
 
+@dataclass(slots=True)
 class RespawnTimer:
     """Countdown to respawn after death or delivery."""
 
-    __slots__ = ("remaining",)
-
-    def __init__(self, remaining: float = 3.0) -> None:
-        self.remaining = remaining
+    remaining: float = 3.0
 
 
+@dataclass(slots=True)
 class Battery:
     """Finite energy supply for airborne drones."""
 
-    __slots__ = ("charge", "drain_rate")
-
-    def __init__(self, charge: float = 100.0, drain_rate: float = 100.0 / 600.0) -> None:
-        self.charge = charge
-        # drain_rate is percent per second (default: 100% over 600s = 10 minutes)
-        self.drain_rate = drain_rate
+    charge: float = 100.0
+    # drain_rate is percent per second (default: 100% over 600s = 10 minutes)
+    drain_rate: float = 100.0 / 600.0

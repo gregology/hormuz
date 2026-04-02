@@ -11,14 +11,12 @@ import random
 import esper
 
 from hormuz.components import (
-    BotControl,
     Collidable,
     Health,
-    PlayerControl,
-    RespawnTimer,
     Transform,
     VehiclePhysics,
 )
+from hormuz.entity_helpers import kill_entity
 from hormuz.generated.vehicles import (
     AUTOCANNON_COOLDOWN,
     AUTOCANNON_DAMAGE,
@@ -41,6 +39,17 @@ JAM_RADIUS_SQ = JAM_RADIUS * JAM_RADIUS
 AUTOCANNON_RANGE_SQ = AUTOCANNON_RANGE * AUTOCANNON_RANGE
 RADAR_RANGE_SQ: dict[str, float] = {k: v * v for k, v in RADAR_DETECTION.items()}
 AUTOCANNON_HIT_RADIUS_SQ: dict[str, float] = {k: v * v for k, v in AUTOCANNON_HIT_RADIUS.items()}
+
+# Kamikaze attack profiles: (breach_count_vs_tanker, breach_count_vs_frigate, hp_damage, cause)
+_KamikazeProfile = tuple[int, int, int, str]
+
+SHAHED_PROFILE: _KamikazeProfile = (BREACHES_TO_SINK, 2, 0, "shahed")
+QUADCOPTER_PROFILE: _KamikazeProfile = (
+    QUADCOPTER_TANKER_BREACHES,
+    QUADCOPTER_FRIGATE_BREACHES,
+    QUADCOPTER_HP_DAMAGE,
+    "quadcopter",
+)
 
 
 class _Projectile:
@@ -106,11 +115,9 @@ class CombatProcessor(esper.Processor):
             shaheds = [s for s in shaheds if s[0] not in killed_by_autocannon]
             quadcopters = [q for q in quadcopters if q[0] not in killed_by_autocannon]
 
-        # 2. Shahed kamikaze — vs tankers and frigates
-        self._shahed_kamikaze(shaheds, tankers, frigates)
-
-        # 3. Quadcopter kamikaze — vs tankers and frigates
-        self._quadcopter_kamikaze(quadcopters, tankers, frigates)
+        # 2. Kamikaze attacks — shaheds and quadcopters vs tankers and frigates
+        self._kamikaze_attack(shaheds, tankers, frigates, SHAHED_PROFILE)
+        self._kamikaze_attack(quadcopters, tankers, frigates, QUADCOPTER_PROFILE)
 
     # ------------------------------------------------------------------
     # Autocannon
@@ -253,7 +260,7 @@ class CombatProcessor(esper.Processor):
                     health = esper.component_for_entity(s_ent, Health)
                     health.hp = max(0, health.hp - AUTOCANNON_DAMAGE)
                     if health.hp <= 0:
-                        self._kill(s_ent)
+                        kill_entity(s_ent)
                         killed.add(s_ent)
                         self.kills.append(
                             {
@@ -272,125 +279,73 @@ class CombatProcessor(esper.Processor):
         return killed
 
     # ------------------------------------------------------------------
-    # Shahed kamikaze
+    # Unified kamikaze attack
     # ------------------------------------------------------------------
 
-    def _shahed_kamikaze(
+    def _kamikaze_attack(
         self,
-        shaheds: list[tuple[int, Transform, VehiclePhysics, Collidable]],
+        attackers: list[tuple[int, Transform, VehiclePhysics, Collidable]],
         tankers: list[tuple[int, Transform, VehiclePhysics, Collidable]],
         frigates: list[tuple[int, Transform, VehiclePhysics, Collidable]],
+        profile: _KamikazeProfile,
     ) -> None:
-        targets = [(ent, tf, phys, col, BREACHES_TO_SINK) for ent, tf, phys, col in tankers] + [
-            (ent, tf, phys, col, 2) for ent, tf, phys, col in frigates
+        tanker_breaches, frigate_breaches, hp_damage, cause = profile
+
+        targets = [
+            (ent, tf, phys, col, tanker_breaches) for ent, tf, phys, col in tankers
+        ] + [
+            (ent, tf, phys, col, frigate_breaches) for ent, tf, phys, col in frigates
         ]
 
-        hit_shaheds: set[int] = set()
+        hit_attackers: set[int] = set()
 
-        for s_ent, s_tf, s_phys, s_col in shaheds:
-            if s_ent in hit_shaheds:
+        for a_ent, a_tf, a_phys, a_col in attackers:
+            if a_ent in hit_attackers:
                 continue
             for t_ent, t_tf, t_phys, t_col, breach_count in targets:
-                dx = t_tf.x - s_tf.x
-                dy = t_tf.y - s_tf.y
+                dx = t_tf.x - a_tf.x
+                dy = t_tf.y - a_tf.y
                 dist_sq = dx * dx + dy * dy
-                br_sum = s_col.bounding_radius * s_phys.size + t_col.bounding_radius * t_phys.size
+                br_sum = (
+                    a_col.bounding_radius * a_phys.size
+                    + t_col.bounding_radius * t_phys.size
+                )
                 if dist_sq > br_sum * br_sum:
                     continue
 
-                s_poly = _transform_polygon(
-                    s_col.vertices, s_tf.x, s_tf.y, s_tf.heading, s_phys.size
+                a_poly = _transform_polygon(
+                    a_col.vertices, a_tf.x, a_tf.y, a_tf.heading, a_phys.size
                 )
                 t_poly = _transform_polygon(
                     t_col.vertices, t_tf.x, t_tf.y, t_tf.heading, t_phys.size
                 )
-                result = _sat_collision(s_poly, t_poly, s_tf.x, s_tf.y, t_tf.x, t_tf.y)
+                result = _sat_collision(a_poly, t_poly, a_tf.x, a_tf.y, t_tf.x, t_tf.y)
                 if result is None:
                     continue
 
                 _, _, _, contact_x, contact_y = result
 
-                self._kill(s_ent)
-                hit_shaheds.add(s_ent)
+                # Kill the attacker
+                kill_entity(a_ent)
+                hit_attackers.add(a_ent)
 
-                breach_side = self._breach_side(t_tf, contact_x, contact_y)
-                self._breach_hull(t_tf, breach_side, breach_count)
+                # Apply HP damage to target (quadcopters deal direct HP damage)
+                if hp_damage > 0:
+                    t_health = esper.component_for_entity(t_ent, Health)
+                    t_health.hp = max(0, t_health.hp - hp_damage)
+                    if t_health.hp <= 0:
+                        kill_entity(t_ent)
+                        self.kills.append(
+                            {"victim_type": t_phys.vehicle_type, "cause": cause}
+                        )
 
-                self.events.append(
-                    {
-                        "type": "explosion",
-                        "x": contact_x,
-                        "y": contact_y,
-                    }
-                )
-                break
-
-    # ------------------------------------------------------------------
-    # Quadcopter kamikaze
-    # ------------------------------------------------------------------
-
-    def _quadcopter_kamikaze(
-        self,
-        quadcopters: list[tuple[int, Transform, VehiclePhysics, Collidable]],
-        tankers: list[tuple[int, Transform, VehiclePhysics, Collidable]],
-        frigates: list[tuple[int, Transform, VehiclePhysics, Collidable]],
-    ) -> None:
-        targets = [
-            (ent, tf, phys, col, QUADCOPTER_TANKER_BREACHES) for ent, tf, phys, col in tankers
-        ] + [(ent, tf, phys, col, QUADCOPTER_FRIGATE_BREACHES) for ent, tf, phys, col in frigates]
-
-        hit_quads: set[int] = set()
-
-        for q_ent, q_tf, q_phys, q_col in quadcopters:
-            if q_ent in hit_quads:
-                continue
-            for t_ent, t_tf, t_phys, t_col, breach_count in targets:
-                dx = t_tf.x - q_tf.x
-                dy = t_tf.y - q_tf.y
-                dist_sq = dx * dx + dy * dy
-                br_sum = q_col.bounding_radius * q_phys.size + t_col.bounding_radius * t_phys.size
-                if dist_sq > br_sum * br_sum:
-                    continue
-
-                q_poly = _transform_polygon(
-                    q_col.vertices, q_tf.x, q_tf.y, q_tf.heading, q_phys.size
-                )
-                t_poly = _transform_polygon(
-                    t_col.vertices, t_tf.x, t_tf.y, t_tf.heading, t_phys.size
-                )
-                result = _sat_collision(q_poly, t_poly, q_tf.x, q_tf.y, t_tf.x, t_tf.y)
-                if result is None:
-                    continue
-
-                _, _, _, contact_x, contact_y = result
-
-                # Kill the quadcopter
-                self._kill(q_ent)
-                hit_quads.add(q_ent)
-
-                # Deal HP damage to target
-                t_health = esper.component_for_entity(t_ent, Health)
-                t_health.hp = max(0, t_health.hp - QUADCOPTER_HP_DAMAGE)
-                if t_health.hp <= 0:
-                    self._kill(t_ent)
-                    self.kills.append(
-                        {
-                            "victim_type": t_phys.vehicle_type,
-                            "cause": "quadcopter",
-                        }
-                    )
-
-                # Apply hull breaches (tankers flood/list/slow, frigates don't)
+                # Apply hull breaches
                 if breach_count > 0:
                     breach_side = self._breach_side(t_tf, contact_x, contact_y)
                     self._breach_hull(t_tf, breach_side, breach_count)
 
                 self.events.append(
-                    {
-                        "type": "explosion",
-                        "x": contact_x,
-                        "y": contact_y,
-                    }
+                    {"type": "explosion", "x": contact_x, "y": contact_y}
                 )
                 break
 
@@ -415,13 +370,3 @@ class CombatProcessor(esper.Processor):
 
         tf.hull_breaches += breach_count
         tf.breach_side = max(-1.0, min(1.0, tf.breach_side + side / BREACH_CLAMP_COUNT))
-
-    def _kill(self, ent: int) -> None:
-        health = esper.component_for_entity(ent, Health)
-        health.hp = 0
-        if esper.has_component(ent, BotControl):
-            esper.remove_component(ent, BotControl)
-        if esper.has_component(ent, PlayerControl):
-            esper.remove_component(ent, PlayerControl)
-        if not esper.has_component(ent, RespawnTimer):
-            esper.add_component(ent, RespawnTimer(remaining=3.0))

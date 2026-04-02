@@ -10,10 +10,10 @@ from hormuz.components import (
     CargoState,
     Health,
     PlayerControl,
-    RespawnTimer,
     Transform,
     VehiclePhysics,
 )
+from hormuz.entity_helpers import kill_entity
 from hormuz.generated.vehicles import BREACHES_TO_SINK
 from hormuz.systems.bot_ai import run_tanker_ai
 
@@ -61,14 +61,8 @@ class PhysicsProcessor(esper.Processor):
             if tf.flood_level >= 1.0:
                 health = esper.try_component(ent, Health)
                 if health is not None and health.hp > 0:
-                    health.hp = 0
+                    kill_entity(ent)
                     self.flood_kills.append(phys.vehicle_type)
-                    if esper.has_component(ent, BotControl):
-                        esper.remove_component(ent, BotControl)
-                    if esper.has_component(ent, PlayerControl):
-                        esper.remove_component(ent, PlayerControl)
-                    if not esper.has_component(ent, RespawnTimer):
-                        esper.add_component(ent, RespawnTimer(remaining=3.0))
 
             # Battery depletion kills airborne drones
             battery = esper.try_component(ent, Battery)
@@ -77,14 +71,8 @@ class PhysicsProcessor(esper.Processor):
                 if health is not None and health.hp > 0:
                     battery.charge = max(0.0, battery.charge - battery.drain_rate * dt)
                     if battery.charge <= 0.0:
-                        health.hp = 0
+                        kill_entity(ent)
                         self.battery_kills.append(phys.vehicle_type)
-                        if esper.has_component(ent, BotControl):
-                            esper.remove_component(ent, BotControl)
-                        if esper.has_component(ent, PlayerControl):
-                            esper.remove_component(ent, PlayerControl)
-                        if not esper.has_component(ent, RespawnTimer):
-                            esper.add_component(ent, RespawnTimer(remaining=3.0))
 
     def _get_input(self, ent: int) -> tuple[float, float]:
         pc = esper.try_component(ent, PlayerControl)
