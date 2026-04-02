@@ -4,14 +4,11 @@ WORKDIR /app
 
 RUN pip install --no-cache-dir pyyaml shapely requests numpy scipy
 
-# Coastline + heightmap scripts change rarely — cache this layer
-COPY shared/scripts/generate_coastlines.py shared/scripts/generate_heightmap.py shared/scripts/
-RUN python shared/scripts/generate_coastlines.py \
-    && python shared/scripts/generate_heightmap.py
-
-# Vehicle codegen changes often but is fast
 COPY shared/ shared/
-RUN python shared/scripts/generate.py
+
+RUN python shared/scripts/generate.py \
+    && python shared/scripts/generate_coastlines.py \
+    && python shared/scripts/generate_heightmap.py
 
 FROM node:22-slim AS build
 
