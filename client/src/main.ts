@@ -407,6 +407,8 @@ function init() {
 				const instruments: VehicleInstruments = {
 					speed: playerEntity.speed,
 					heading: playerEntity.heading,
+					x: playerEntity.x,
+					y: playerEntity.y,
 					hp: playerEntity.hp,
 					maxHp: 0,
 					floodLevel: playerEntity.floodLevel ?? 0,

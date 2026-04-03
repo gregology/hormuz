@@ -380,6 +380,23 @@ def generate_ts_factions(factions: dict) -> str:
     return "\n".join(lines)
 
 
+# --- Geo ↔ game coordinate conversion (map.yaml stores [lat, lon]) ---
+_ORIGIN_LON = 47.5
+_ORIGIN_LAT = 30.5
+_LON_SCALE = 9708
+_LAT_SCALE = 10800
+
+
+def _geo_to_game(p: list) -> list:
+    """Convert [lat, lon] from YAML to [game_x, game_y]."""
+    lat, lon = float(p[0]), float(p[1])
+    return [round((lon - _ORIGIN_LON) * _LON_SCALE), round((_ORIGIN_LAT - lat) * _LAT_SCALE)]
+
+
+def _game_x_from_lon(lon: float) -> float:
+    return round((float(lon) - _ORIGIN_LON) * _LON_SCALE)
+
+
 def _py_point(p: list) -> str:
     return f"({fmt_float(float(p[0]))}, {fmt_float(float(p[1]))})"
 
@@ -716,10 +733,65 @@ def generate_ts_map_data(map_data: dict) -> str:
     return "\n".join(lines)
 
 
+def _preprocess_map_data(raw: dict) -> dict:
+    """Convert map.yaml lat/lon positions to game coordinates for codegen."""
+    import copy
+    data = copy.deepcopy(raw)
+
+    # Spawns
+    for group in data.get("spawns", {}).values():
+        for sp in group:
+            sp["position"] = _geo_to_game(sp["position"])
+
+    # Landmarks
+    for key, val in (data.get("landmarks") or {}).items():
+        data["landmarks"][key] = _geo_to_game(val)
+
+    # Escort zone (scalar longitude → game x)
+    ez = data.get("escort_zone") or {}
+    if "west" in ez:
+        ez["west"] = _game_x_from_lon(ez["west"])
+    if "east" in ez:
+        ez["east"] = _game_x_from_lon(ez["east"])
+
+    # Patrol routes (pairs of points)
+    for name, pts in (data.get("patrol_routes") or {}).items():
+        data["patrol_routes"][name] = [_geo_to_game(pts[0]), _geo_to_game(pts[1])]
+
+    # Patrol zones (position + radius)
+    for name, z in (data.get("patrol_zones") or {}).items():
+        z["position"] = _geo_to_game(z["position"])
+
+    # Destinations
+    for name, d in (data.get("destinations") or {}).items():
+        d["position"] = _geo_to_game(d["position"])
+
+    # Shipping lanes
+    for lane_name, pts in (data.get("shipping_lanes") or {}).items():
+        data["shipping_lanes"][lane_name] = [_geo_to_game(p) for p in pts]
+
+    # Shallow/very shallow waters
+    for key in ("shallow_waters", "very_shallow_waters"):
+        polys = data.get(key) or []
+        data[key] = [[_geo_to_game(p) for p in poly] for poly in polys]
+
+    # Hazards
+    hazards = data.get("hazards") or {}
+    hazards["shoals"] = [[_geo_to_game(p) for p in poly] for poly in (hazards.get("shoals") or [])]
+    for rock in (hazards.get("rocks") or []):
+        rock["position"] = _geo_to_game(rock["position"])
+
+    # Exclusion zones
+    for zone in data.get("exclusion_zones", []):
+        zone["polygon"] = [_geo_to_game(p) for p in zone["polygon"]]
+
+    return data
+
+
 def main() -> None:
     vehicles_data = load_yaml("vehicles.yaml")
     factions_data = load_yaml("factions.yaml")
-    map_data = load_yaml("map.yaml")
+    map_data = _preprocess_map_data(load_yaml("map.yaml"))
 
     vehicles = vehicles_data["vehicles"]
     combat = vehicles_data["combat"]

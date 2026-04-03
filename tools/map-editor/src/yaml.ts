@@ -1,12 +1,40 @@
 import type { EditableMapData, EditableSpawn, EditableRock, EditableZone, AreaWithRadius } from "./editor-state";
 
+// Game coord → lat/lon conversion (editor works in game coords internally,
+// YAML output uses [lat, lon] decimal degrees)
+const ORIGIN_LON = 47.5;
+const ORIGIN_LAT = 30.5;
+const LON_SCALE = 9708;
+const LAT_SCALE = 10800;
+
+function toLatLon(gx: number, gy: number): [number, number] {
+	return [round5(ORIGIN_LAT - gy / LAT_SCALE), round5(ORIGIN_LON + gx / LON_SCALE)];
+}
+
+function lonFromGameX(gx: number): number {
+	return round5(ORIGIN_LON + gx / LON_SCALE);
+}
+
+function round5(n: number): number {
+	return Math.round(n * 100000) / 100000;
+}
+
+function fmtGeo(n: number): string {
+	return n.toFixed(5);
+}
+
+function fmtPos(gx: number, gy: number): string {
+	const [lat, lon] = toLatLon(gx, gy);
+	return `[${fmtGeo(lat)}, ${fmtGeo(lon)}]`;
+}
+
 export function exportYAML(data: EditableMapData): string {
 	const lines: string[] = [
 		"# Map data — all hand-authored spatial data for the Strait of Hormuz.",
 		"#",
-		"# Coordinates are in game space: origin (0,0) = NW corner, X = east, Y = south.",
-		"# Game coords: game_x = (lon - 47.5) * 9708, game_y = (30.5 - lat) * 10800.",
-		"# Map size: 113000 x 81000.",
+		"# Positions are [lat, lon] in decimal degrees.",
+		"# Distances (scatter_radius, radius) are in game units (~10 units ≈ 1m).",
+		"# Codegen (pnpm generate) converts lat/lon to game coordinates.",
 		"#",
 		"# Edit visually with the map editor: pnpm dev:map-editor",
 		"# After editing, run: pnpm generate",
@@ -23,17 +51,17 @@ export function exportYAML(data: EditableMapData): string {
 
 	// --- Landmarks ---
 	lines.push("landmarks:");
-	lines.push(`  strait_center: [${data.landmarks.straitCenter[0]}, ${data.landmarks.straitCenter[1]}]`);
+	lines.push(`  strait_center: ${fmtPos(data.landmarks.straitCenter[0], data.landmarks.straitCenter[1])}`);
 
 	// --- Escort zone ---
 	lines.push("escort_zone:");
-	lines.push(`  west: ${data.escortZone.west}`);
-	lines.push(`  east: ${data.escortZone.east}`);
+	lines.push(`  west: ${fmtGeo(lonFromGameX(data.escortZone.west))}`);
+	lines.push(`  east: ${fmtGeo(lonFromGameX(data.escortZone.east))}`);
 
 	// --- Patrol routes ---
 	lines.push("patrol_routes:");
 	for (const [name, pts] of Object.entries(data.patrolRoutes)) {
-		lines.push(`  ${name}: [[${pts[0][0]}, ${pts[0][1]}], [${pts[1][0]}, ${pts[1][1]}]]`);
+		lines.push(`  ${name}: [${fmtPos(pts[0][0], pts[0][1])}, ${fmtPos(pts[1][0], pts[1][1])}]`);
 	}
 
 	// --- Patrol zones ---
@@ -77,13 +105,13 @@ export function exportYAML(data: EditableMapData): string {
 }
 
 function fmtArea(a: AreaWithRadius): string {
-	return `{position: [${a.position[0]}, ${a.position[1]}], radius: ${a.radius}}`;
+	return `{position: ${fmtPos(a.position[0], a.position[1])}, radius: ${a.radius}}`;
 }
 
 function writeSpawnGroup(lines: string[], name: string, spawns: EditableSpawn[]): void {
 	lines.push(`  ${name}:`);
 	for (const sp of spawns) {
-		const parts = [`position: [${sp.position[0]}, ${sp.position[1]}]`];
+		const parts = [`position: ${fmtPos(sp.position[0], sp.position[1])}`];
 		if (sp.heading !== 0 || name !== "quadcopter") {
 			parts.push(`heading: ${roundNum(sp.heading)}`);
 		}
@@ -97,7 +125,7 @@ function writeSpawnGroup(lines: string[], name: string, spawns: EditableSpawn[])
 function writePolyline(lines: string[], name: string, pts: [number, number][]): void {
 	lines.push(`  ${name}:`);
 	for (const p of pts) {
-		lines.push(`  - [${p[0]}, ${p[1]}]`);
+		lines.push(`  - ${fmtPos(p[0], p[1])}`);
 	}
 }
 
@@ -107,18 +135,18 @@ function writePolygon(lines: string[], poly: [number, number][]): void {
 
 function formatPointArray(pts: [number, number][]): string {
 	if (pts.length <= 6) {
-		const inner = pts.map((p) => `[${p[0]}, ${p[1]}]`).join(", ");
+		const inner = pts.map((p) => fmtPos(p[0], p[1])).join(", ");
 		return `[${inner}]`;
 	}
 	const result = [""];
 	for (const p of pts) {
-		result.push(`  - [${p[0]}, ${p[1]}]`);
+		result.push(`  - ${fmtPos(p[0], p[1])}`);
 	}
 	return result.join("\n");
 }
 
 function writeRock(lines: string[], rock: EditableRock): void {
-	const parts = [`position: [${rock.position[0]}, ${rock.position[1]}]`];
+	const parts = [`position: ${fmtPos(rock.position[0], rock.position[1])}`];
 	parts.push(`radius: ${rock.radius}`);
 	if (rock.label) parts.push(`label: ${rock.label}`);
 	lines.push(`  - {${parts.join(", ")}}`);
@@ -128,7 +156,7 @@ function writeExclusionZone(lines: string[], zone: EditableZone): void {
 	lines.push(`- name: ${zone.name}`);
 	lines.push("  polygon:");
 	for (const p of zone.polygon) {
-		lines.push(`  - [${p[0]}, ${p[1]}]`);
+		lines.push(`  - ${fmtPos(p[0], p[1])}`);
 	}
 	lines.push("  behaviors:");
 	for (const b of zone.behaviors) {

@@ -11,7 +11,14 @@
  */
 
 // Re-export generated map data
-export type { Point, Polygon, Polyline, SpawnPoint, Rock, ExclusionZone } from "../generated/map_data";
+export type {
+	Point,
+	Polygon,
+	Polyline,
+	SpawnPoint,
+	Rock,
+	ExclusionZone,
+} from "../generated/map_data";
 
 export {
 	IRAN_SPAWNS,
@@ -62,6 +69,10 @@ export function geo(lat: number, lon: number): [number, number] {
 		Math.round((lon - ORIGIN_LON) * LON_SCALE),
 		Math.round((ORIGIN_LAT - lat) * LAT_SCALE),
 	];
+}
+
+export function toLatLon(gx: number, gy: number): [number, number] {
+	return [ORIGIN_LAT - gy / LAT_SCALE, ORIGIN_LON + gx / LON_SCALE];
 }
 
 /** Lane width: ~2 nautical miles each ≈ 3.7km ≈ 400 game units */

@@ -6,6 +6,7 @@
  */
 
 import { MAX_HP, type VehicleType } from "../generated/vehicles";
+import { toLatLon } from "../map/data";
 
 export interface GameStats {
 	totalUsd: number;
@@ -20,6 +21,8 @@ export interface GameStats {
 export interface VehicleInstruments {
 	speed: number;
 	heading: number;
+	x: number;
+	y: number;
 	hp: number;
 	maxHp: number;
 	floodLevel: number;
@@ -63,6 +66,7 @@ export class HUD {
 	private instrumentsPanel: HTMLDivElement;
 	private speedEl: HTMLDivElement;
 	private headingEl: HTMLDivElement;
+	private positionEl: HTMLDivElement;
 	private hpBarOuter: HTMLDivElement;
 	private hpBarFill: HTMLDivElement;
 	private hpBarFlood: HTMLDivElement;
@@ -195,6 +199,7 @@ export class HUD {
 
 		this.speedEl = document.createElement("div");
 		this.headingEl = document.createElement("div");
+		this.positionEl = document.createElement("div");
 
 		// HP bar
 		const hpRow = document.createElement("div");
@@ -285,11 +290,16 @@ export class HUD {
 			color: "#668899",
 		} satisfies Partial<CSSStyleDeclaration>);
 
-		this.batteryRow.append(this.batteryLabel, batteryBarOuter, this.batteryIcon);
+		this.batteryRow.append(
+			this.batteryLabel,
+			batteryBarOuter,
+			this.batteryIcon,
+		);
 
 		this.instrumentsPanel.append(
 			this.speedEl,
 			this.headingEl,
+			this.positionEl,
 			hpRow,
 			this.batteryRow,
 		);
@@ -400,8 +410,17 @@ export class HUD {
 		}
 		this.instrumentsPanel.style.display = "block";
 
-		const { speed, heading, hp, maxHp, floodLevel, vehicleType, batteryPct } =
-			instruments;
+		const {
+			speed,
+			heading,
+			x,
+			y,
+			hp,
+			maxHp,
+			floodLevel,
+			vehicleType,
+			batteryPct,
+		} = instruments;
 
 		// Speed — show equilibrium speed label based on vehicle type
 		const spd = Math.abs(speed).toFixed(1);
@@ -411,6 +430,12 @@ export class HUD {
 		const deg = headingToDegrees(heading);
 		const cardinal = headingToCardinal(heading);
 		this.headingEl.textContent = `HDG  ${String(deg).padStart(3, "0")}° ${cardinal}`;
+
+		// Position (lat/lon)
+		const [lat, lon] = toLatLon(x, y);
+		const latDir = lat >= 0 ? "N" : "S";
+		const lonDir = lon >= 0 ? "E" : "W";
+		this.positionEl.textContent = `POS  ${Math.abs(lat).toFixed(4)}°${latDir}  ${Math.abs(lon).toFixed(4)}°${lonDir}`;
 
 		// HP bar
 		const effectiveMax = maxHp || MAX_HP[vehicleType as VehicleType] || 100;
@@ -429,8 +454,7 @@ export class HUD {
 		// Battery/fuel bar (drones only — batteryPct >= 0 means entity has a battery/fuel)
 		if (batteryPct >= 0) {
 			this.batteryRow.style.display = "flex";
-			this.batteryIcon.textContent =
-				vehicleType === "shahed" ? "FUEL" : "BATT";
+			this.batteryIcon.textContent = vehicleType === "shahed" ? "FUEL" : "BATT";
 			const pct = Math.max(0, Math.min(100, batteryPct));
 			this.batteryBarFill.style.width = `${pct}%`;
 			this.batteryBarFill.style.backgroundColor =
