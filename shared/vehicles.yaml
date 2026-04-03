@@ -43,6 +43,7 @@ vehicles:
     ai_behavior: tanker_transit
     sprite: oil_tanker
 
+
   speedboat:
     name: Speedboat
     faction: iran
@@ -248,25 +249,13 @@ vehicles:
 world:
   spawns:
     oil_tanker:
-      outbound:
-        tanker_transit: 5
-        follow_escort_lead: 5
-      inbound:
-        tanker_transit: 5
-        follow_escort_lead: 5
+      outbound: 10
+      inbound: 10
     shahed: 8
     quadcopter: 8
     frigate:
-      gulf:
-        escort: 1
-        escort_lead: 1
-        escort_follow: 1
-        west_strait_qrf: 1
-      oman:
-        escort: 1
-        escort_follow: 1
-        east_strait_qrf: 1
-        escort_lead: 1
+      gulf: 4
+      oman: 4
 
 combat:
   autocannon:

@@ -35,6 +35,7 @@ from hormuz.generated.vehicles import (
     RADAR_DETECTION,
 )
 from hormuz.systems.collision import _sat_collision, _transform_polygon
+from hormuz.systems.danger_scent import emit_danger_scent
 
 # Derived squared constants for distance checks
 JAM_RADIUS_SQ = JAM_RADIUS * JAM_RADIUS
@@ -315,6 +316,7 @@ class CombatProcessor(esper.Processor):
 
                 breach_side = self._breach_side(t_tf, contact_x, contact_y)
                 self._breach_hull(t_tf, breach_side, breach_count)
+                emit_danger_scent(contact_x, contact_y)
 
                 self.events.append(
                     {
@@ -384,6 +386,7 @@ class CombatProcessor(esper.Processor):
                 if breach_count > 0:
                     breach_side = self._breach_side(t_tf, contact_x, contact_y)
                     self._breach_hull(t_tf, breach_side, breach_count)
+                emit_danger_scent(contact_x, contact_y)
 
                 self.events.append(
                     {

@@ -129,12 +129,7 @@ class SpawnProcessor(esper.Processor):
                 else:
                     esper.add_component(ent, CargoState(loaded=loaded, destination=destination))
             elif faction.name == "us":
-                # Frigates respawn near their patrol zone
-                if behavior == "west_strait_qrf":
-                    x, y, heading = random_frigate_gulf_spawn()
-                elif behavior == "east_strait_qrf":
-                    x, y, heading = random_frigate_oman_spawn()
-                elif random.random() < 0.5:
+                if random.random() < 0.5:
                     x, y, heading = random_frigate_gulf_spawn()
                 else:
                     x, y, heading = random_frigate_oman_spawn()

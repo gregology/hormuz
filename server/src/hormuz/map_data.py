@@ -18,7 +18,6 @@ from hormuz.generated.map_data import (  # noqa: F401
     LANE_OUTBOUND,
     OMAN_DESTINATION,
     PATROL_ZONES,
-    QRF_PATROL_ROUTES,
     QUADCOPTER_SPAWNS,
     STRAIT_CENTER,
     TANKER_SPAWNS,

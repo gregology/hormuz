@@ -1,4 +1,10 @@
-"""Bot AI processor — tanker waypoint following, shahed interception, frigate escort."""
+"""Bot AI processor — emergent convoy behavior from simple local rules.
+
+Inspired by colony insects: tankers follow trails and avoid danger,
+frigates are attracted to tanker presence, rush toward danger, and
+repel each other. Complex convoy formations emerge from these local
+interactions without any central coordination.
+"""
 
 import math
 
@@ -7,19 +13,49 @@ import esper
 from hormuz.components import BotControl, CargoState, Faction, Health, Transform, VehiclePhysics
 from hormuz.generated.map_data import EXCLUSION_ZONES
 from hormuz.generated.terrain_grid import is_land
+from hormuz.generated.vehicles import JAM_RADIUS
 from hormuz.map_data import (
-    ESCORT_ZONE_EAST,
-    ESCORT_ZONE_WEST,
     GULF_DESTINATION,
     LANE_INBOUND,
     LANE_OUTBOUND,
     OMAN_DESTINATION,
-    QRF_PATROL_ROUTES,
     STRAIT_CENTER,
 )
-from hormuz.systems.combat import JAM_RADIUS_SQ
+from hormuz.systems.danger_scent import nearest_danger, prune_danger_scents
 
-ESCORT_RADIUS = 500.0  # desired orbit distance from escorted tanker
+JAM_RADIUS_SQ = JAM_RADIUS * JAM_RADIUS
+
+
+# --- Tanker constants ---
+# Brake when a tanker ahead is within this distance
+TANKER_BRAKE_RANGE = 400.0
+TANKER_BRAKE_RANGE_SQ = TANKER_BRAKE_RANGE * TANKER_BRAKE_RANGE
+# Min throttle when braking behind another tanker
+TANKER_BRAKE_MIN_THROTTLE = 0.4
+# Danger avoidance: how far tankers sense danger scent
+TANKER_DANGER_RANGE = 3000.0
+TANKER_DANGER_RANGE_SQ = TANKER_DANGER_RANGE * TANKER_DANGER_RANGE
+# Rudder bias strength when avoiding danger
+TANKER_DANGER_RUDDER = 0.3
+
+# --- Frigate constants ---
+# Presence attraction: max range to sense tankers
+FRIGATE_PRESENCE_RANGE = 5000.0
+FRIGATE_PRESENCE_RANGE_SQ = FRIGATE_PRESENCE_RANGE * FRIGATE_PRESENCE_RANGE
+# Offset distance: frigates prefer to be this far from nearest tanker
+FRIGATE_OFFSET_DIST = 800.0
+# Danger attraction range
+FRIGATE_DANGER_RANGE = 8000.0
+FRIGATE_DANGER_RANGE_SQ = FRIGATE_DANGER_RANGE * FRIGATE_DANGER_RANGE
+# Frigate-frigate repulsion range
+FRIGATE_REPEL_RANGE = 2000.0
+FRIGATE_REPEL_RANGE_SQ = FRIGATE_REPEL_RANGE * FRIGATE_REPEL_RANGE
+# Steering weights (summed, then clamped to [-1, 1])
+WEIGHT_PRESENCE = 0.6
+WEIGHT_DANGER = 1.0
+WEIGHT_REPEL = 0.5
+# Frigate cruise throttle when near tankers
+FRIGATE_CRUISE_THROTTLE = 0.6
 
 # Shahed visual detection range — no radar, must see targets visually
 SHAHED_VISUAL_RANGE = 5000.0
@@ -29,42 +65,31 @@ SHAHED_VISUAL_RANGE_SQ = SHAHED_VISUAL_RANGE * SHAHED_VISUAL_RANGE
 QUADCOPTER_VISUAL_RANGE = 8000.0
 QUADCOPTER_VISUAL_RANGE_SQ = QUADCOPTER_VISUAL_RANGE * QUADCOPTER_VISUAL_RANGE
 
-# Follow-escort-lead: max distance to latch onto an escort_lead (matches autocannon range)
-FOLLOW_ESCORT_RANGE = 1500.0
-FOLLOW_ESCORT_RANGE_SQ = FOLLOW_ESCORT_RANGE * FOLLOW_ESCORT_RANGE
-
-# QRF (Quick Reaction Force) patrol constants
-QRF_ENGAGE_RADIUS = 5000.0
-QRF_ENGAGE_RADIUS_SQ = QRF_ENGAGE_RADIUS * QRF_ENGAGE_RADIUS
-QRF_WAYPOINT_DIST_SQ = 1000.0**2
-
-# escort_follow: range to detect and follow an escort_lead
-ESCORT_FOLLOW_RANGE = 1500.0
-ESCORT_FOLLOW_RANGE_SQ = ESCORT_FOLLOW_RANGE * ESCORT_FOLLOW_RANGE
-ESCORT_FOLLOW_DIST = 800.0  # desired following distance — behind the tanker cluster
-
 # --- Collision avoidance constants ---
-# Friendly vessel: avoidance radius = (our_size + their_size) * this factor
 AVOID_VESSEL_FACTOR = 0.8
-AVOID_VESSEL_STRENGTH = 0.5  # max rudder adjustment from vessel avoidance
+AVOID_VESSEL_STRENGTH = 0.5
 
-# Land: probe angles relative to heading (radians), ~0°, ±20°, ±40°, ±60°
 _LAND_PROBE_ANGLES = (0.0, -0.35, 0.35, -0.7, 0.7, -1.05, 1.05)
-AVOID_LAND_STRENGTH = 0.8  # max rudder adjustment from land avoidance
+AVOID_LAND_STRENGTH = 0.8
 
-# Exclusion zone buffer — steering starts this many units outside the polygon
 EXCLUSION_BUFFER = 2000.0
 
-# Transit: use shipping lane waypoints when further than this from target.
-# Kept low enough that frigates north of Qeshm still use lane nav to return south.
 TRANSIT_DIST_SQ = 5000.0**2
+
+WAYPOINT_ADVANCE_DIST_SQ = 500.0**2
+EXIT_DIST_SQ = 1500.0**2
+
+# Route/destination lookup by cargo destination
+_ROUTE_CONFIG = {
+    "oman": (LANE_OUTBOUND, OMAN_DESTINATION["position"]),
+    "gulf": (LANE_INBOUND, GULF_DESTINATION["position"]),
+}
 
 
 def steer_toward(tf: Transform, target_x: float, target_y: float) -> float:
     """Return rudder value (-1 to 1) to steer toward a target point."""
     desired = math.atan2(target_y - tf.y, target_x - tf.x)
     diff = desired - tf.heading
-    # Normalize to [-pi, pi]
     diff = (diff + math.pi) % (2 * math.pi) - math.pi
     return max(-1.0, min(1.0, diff * 2.0))
 
@@ -125,16 +150,6 @@ def _dist_to_polygon_edge(x: float, y: float, polygon: tuple) -> float:
     return best
 
 
-WAYPOINT_ADVANCE_DIST_SQ = 500.0**2
-EXIT_DIST_SQ = 1500.0**2
-
-# Route/destination lookup by cargo destination
-_ROUTE_CONFIG = {
-    "oman": (LANE_OUTBOUND, OMAN_DESTINATION["position"]),
-    "gulf": (LANE_INBOUND, GULF_DESTINATION["position"]),
-}
-
-
 def run_tanker_ai(
     tf: Transform, waypoint_index: int, destination: str = "oman"
 ) -> tuple[float, float, int]:
@@ -162,39 +177,33 @@ def run_tanker_ai(
 
 class BotAIProcessor(esper.Processor):
     def process(self, dt: float = 0.05) -> None:
+        # Prune expired danger scents once per tick
+        prune_danger_scents()
+
         # Collect frigate positions once for jamming checks
         frigate_transforms: list[Transform] = []
         for _, (tf, phys, health) in esper.get_components(Transform, VehiclePhysics, Health):
             if phys.vehicle_type == "frigate" and health.hp > 0:
                 frigate_transforms.append(tf)
 
-        # Collect escort_lead positions + headings for follow_escort_lead tankers
-        escort_leads: list[Transform] = []
-        for _, (tf, bot) in esper.get_components(Transform, BotControl):
-            if bot.behavior == "escort_lead":
-                escort_leads.append(tf)
+        # Collect alive tanker transforms for frigate presence sensing
+        tanker_transforms: list[Transform] = []
+        for _, (tf, phys, health) in esper.get_components(Transform, VehiclePhysics, Health):
+            if phys.vehicle_type == "oil_tanker" and health.hp > 0:
+                tanker_transforms.append(tf)
 
         # Behavior dispatch
         for ent, (tf, bot) in esper.get_components(Transform, BotControl):
             if bot.behavior == "tanker_transit":
-                self._tanker_ai(ent, tf, bot)
-            elif bot.behavior == "follow_escort_lead":
-                self._follow_escort_lead_ai(ent, tf, bot, escort_leads)
+                self._tanker_ai(ent, tf, bot, tanker_transforms)
             elif bot.behavior == "shahed_intercept":
                 self._shahed_ai(ent, tf, bot, frigate_transforms)
             elif bot.behavior == "quadcopter_intercept":
                 self._quadcopter_ai(ent, tf, bot)
             elif bot.behavior == "escort":
-                self._escort_ai(ent, tf, bot)
-            elif bot.behavior == "escort_follow":
-                self._escort_follow_ai(ent, tf, bot, escort_leads)
-            elif bot.behavior == "escort_lead":
-                self._escort_lead_ai(ent, tf, bot)
-            elif bot.behavior in QRF_PATROL_ROUTES:
-                self._qrf_ai(ent, tf, bot, QRF_PATROL_ROUTES[bot.behavior])
+                self._escort_ai(ent, tf, bot, tanker_transforms, frigate_transforms)
 
         # --- Collision avoidance post-processing ---
-        # Collect all alive non-airborne ships (bot + player) for vessel avoidance
         ships: list[tuple[int, Transform, VehiclePhysics, str]] = []
         for ent, (tf, phys, health, faction) in esper.get_components(
             Transform, VehiclePhysics, Health, Faction
@@ -208,12 +217,158 @@ class BotAIProcessor(esper.Processor):
             if not phys.airborne:
                 self._apply_avoidance(ent, tf, bot, phys, faction.name, ships)
 
-    def _tanker_ai(self, ent: int, tf: Transform, bot: BotControl) -> None:
+    # ------------------------------------------------------------------
+    # Tanker behavior
+    # ------------------------------------------------------------------
+
+    def _tanker_ai(
+        self,
+        ent: int,
+        tf: Transform,
+        bot: BotControl,
+        tanker_transforms: list[Transform],
+    ) -> None:
+        """Follow lane waypoints. Brake for tankers ahead. Drift away from danger."""
         cargo = esper.try_component(ent, CargoState)
         destination = cargo.destination if cargo else "oman"
-        bot.throttle, bot.rudder, bot.waypoint_index = run_tanker_ai(
+
+        # Base behavior: follow waypoints
+        throttle, rudder, bot.waypoint_index = run_tanker_ai(
             tf, bot.waypoint_index, destination
         )
+
+        # Rule 2: Slow down if a tanker is ahead within braking range
+        cos_h = math.cos(tf.heading)
+        sin_h = math.sin(tf.heading)
+        for t_tf in tanker_transforms:
+            if t_tf is tf:
+                continue
+            dx = t_tf.x - tf.x
+            dy = t_tf.y - tf.y
+            d_sq = dx * dx + dy * dy
+            if d_sq > TANKER_BRAKE_RANGE_SQ:
+                continue
+            # Only brake for tankers ahead (dot product with heading)
+            dot = dx * cos_h + dy * sin_h
+            if dot <= 0:
+                continue
+            # Proportional braking: closer = slower
+            dist = math.sqrt(d_sq)
+            t = dist / TANKER_BRAKE_RANGE  # 0 at contact, 1 at max range
+            brake_throttle = TANKER_BRAKE_MIN_THROTTLE + t * (1.0 - TANKER_BRAKE_MIN_THROTTLE)
+            throttle = min(throttle, brake_throttle)
+
+        # Rule 3: Drift away from danger scent
+        danger = nearest_danger(tf.x, tf.y, TANKER_DANGER_RANGE_SQ)
+        if danger is not None:
+            dx, dy, strength = danger
+            # Steer perpendicular to danger direction (away from it)
+            # Cross product with heading determines which side danger is on
+            cross = cos_h * dy - sin_h * dx
+            if cross >= 0:
+                rudder -= TANKER_DANGER_RUDDER * strength
+            else:
+                rudder += TANKER_DANGER_RUDDER * strength
+            rudder = max(-1.0, min(1.0, rudder))
+
+        bot.throttle = throttle
+        bot.rudder = rudder
+
+    # ------------------------------------------------------------------
+    # Frigate behavior
+    # ------------------------------------------------------------------
+
+    def _escort_ai(
+        self,
+        ent: int,
+        tf: Transform,
+        bot: BotControl,
+        tanker_transforms: list[Transform],
+        frigate_transforms: list[Transform],
+    ) -> None:
+        """Three local rules: attract to tanker presence, rush to danger, repel from frigates."""
+        rudder_sum = 0.0
+        has_nearby_tanker = False
+
+        # Rule 1: Attract toward nearest tanker (presence scent)
+        best_tanker_dist_sq = FRIGATE_PRESENCE_RANGE_SQ
+        best_tanker_tf: Transform | None = None
+        for t_tf in tanker_transforms:
+            dx = t_tf.x - tf.x
+            dy = t_tf.y - tf.y
+            d_sq = dx * dx + dy * dy
+            if d_sq < best_tanker_dist_sq:
+                best_tanker_dist_sq = d_sq
+                best_tanker_tf = t_tf
+
+        if best_tanker_tf is not None:
+            dist = math.sqrt(best_tanker_dist_sq)
+            has_nearby_tanker = True
+
+            if dist > FRIGATE_OFFSET_DIST:
+                # Move toward tanker
+                rudder_sum += steer_toward(tf, best_tanker_tf.x, best_tanker_tf.y) * WEIGHT_PRESENCE
+            else:
+                # At desired offset — drift perpendicular (maintain spacing)
+                # Move along tanker's heading direction to escort alongside
+                cos_th = math.cos(best_tanker_tf.heading)
+                sin_th = math.sin(best_tanker_tf.heading)
+                ahead_x = tf.x + cos_th * 500.0
+                ahead_y = tf.y + sin_th * 500.0
+                rudder_sum += steer_toward(tf, ahead_x, ahead_y) * WEIGHT_PRESENCE * 0.5
+
+        # Rule 2: Attract toward danger scent
+        danger = nearest_danger(tf.x, tf.y, FRIGATE_DANGER_RANGE_SQ)
+        if danger is not None:
+            dx, dy, strength = danger
+            target_x = tf.x + dx
+            target_y = tf.y + dy
+            rudder_sum += steer_toward(tf, target_x, target_y) * WEIGHT_DANGER * strength
+
+        # Rule 3: Repel from other frigates
+        for f_tf in frigate_transforms:
+            if f_tf is tf:
+                continue
+            dx = f_tf.x - tf.x
+            dy = f_tf.y - tf.y
+            d_sq = dx * dx + dy * dy
+            if d_sq > FRIGATE_REPEL_RANGE_SQ or d_sq < 1.0:
+                continue
+            dist = math.sqrt(d_sq)
+            # Steer away, stronger when closer
+            repel_strength = (1.0 - dist / FRIGATE_REPEL_RANGE) * WEIGHT_REPEL
+            rudder_sum -= steer_toward(tf, f_tf.x, f_tf.y) * repel_strength
+
+        # No tankers or danger nearby — head toward strait center via lane waypoints
+        if best_tanker_tf is None and danger is None:
+            dx = STRAIT_CENTER[0] - tf.x
+            dy = STRAIT_CENTER[1] - tf.y
+            if dx * dx + dy * dy > TRANSIT_DIST_SQ:
+                wp = _find_lane_waypoint(tf.x, tf.y, STRAIT_CENTER[0], STRAIT_CENTER[1])
+                if wp is not None:
+                    rudder_sum = steer_toward(tf, wp[0], wp[1])
+                else:
+                    rudder_sum = steer_toward(tf, STRAIT_CENTER[0], STRAIT_CENTER[1])
+            else:
+                rudder_sum = steer_toward(tf, STRAIT_CENTER[0], STRAIT_CENTER[1])
+
+        bot.rudder = max(-1.0, min(1.0, rudder_sum))
+
+        # Throttle: fast to close distance, cruise when near tankers
+        if has_nearby_tanker:
+            dist = math.sqrt(best_tanker_dist_sq)
+            if dist > FRIGATE_OFFSET_DIST * 2:
+                bot.throttle = 1.0
+            else:
+                bot.throttle = FRIGATE_CRUISE_THROTTLE
+        elif danger is not None:
+            bot.throttle = 1.0  # rush to danger
+        else:
+            bot.throttle = 0.7  # patrol
+
+    # ------------------------------------------------------------------
+    # Iranian drone behaviors (unchanged)
+    # ------------------------------------------------------------------
 
     def _shahed_ai(
         self,
@@ -222,7 +377,6 @@ class BotAIProcessor(esper.Processor):
         bot: BotControl,
         frigate_transforms: list[Transform],
     ) -> None:
-        # Check if jammed by a nearby frigate
         jammed = False
         for f_tf in frigate_transforms:
             dx = f_tf.x - tf.x
@@ -234,8 +388,7 @@ class BotAIProcessor(esper.Processor):
         if not jammed:
             best_dist_sq = float("inf")
             best_tf: Transform | None = None
-
-            for t_ent, (t_tf, t_faction, t_health) in esper.get_components(
+            for _, (t_tf, t_faction, t_health) in esper.get_components(
                 Transform, Faction, Health
             ):
                 if t_faction.name == "civilian" and t_health.hp > 0:
@@ -245,22 +398,20 @@ class BotAIProcessor(esper.Processor):
                     if d_sq < best_dist_sq:
                         best_dist_sq = d_sq
                         best_tf = t_tf
-
             if best_tf is not None:
                 bot.rudder = steer_toward(tf, best_tf.x, best_tf.y)
             else:
                 bot.rudder = 0.0
         else:
-            bot.rudder = 0.0  # jammed — can't steer
+            bot.rudder = 0.0
 
         bot.throttle = 1.0
 
     def _quadcopter_ai(self, ent: int, tf: Transform, bot: BotControl) -> None:
-        # Quadcopters are autonomous (not jammed by RF) and target both civilians and US forces
         best_dist_sq = QUADCOPTER_VISUAL_RANGE_SQ
         best_tf: Transform | None = None
 
-        for t_ent, (t_tf, t_faction, t_health) in esper.get_components(Transform, Faction, Health):
+        for _, (t_tf, t_faction, t_health) in esper.get_components(Transform, Faction, Health):
             if t_health.hp <= 0:
                 continue
             if t_faction.name not in ("civilian", "us"):
@@ -275,267 +426,13 @@ class BotAIProcessor(esper.Processor):
         if best_tf is not None:
             bot.rudder = steer_toward(tf, best_tf.x, best_tf.y)
         else:
-            # No target — head toward strait center
             bot.rudder = steer_toward(tf, STRAIT_CENTER[0], STRAIT_CENTER[1])
 
         bot.throttle = 1.0
 
-    def _escort_ai(self, ent: int, tf: Transform, bot: BotControl) -> None:
-        # Validate current escort target
-        if bot.target_entity != 0:
-            if not esper.entity_exists(bot.target_entity):
-                bot.target_entity = 0
-            else:
-                health = esper.try_component(bot.target_entity, Health)
-                if health is None or health.hp <= 0:
-                    bot.target_entity = 0
-                else:
-                    # Release tanker that has left the danger zone (safe now)
-                    t_tf = esper.component_for_entity(bot.target_entity, Transform)
-                    if t_tf.x < ESCORT_ZONE_WEST or t_tf.x > ESCORT_ZONE_EAST:
-                        bot.target_entity = 0
-
-        # Acquire nearest alive tanker within the danger zone
-        if bot.target_entity == 0:
-            best_dist_sq = float("inf")
-            for t_ent, (t_tf, t_phys, t_health) in esper.get_components(
-                Transform, VehiclePhysics, Health
-            ):
-                if t_phys.vehicle_type != "oil_tanker" or t_health.hp <= 0:
-                    continue
-                # Only escort tankers in the danger zone
-                if t_tf.x < ESCORT_ZONE_WEST or t_tf.x > ESCORT_ZONE_EAST:
-                    continue
-                dx = t_tf.x - tf.x
-                dy = t_tf.y - tf.y
-                d_sq = dx * dx + dy * dy
-                if d_sq < best_dist_sq:
-                    best_dist_sq = d_sq
-                    bot.target_entity = t_ent
-
-        if bot.target_entity == 0:
-            # No tanker to escort — head back toward strait center
-            dx = STRAIT_CENTER[0] - tf.x
-            dy = STRAIT_CENTER[1] - tf.y
-            if dx * dx + dy * dy > TRANSIT_DIST_SQ:
-                wp = _find_lane_waypoint(tf.x, tf.y, STRAIT_CENTER[0], STRAIT_CENTER[1])
-                if wp is not None:
-                    bot.rudder = steer_toward(tf, wp[0], wp[1])
-                else:
-                    bot.rudder = steer_toward(tf, STRAIT_CENTER[0], STRAIT_CENTER[1])
-            else:
-                bot.rudder = steer_toward(tf, STRAIT_CENTER[0], STRAIT_CENTER[1])
-            bot.throttle = 0.7
-            return
-
-        target_tf = esper.component_for_entity(bot.target_entity, Transform)
-        dx = target_tf.x - tf.x
-        dy = target_tf.y - tf.y
-        dist = math.sqrt(dx * dx + dy * dy)
-
-        if dist > ESCORT_RADIUS * 2:
-            # Far from tanker — use lane waypoints to avoid crossing islands
-            wp = _find_lane_waypoint(tf.x, tf.y, target_tf.x, target_tf.y)
-            if wp is not None:
-                bot.rudder = steer_toward(tf, wp[0], wp[1])
-            else:
-                bot.rudder = steer_toward(tf, target_tf.x, target_tf.y)
-            bot.throttle = 1.0
-        else:
-            # Near tanker — orbit clockwise
-            angle = math.atan2(tf.y - target_tf.y, tf.x - target_tf.x)
-            target_angle = angle + 0.5  # advance ~29° on circle
-            orbit_x = target_tf.x + math.cos(target_angle) * ESCORT_RADIUS
-            orbit_y = target_tf.y + math.sin(target_angle) * ESCORT_RADIUS
-            bot.rudder = steer_toward(tf, orbit_x, orbit_y)
-
-            if dist > ESCORT_RADIUS * 1.3:
-                bot.throttle = 1.0
-            elif dist < ESCORT_RADIUS * 0.7:
-                bot.throttle = 0.3
-            else:
-                bot.throttle = 0.7
-
-    def _escort_lead_ai(self, ent: int, tf: Transform, bot: BotControl) -> None:
-        """Sweep back and forth along shipping lanes at 80% throttle."""
-        cargo = esper.try_component(ent, CargoState)
-        # Use CargoState.destination to track current direction; default outbound
-        if cargo is None:
-            esper.add_component(ent, CargoState(loaded=False, destination="oman"))
-            cargo = esper.component_for_entity(ent, CargoState)
-
-        route, exit_point = _ROUTE_CONFIG.get(cargo.destination, _ROUTE_CONFIG["oman"])
-
-        if bot.waypoint_index < len(route):
-            wx, wy = route[bot.waypoint_index]
-            dx = wx - tf.x
-            dy = wy - tf.y
-            if dx * dx + dy * dy < WAYPOINT_ADVANCE_DIST_SQ:
-                bot.waypoint_index += 1
-
-        if bot.waypoint_index < len(route):
-            wx, wy = route[bot.waypoint_index]
-            bot.rudder = steer_toward(tf, wx, wy)
-        else:
-            # Reached the end — reverse direction
-            if cargo.destination == "oman":
-                cargo.destination = "gulf"
-            else:
-                cargo.destination = "oman"
-            bot.waypoint_index = 0
-            route, _ = _ROUTE_CONFIG[cargo.destination]
-            wx, wy = route[0]
-            bot.rudder = steer_toward(tf, wx, wy)
-
-        # Slow down to let tankers catch up if fewer than 3 are within autocannon range behind
-        cos_h = math.cos(tf.heading)
-        sin_h = math.sin(tf.heading)
-        behind_count = 0
-        for _, (t_tf, t_phys, t_health) in esper.get_components(Transform, VehiclePhysics, Health):
-            if t_phys.vehicle_type != "oil_tanker" or t_health.hp <= 0:
-                continue
-            dx = t_tf.x - tf.x
-            dy = t_tf.y - tf.y
-            if dx * dx + dy * dy > FOLLOW_ESCORT_RANGE_SQ:
-                continue
-            if dx * cos_h + dy * sin_h < 0:
-                behind_count += 1
-
-        bot.throttle = 0.5 if behind_count >= 3 else 0.1
-
-    def _follow_escort_lead_ai(
-        self,
-        ent: int,
-        tf: Transform,
-        bot: BotControl,
-        escort_leads: list[Transform],
-    ) -> None:
-        """Follow a nearby escort_lead that is ahead in the direction of travel."""
-        cargo = esper.try_component(ent, CargoState)
-        destination = cargo.destination if cargo else "oman"
-        outbound = destination == "oman"
-
-        # Find nearest escort_lead that is ahead and within range
-        best_lead: Transform | None = None
-        best_dist_sq = FOLLOW_ESCORT_RANGE_SQ
-
-        for lead_tf in escort_leads:
-            # "Ahead" means further east if outbound, further west if inbound
-            if outbound and lead_tf.x <= tf.x:
-                continue
-            if not outbound and lead_tf.x >= tf.x:
-                continue
-
-            dx = lead_tf.x - tf.x
-            dy = lead_tf.y - tf.y
-            d_sq = dx * dx + dy * dy
-            if d_sq < best_dist_sq:
-                best_dist_sq = d_sq
-                best_lead = lead_tf
-
-        if best_lead is not None:
-            # Follow the escort — steer toward it, adjust speed to stay close
-            bot.rudder = steer_toward(tf, best_lead.x, best_lead.y)
-            dist = math.sqrt(best_dist_sq)
-            if dist < 300.0:
-                bot.throttle = 0.75  # close — roughly match escort_lead speed
-            elif dist < 700.0:
-                bot.throttle = 0.85  # medium — close gap slowly
-            else:
-                bot.throttle = 1.0  # far — catch up
-        else:
-            # No escort_lead nearby — fall back to normal tanker waypoint following
-            bot.throttle, bot.rudder, bot.waypoint_index = run_tanker_ai(
-                tf, bot.waypoint_index, destination
-            )
-
-    def _qrf_ai(
-        self,
-        ent: int,
-        tf: Transform,
-        bot: BotControl,
-        patrol_route: tuple[tuple[float, float], tuple[float, float]],
-    ) -> None:
-        """Patrol between two points; engage any enemy near the route."""
-        # Check for enemies within engagement radius of either patrol point
-        best_dist_sq = QRF_ENGAGE_RADIUS_SQ
-        best_tf: Transform | None = None
-        for _, (t_tf, t_faction, t_health) in esper.get_components(Transform, Faction, Health):
-            if t_health.hp <= 0 or t_faction.name in ("us", "civilian"):
-                continue
-            for px, py in patrol_route:
-                dx = t_tf.x - px
-                dy = t_tf.y - py
-                d_sq = dx * dx + dy * dy
-                if d_sq < best_dist_sq:
-                    best_dist_sq = d_sq
-                    best_tf = t_tf
-
-        if best_tf is not None:
-            bot.rudder = steer_toward(tf, best_tf.x, best_tf.y)
-            bot.throttle = 1.0
-            return
-
-        # Current patrol target — alternate between the two points
-        tx, ty = patrol_route[bot.waypoint_index % 2]
-        dx = tf.x - tx
-        dy = tf.y - ty
-        dist_sq = dx * dx + dy * dy
-
-        if dist_sq < QRF_WAYPOINT_DIST_SQ:
-            bot.waypoint_index = (bot.waypoint_index + 1) % 2
-            tx, ty = patrol_route[bot.waypoint_index]
-
-        # Navigate to current patrol target
-        dx = tf.x - tx
-        dy = tf.y - ty
-        dist_sq = dx * dx + dy * dy
-
-        if dist_sq > TRANSIT_DIST_SQ:
-            # Far from patrol area — follow shipping lanes
-            wp = _find_lane_waypoint(tf.x, tf.y, tx, ty)
-            if wp is not None:
-                bot.rudder = steer_toward(tf, wp[0], wp[1])
-            else:
-                bot.rudder = steer_toward(tf, tx, ty)
-            bot.throttle = 1.0
-        else:
-            bot.rudder = steer_toward(tf, tx, ty)
-            bot.throttle = 0.7
-
-    def _escort_follow_ai(
-        self,
-        ent: int,
-        tf: Transform,
-        bot: BotControl,
-        escort_leads: list[Transform],
-    ) -> None:
-        """Like escort, but follows a nearby escort_lead frigate when within range."""
-        # Check for nearby escort_lead to follow
-        best_lead: Transform | None = None
-        best_dist_sq = ESCORT_FOLLOW_RANGE_SQ
-
-        for lead_tf in escort_leads:
-            dx = lead_tf.x - tf.x
-            dy = lead_tf.y - tf.y
-            d_sq = dx * dx + dy * dy
-            if d_sq < best_dist_sq:
-                best_dist_sq = d_sq
-                best_lead = lead_tf
-
-        if best_lead is not None:
-            # Follow the escort_lead at the desired distance
-            dist = math.sqrt(best_dist_sq)
-            bot.rudder = steer_toward(tf, best_lead.x, best_lead.y)
-            if dist < ESCORT_FOLLOW_DIST * 0.5:
-                bot.throttle = 0.3  # too close — fall back
-            elif dist < ESCORT_FOLLOW_DIST:
-                bot.throttle = 0.5  # near desired distance — match lead speed
-            else:
-                bot.throttle = 1.0  # too far — catch up
-        else:
-            # No escort_lead nearby — fall back to normal escort behavior
-            self._escort_ai(ent, tf, bot)
+    # ------------------------------------------------------------------
+    # Collision avoidance (unchanged)
+    # ------------------------------------------------------------------
 
     def _apply_avoidance(
         self,
@@ -546,46 +443,25 @@ class BotAIProcessor(esper.Processor):
         faction_name: str,
         ships: list[tuple[int, Transform, VehiclePhysics, str]],
     ) -> None:
-        """Layered steering: higher-priority concerns override lower ones.
-
-        Priority levels (highest wins):
-          3 — Exclusion zone escape (stay out of restricted areas)
-          2 — Land avoidance (never run aground)
-          1 — Vessel avoidance (don't collide with friendlies)
-          0 — AI behavior (already set on bot.rudder/throttle before this runs)
-        """
         best_rudder = bot.rudder
         best_throttle = bot.throttle
-        best_priority = 0  # AI behavior baseline
 
-        # --- Priority 1: Friendly vessel avoidance ---
         vessel_rudder = self._calc_vessel_avoidance(ent, tf, phys, faction_name, ships)
         if vessel_rudder is not None:
             best_rudder = max(-1.0, min(1.0, bot.rudder + vessel_rudder))
             best_throttle = bot.throttle
-            best_priority = 1
 
-        # --- Priority 2: Land avoidance ---
         land_result = self._calc_land_avoidance(tf, phys)
         if land_result is not None:
             land_rudder, land_throttle_mult = land_result
-            if best_priority < 2:
-                best_rudder = land_rudder
-            else:
-                best_rudder = land_rudder
+            best_rudder = land_rudder
             best_throttle *= land_throttle_mult
-            best_priority = 2
 
-        # --- Priority 3: Exclusion zones (with buffer) ---
         zone_result = self._calc_exclusion_zone_steering(tf, bot)
         if zone_result is not None:
             zone_rudder, zone_strength = zone_result
-            # Blend: at strength 1.0 (deep inside), fully override. In the buffer,
-            # interpolate between AI steering and zone steering.
             best_rudder = best_rudder * (1.0 - zone_strength) + zone_rudder * zone_strength
             best_throttle = max(bot.throttle, 0.5 * zone_strength)
-            best_priority = 3
-
         bot.rudder = best_rudder
         bot.throttle = best_throttle
 
@@ -597,7 +473,6 @@ class BotAIProcessor(esper.Processor):
         faction_name: str,
         ships: list[tuple[int, Transform, VehiclePhysics, str]],
     ) -> float | None:
-        """Return rudder adjustment for friendly vessel avoidance, or None."""
         cos_h = math.cos(tf.heading)
         sin_h = math.sin(tf.heading)
         size = phys.size
@@ -606,22 +481,18 @@ class BotAIProcessor(esper.Processor):
         for other_ent, other_tf, other_phys, other_faction in ships:
             if other_ent == ent or other_faction != faction_name:
                 continue
-
             dx = other_tf.x - tf.x
             dy = other_tf.y - tf.y
             min_dist = (size + other_phys.size) * AVOID_VESSEL_FACTOR
             dist_sq = dx * dx + dy * dy
             if dist_sq > min_dist * min_dist:
                 continue
-
             dot = dx * cos_h + dy * sin_h
             if dot <= 0:
                 continue
-
             cross = cos_h * dy - sin_h * dx
             dist = math.sqrt(dist_sq)
             strength = (1.0 - dist / min_dist) * AVOID_VESSEL_STRENGTH
-
             if cross >= 0:
                 rudder_adjust -= strength
             else:
@@ -633,10 +504,6 @@ class BotAIProcessor(esper.Processor):
     def _calc_exclusion_zone_steering(
         tf: Transform, bot: BotControl
     ) -> tuple[float, float] | None:
-        """Return (rudder, strength) if inside or near an exclusion zone, else None.
-
-        strength is 0.0 at the outer edge of the buffer and 1.0 deep inside.
-        """
         for zone in EXCLUSION_ZONES:
             if bot.behavior not in zone["behaviors"]:
                 continue
@@ -646,13 +513,10 @@ class BotAIProcessor(esper.Processor):
                 dist = _dist_to_polygon_edge(tf.x, tf.y, polygon)
                 if dist >= EXCLUSION_BUFFER:
                     continue
-                # In the buffer zone — strength ramps from 0 at edge to ~0.5 at polygon boundary
                 strength = 0.5 * (1.0 - dist / EXCLUSION_BUFFER)
             else:
-                # Inside the polygon — full strength
                 strength = 1.0
 
-            # Steer toward shipping lane or strait center
             wp = _find_lane_waypoint(tf.x, tf.y, STRAIT_CENTER[0], STRAIT_CENTER[1])
             if wp is not None:
                 rudder = steer_toward(tf, wp[0], wp[1])
@@ -665,7 +529,6 @@ class BotAIProcessor(esper.Processor):
     def _calc_land_avoidance(
         tf: Transform, phys: VehiclePhysics
     ) -> tuple[float, float] | None:
-        """Return (rudder, throttle_multiplier) if land is detected, else None."""
         size = phys.size
         probe_dist = min(size * 10.0 + abs(tf.speed) * 8.0, 1500.0)
         land_score = 0.0

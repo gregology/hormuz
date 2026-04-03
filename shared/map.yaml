@@ -113,11 +113,7 @@ exclusion_zones:
   - [26.56120, 55.15358]
   behaviors:
   - escort
-  - escort_follow
-  - escort_lead
-  - west_strait_qrf
-  - east_strait_qrf
-  - follow_escort_lead
+  - tanker_transit
 - name: southern coast
   polygon:
   - [25.44241, 54.93026]
@@ -138,11 +134,6 @@ exclusion_zones:
   behaviors:
   - tanker_transit
   - escort
-  - escort_follow
-  - escort_lead
-  - follow_escort_lead
-  - west_strait_qrf
-  - east_strait_qrf
 - name: northern coast
   polygon:
   - [25.33926, 59.01978]
@@ -169,8 +160,4 @@ exclusion_zones:
   - [25.33148, 59.03554]
   behaviors:
   - escort
-  - escort_follow
-  - escort_lead
-  - follow_escort_lead
-  - west_strait_qrf
-  - east_strait_qrf
+  - tanker_transit
