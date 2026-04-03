@@ -31,8 +31,19 @@ def encode_full_snapshot(
     packed = []
     for entry in entities:
         (
-            eid, vtype, faction, x, y, heading, speed, drift,
-            angular_velocity, hp, flood_level, list_angle, battery_pct,
+            eid,
+            vtype,
+            faction,
+            x,
+            y,
+            heading,
+            speed,
+            drift,
+            angular_velocity,
+            hp,
+            flood_level,
+            list_angle,
+            battery_pct,
         ) = entry
         packed.append(
             [
@@ -67,16 +78,18 @@ def encode_war_cost(
     quadcopters_intercepted: int,
     players_online: int,
 ) -> bytes:
-    return msgpack.packb([
-        MSG_WAR_COST,
-        total_usd,
-        tankers_delivered,
-        tankers_sunk,
-        frigates_sunk,
-        shaheds_intercepted,
-        quadcopters_intercepted,
-        players_online,
-    ])
+    return msgpack.packb(
+        [
+            MSG_WAR_COST,
+            total_usd,
+            tankers_delivered,
+            tankers_sunk,
+            frigates_sunk,
+            shaheds_intercepted,
+            quadcopters_intercepted,
+            players_online,
+        ]
+    )
 
 
 def encode_event(event_type: str, x: float, y: float, *extra: float) -> bytes:

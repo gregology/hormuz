@@ -1,6 +1,5 @@
 """Tests for the physics processor — validates the Python port of updateVehicle()."""
 
-
 import math
 
 import esper

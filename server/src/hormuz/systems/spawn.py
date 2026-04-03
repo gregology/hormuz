@@ -21,12 +21,12 @@ from hormuz.map_data import (
     IRAN_SPAWNS,
     OMAN_DESTINATION,
     STRAIT_CENTER,
+    random_frigate_gulf_spawn,
+    random_frigate_oman_spawn,
     random_oman_spawn,
     random_quadcopter_spawn,
     random_tanker_spawn,
 )
-
-DESTINATION_DIST_SQ = 2000.0**2
 
 
 class SpawnProcessor(esper.Processor):
@@ -46,9 +46,7 @@ class SpawnProcessor(esper.Processor):
     def _get_tanker_positions() -> list[tuple[float, float]]:
         """Collect positions of all alive tankers for proximity-based spawning."""
         positions: list[tuple[float, float]] = []
-        for _, (tf, phys, health) in esper.get_components(
-            Transform, VehiclePhysics, Health
-        ):
+        for _, (tf, phys, health) in esper.get_components(Transform, VehiclePhysics, Health):
             if phys.vehicle_type == "oil_tanker" and health.hp > 0:
                 positions.append((tf.x, tf.y))
         return positions
@@ -69,9 +67,9 @@ class SpawnProcessor(esper.Processor):
             else:
                 dest = GULF_DESTINATION
 
-            dx = dest[0] - tf.x
-            dy = dest[1] - tf.y
-            if dx * dx + dy * dy > DESTINATION_DIST_SQ:
+            dx = dest["position"][0] - tf.x
+            dy = dest["position"][1] - tf.y
+            if dx * dx + dy * dy > dest["radius"] ** 2:
                 continue
 
             # Tanker reached its destination — turn around
@@ -111,6 +109,7 @@ class SpawnProcessor(esper.Processor):
                 behavior = spawn_cfg.behavior
             else:
                 from hormuz.generated.vehicles import VEHICLES
+
                 behavior = VEHICLES[phys.vehicle_type].ai_behavior
 
             # Respawn position based on vehicle type
@@ -130,10 +129,15 @@ class SpawnProcessor(esper.Processor):
                 else:
                     esper.add_component(ent, CargoState(loaded=loaded, destination=destination))
             elif faction.name == "us":
-                if random.random() < 0.5:
-                    x, y, heading = random_tanker_spawn()
+                # Frigates respawn near their patrol zone
+                if behavior == "west_strait_qrf":
+                    x, y, heading = random_frigate_gulf_spawn()
+                elif behavior == "east_strait_qrf":
+                    x, y, heading = random_frigate_oman_spawn()
+                elif random.random() < 0.5:
+                    x, y, heading = random_frigate_gulf_spawn()
                 else:
-                    x, y, heading = random_oman_spawn()
+                    x, y, heading = random_frigate_oman_spawn()
             else:
                 if phys.vehicle_type == "quadcopter":
                     tanker_positions = self._get_tanker_positions()
@@ -141,9 +145,7 @@ class SpawnProcessor(esper.Processor):
                 else:
                     spawn = random.choice(IRAN_SPAWNS)
                     x, y = spawn["position"]
-                    heading = math.atan2(
-                        STRAIT_CENTER[1] - y, STRAIT_CENTER[0] - x
-                    )
+                    heading = math.atan2(STRAIT_CENTER[1] - y, STRAIT_CENTER[0] - x)
 
             tf.x = float(x)
             tf.y = float(y)

@@ -79,9 +79,7 @@ class TestVehicleCollision:
 
         # Small vehicle should be deflected
         deflected = (
-            abs(tf_small.speed) != 10.0
-            or abs(tf_small.drift) > 0
-            or _dist(tf_small, tf_big) > 100
+            abs(tf_small.speed) != 10.0 or abs(tf_small.drift) > 0 or _dist(tf_small, tf_big) > 100
         )
         assert deflected
 

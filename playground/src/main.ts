@@ -642,6 +642,10 @@ function init() {
 		.name("Terrain")
 		.onChange(onLayerChange);
 	layersFolder.add(layers, "showGrid").name("Grid").onChange(onLayerChange);
+	layersFolder
+		.add(layers, "showExclusionZones")
+		.name("Exclusion Zones")
+		.onChange(onLayerChange);
 
 	// ---- Mouse controls ----
 	const canvas = threeScene.renderer.domElement;

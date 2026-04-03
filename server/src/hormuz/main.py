@@ -31,6 +31,9 @@ from hormuz.generated.vehicles import (
 )
 from hormuz.map_data import (
     IRAN_SPAWNS,
+    PATROL_ZONES,
+    random_frigate_gulf_spawn,
+    random_frigate_oman_spawn,
     random_oman_spawn,
     random_quadcopter_spawn,
     random_tanker_spawn,
@@ -78,9 +81,7 @@ game_state = {
 start_time = time.monotonic()
 
 
-def _expand_spawn_group(
-    value: int | dict[str, int], vehicle_type: str
-) -> list[tuple[str, int]]:
+def _expand_spawn_group(value: int | dict[str, int], vehicle_type: str) -> list[tuple[str, int]]:
     """Expand a spawn group value into (behavior, count) pairs.
 
     If value is an int, uses the vehicle's default ai_behavior.
@@ -167,7 +168,7 @@ def setup_world() -> None:
     frigate_spawns = WORLD_SPAWNS["frigate"]
     for behavior, count in _expand_spawn_group(frigate_spawns["gulf"], "frigate"):
         for _ in range(count):
-            x, y, heading = random_tanker_spawn()
+            x, y, heading = random_frigate_gulf_spawn()
             esper.create_entity(
                 Transform(x=x, y=y, heading=heading),
                 VehiclePhysics(**VEHICLE_PHYSICS["frigate"]),
@@ -177,16 +178,16 @@ def setup_world() -> None:
                 BotControl(behavior),
                 SpawnConfig(behavior),
                 PatrolZone(
-                    center_x=71300.0,
-                    center_y=46800.0,
-                    radius=15000.0,
+                    center_x=PATROL_ZONES["strait_west"]["position"][0],
+                    center_y=PATROL_ZONES["strait_west"]["position"][1],
+                    radius=PATROL_ZONES["strait_west"]["radius"],
                     zone_id="strait_west",
                 ),
             )
 
     for behavior, count in _expand_spawn_group(frigate_spawns["oman"], "frigate"):
         for _ in range(count):
-            x, y, heading = random_oman_spawn()
+            x, y, heading = random_frigate_oman_spawn()
             esper.create_entity(
                 Transform(x=x, y=y, heading=heading),
                 VehiclePhysics(**VEHICLE_PHYSICS["frigate"]),
@@ -196,9 +197,9 @@ def setup_world() -> None:
                 BotControl(behavior),
                 SpawnConfig(behavior),
                 PatrolZone(
-                    center_x=112850.0,
-                    center_y=62424.0,
-                    radius=15000.0,
+                    center_x=PATROL_ZONES["oman_approach"]["position"][0],
+                    center_y=PATROL_ZONES["oman_approach"]["position"][1],
+                    radius=PATROL_ZONES["oman_approach"]["radius"],
                     zone_id="oman_approach",
                 ),
             )

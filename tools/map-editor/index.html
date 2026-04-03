@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hormuz — Map Editor</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 100%; height: 100%; overflow: hidden; background: #0a1628; font-family: system-ui, -apple-system, sans-serif; color: #e0e0e0; font-size: 13px; }
+      canvas { display: block; }
+
+      #app { display: flex; width: 100%; height: 100%; }
+
+      /* --- Sidebar --- */
+      #sidebar {
+        width: 260px; min-width: 260px;
+        background: #111827;
+        border-right: 1px solid #1f2937;
+        display: flex; flex-direction: column;
+        overflow: hidden;
+        z-index: 10;
+      }
+      #sidebar h2 { font-size: 14px; font-weight: 600; padding: 12px 14px 8px; color: #93c5fd; letter-spacing: 0.02em; }
+      #sidebar h3 { font-size: 11px; font-weight: 600; padding: 8px 14px 4px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em; }
+
+      /* Zone list */
+      #zone-list {
+        flex: 1; overflow-y: auto;
+        padding: 4px 8px;
+      }
+      .zone-item {
+        padding: 6px 8px; margin: 2px 0;
+        border-radius: 4px; cursor: pointer;
+        display: flex; align-items: center; justify-content: space-between;
+      }
+      .zone-item:hover { background: #1f2937; }
+      .zone-item.selected { background: #1e3a5f; }
+      .zone-item .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .zone-item .vertex-count { color: #6b7280; font-size: 11px; margin-left: 4px; }
+
+      /* Properties panel */
+      #properties {
+        border-top: 1px solid #1f2937;
+        padding: 10px 14px;
+      }
+      #properties.hidden { display: none; }
+      #properties label { display: block; font-size: 11px; color: #9ca3af; margin-bottom: 3px; margin-top: 8px; }
+      #properties label:first-child { margin-top: 0; }
+      #properties input[type="text"] {
+        width: 100%; padding: 4px 6px;
+        background: #1f2937; border: 1px solid #374151; border-radius: 3px;
+        color: #e0e0e0; font-size: 13px; outline: none;
+      }
+      #properties input[type="text"]:focus { border-color: #3b82f6; }
+
+      /* Behavior checkboxes */
+      #behavior-list { max-height: 180px; overflow-y: auto; margin-top: 4px; }
+      .behavior-row { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
+      .behavior-row input[type="checkbox"] { accent-color: #3b82f6; }
+      .behavior-row span { font-size: 12px; }
+
+      /* --- Viewport --- */
+      #viewport { flex: 1; position: relative; }
+      #viewport canvas { width: 100%; height: 100%; }
+
+      /* --- Toolbar --- */
+      #toolbar {
+        position: absolute; top: 10px; left: 10px;
+        display: flex; gap: 4px;
+        background: #111827ee; border: 1px solid #1f2937; border-radius: 6px;
+        padding: 4px;
+        z-index: 10;
+      }
+      .tool-btn {
+        padding: 6px 12px;
+        background: transparent; border: 1px solid transparent; border-radius: 4px;
+        color: #d1d5db; cursor: pointer; font-size: 12px; font-family: inherit;
+        white-space: nowrap;
+      }
+      .tool-btn:hover { background: #1f2937; }
+      .tool-btn.active { background: #1e3a5f; border-color: #3b82f6; color: #93c5fd; }
+      .tool-btn.danger { color: #f87171; }
+      .tool-btn.danger:hover { background: #7f1d1d44; }
+      .tool-btn.primary { color: #34d399; }
+      .tool-btn.primary:hover { background: #064e3b44; }
+
+      /* --- Status bar --- */
+      #statusbar {
+        position: absolute; bottom: 0; left: 0; right: 0;
+        background: #111827dd; border-top: 1px solid #1f2937;
+        padding: 4px 12px; font-size: 11px; color: #9ca3af;
+        display: flex; gap: 16px;
+        z-index: 10;
+      }
+
+      /* Layers panel */
+      #layers-toggle {
+        position: absolute; top: 10px; right: 10px;
+        z-index: 10;
+      }
+      #layers-toggle summary {
+        background: #111827ee; border: 1px solid #1f2937; border-radius: 6px;
+        padding: 6px 12px; cursor: pointer; font-size: 12px; color: #d1d5db;
+        list-style: none;
+      }
+      #layers-toggle summary:hover { background: #1f2937; }
+      #layers-panel {
+        margin-top: 4px;
+        background: #111827ee; border: 1px solid #1f2937; border-radius: 6px;
+        padding: 8px 10px; min-width: 180px;
+      }
+      .layer-row { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
+      .layer-row input[type="checkbox"] { accent-color: #3b82f6; }
+      .layer-row span { font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div id="sidebar">
+        <h2>Exclusion Zones</h2>
+        <div id="zone-list"></div>
+        <div id="properties" class="hidden">
+          <h3>Properties</h3>
+          <label>Name</label>
+          <input type="text" id="zone-name" />
+          <label>Behaviors</label>
+          <div id="behavior-list"></div>
+        </div>
+      </div>
+      <div id="viewport">
+        <div id="toolbar">
+          <button class="tool-btn active" data-mode="select" title="Select & edit zones (S)">Select</button>
+          <button class="tool-btn" data-mode="draw" title="Draw new zone polygon (D)">Draw</button>
+          <button class="tool-btn danger" id="btn-delete" title="Delete selected zone (Delete)">Delete</button>
+          <div style="width:1px;background:#374151;margin:2px 4px"></div>
+          <button class="tool-btn primary" id="btn-save" title="Download YAML">Save YAML</button>
+        </div>
+        <details id="layers-toggle">
+          <summary>Layers</summary>
+          <div id="layers-panel"></div>
+        </details>
+        <div id="statusbar">
+          <span id="status-mode">Mode: Select</span>
+          <span id="status-coords">—</span>
+          <span id="status-hint">Click a zone to select it</span>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

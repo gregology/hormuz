@@ -7,6 +7,7 @@
   "scripts": {
     "dev:client": "pnpm --filter client dev",
     "dev:playground": "pnpm --filter playground dev",
+    "dev:map-editor": "pnpm --filter @hormuz/map-editor dev",
     "dev:server": "cd server && uv run uvicorn hormuz.main:app --reload --host 0.0.0.0 --port 8000",
     "build:client": "pnpm --filter client build",
     "build:playground": "pnpm --filter playground build",

@@ -1,0 +1,176 @@
+# Map data — all hand-authored spatial data for the Strait of Hormuz.
+#
+# Coordinates are in game space: origin (0,0) = NW corner, X = east, Y = south.
+# Game coords: game_x = (lon - 47.5) * 9708, game_y = (30.5 - lat) * 10800.
+# Map size: 113000 x 81000.
+#
+# Edit visually with the map editor: pnpm dev:map-editor
+# After editing, run: pnpm generate
+
+spawns:
+  iran:
+  - {position: [85338, 34170], heading: 3.14159, scatter_radius: 500, label: Bandar Abbas}
+  - {position: [81538, 35800], heading: 1.5708, scatter_radius: 500, label: Iran Coast West}
+  - {position: [91298, 35661], heading: 1.88496, scatter_radius: 500, label: Iran Coast East}
+  - {position: [88607, 34808], heading: 1.5708, scatter_radius: 500, label: Hormuz Island}
+  - {position: [71856, 41069], heading: 1.5708, scatter_radius: 500, label: Bandar Lengeh}
+  - {position: [67956, 41580], heading: 1.5708, scatter_radius: 500, label: Nakhilu Island}
+  - {position: [69676, 40935], heading: 1.25664, scatter_radius: 500, label: Bushehr Coast}
+  - {position: [64073, 39960], heading: 1.5708, scatter_radius: 500, label: Kharg Approach}
+  - {position: [74157, 38985], heading: 1.5708, scatter_radius: 500, label: Tunb Island}
+  - {position: [78095, 36783], heading: 1.5708, scatter_radius: 500, label: Basaidu Coast}
+  - {position: [93167, 38783], heading: 1.5708, scatter_radius: 500, label: Minab Coast}
+  - {position: [94009, 42716], heading: 1.25664, scatter_radius: 500, label: Sirik Coast}
+  - {position: [98625, 49963], heading: 2, scatter_radius: 500, label: Jask}
+  - {position: [103256, 51336], heading: 2, scatter_radius: 500, label: Jask East}
+  - {position: [95629, 48763], heading: 2, scatter_radius: 500, label: Kuhestak}
+  - {position: [94818, 45897], heading: 2, scatter_radius: 500, label: Konarak Coast}
+  us:
+  - {position: [71884, 46283], heading: 0, scatter_radius: 1000, group: gulf, label: Gulf Frigates}
+  - {position: [109467, 60069], heading: 3.14159, scatter_radius: 2000, group: oman, label: Oman Frigates}
+  tanker:
+  - {position: [71515, 47185], heading: 5, scatter_radius: 2000, group: gulf, label: Persian Gulf}
+  - {position: [109467, 60069], heading: 3.14159, scatter_radius: 2000, group: oman, label: Gulf of Oman Arrival}
+  quadcopter:
+  - {position: [75799, 45777], heading: 4.5, scatter_radius: 500, label: Quad Launch Central 1}
+  - {position: [75769, 42512], heading: 1.6, scatter_radius: 500, label: Quad Launch Central 2}
+  - {position: [81352, 41673], heading: 1.6, scatter_radius: 500, label: Quad Launch Strait 1}
+  - {position: [82851, 40067], heading: 1.8, scatter_radius: 500, label: Quad Launch Strait 2}
+  - {position: [85960, 39450], heading: 2, scatter_radius: 500, label: Quad Launch Strait 3}
+  - {position: [93416, 44246], scatter_radius: 500, label: Quad Launch East 1}
+  - {position: [95389, 50894], heading: 2.4, scatter_radius: 500, label: Quad Launch East 2}
+  - {position: [103823, 53352], heading: 2, scatter_radius: 500, label: Quad Launch East 3}
+  bases:
+  - {position: [30095, 46224], heading: 0, scatter_radius: 500, label: NSA Bahrain (5th Fleet)}
+  - {position: [37085, 58104], heading: 0, scatter_radius: 500, label: Al Udeid Air Base (Qatar)}
+landmarks:
+  strait_center: [86365, 43067]
+escort_zone:
+  west: 50000
+  east: 110000
+patrol_routes:
+  west_strait_qrf: [[76455, 43291], [83685, 42651]]
+  east_strait_qrf: [[88074, 41909], [94106, 51830]]
+patrol_zones:
+  strait_west: {position: [71300, 46800], radius: 15000}
+  oman_approach: {position: [112850, 62424], radius: 15000}
+destinations:
+  oman: {position: [110700, 61227], radius: 2000}
+  gulf: {position: [65769, 43984], radius: 2000}
+shipping_lanes:
+  inbound:
+  - [106788, 57240]
+  - [101934, 56160]
+  - [97080, 54000]
+  - [92226, 50760]
+  - [90284, 45360]
+  - [87372, 43416]
+  - [84460, 42660]
+  - [81547, 42444]
+  - [78635, 42660]
+  - [72810, 43200]
+  outbound:
+  - [72810, 43740]
+  - [78635, 43200]
+  - [81547, 42984]
+  - [84460, 43416]
+  - [87372, 44280]
+  - [90284, 46440]
+  - [92226, 52920]
+  - [97080, 56160]
+  - [101934, 58320]
+  - [106788, 59400]
+  deep_water_route:
+  - [72810, 44280]
+  - [67956, 44820]
+  - [63102, 41580]
+  - [57277, 42120]
+  - [51452, 43200]
+  - [45628, 44820]
+  - [39803, 45360]
+  - [33978, 43200]
+  - [27182, 42120]
+shallow_waters:
+very_shallow_waters:
+hazards:
+  shoals:
+  rocks:
+exclusion_zones:
+- name: north_of_qeshm
+  polygon:
+  - [69840, 42660]
+  - [85705, 33773]
+  - [87798, 36282]
+  - [88439, 38853]
+  - [85735, 40557]
+  - [82502, 41961]
+  - [81211, 42198]
+  - [78956, 41909]
+  - [77612, 42451]
+  - [76878, 42661]
+  - [76067, 42800]
+  - [75332, 42863]
+  - [74301, 42539]
+  behaviors:
+  - escort
+  - escort_follow
+  - escort_lead
+  - west_strait_qrf
+  - east_strait_qrf
+  - follow_escort_lead
+- name: southern coast
+  polygon:
+  - [72133, 54622]
+  - [75357, 51222]
+  - [81008, 45927]
+  - [85772, 44130]
+  - [86549, 44464]
+  - [87466, 45047]
+  - [88260, 50262]
+  - [91406, 54350]
+  - [97598, 58971]
+  - [108499, 64990]
+  - [109431, 77588]
+  - [96204, 73457]
+  - [46897, 72080]
+  - [47659, 65934]
+  - [67116, 59760]
+  behaviors:
+  - tanker_transit
+  - escort
+  - escort_follow
+  - escort_lead
+  - follow_escort_lead
+  - west_strait_qrf
+  - east_strait_qrf
+- name: northern coast
+  polygon:
+  - [111834, 55736]
+  - [102716, 53761]
+  - [99386, 53181]
+  - [95688, 51618]
+  - [94650, 50949]
+  - [93856, 49539]
+  - [92958, 47451]
+  - [92145, 45129]
+  - [91086, 42474]
+  - [90390, 40957]
+  - [89342, 39634]
+  - [88132, 38790]
+  - [87118, 38460]
+  - [86171, 38380]
+  - [85638, 38453]
+  - [85090, 38690]
+  - [83962, 36127]
+  - [87140, 34347]
+  - [92646, 37700]
+  - [111650, 53590]
+  - [111987, 55820]
+  - [111987, 55820]
+  behaviors:
+  - escort
+  - escort_follow
+  - escort_lead
+  - follow_escort_lead
+  - west_strait_qrf
+  - east_strait_qrf

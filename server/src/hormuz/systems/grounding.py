@@ -14,10 +14,14 @@ PROBE_DISTANCE = 150.0
 PUSHBACK_SPEED = 8.0
 
 # Ticks on land before hull breaches start
-GROUNDING_GRACE_TICKS = 10  # 0.5 seconds at 20Hz
+GROUNDING_GRACE_TICKS = 3  # 0.15 seconds at 20Hz
 
 # Hull breaches per tick while hard-grounded
 GROUNDING_BREACH_RATE = 1
+
+# Ticks off land before grounding counter resets — prevents oscillation at
+# coastlines from resetting the grace period every tick.
+GROUNDING_COOLDOWN_TICKS = 20  # 1 second at 20Hz
 
 
 class GroundingProcessor(esper.Processor):
@@ -30,22 +34,29 @@ class GroundingProcessor(esper.Processor):
         super().__init__()
         # Track how long each entity has been on land (entity_id -> tick count)
         self._grounded_ticks: dict[int, int] = {}
+        # Track how long off land before resetting counter
+        self._offland_ticks: dict[int, int] = {}
 
     def process(self, dt: float = 0.05) -> None:
         still_grounded: set[int] = set()
 
-        for ent, (tf, phys, health) in esper.get_components(
-            Transform, VehiclePhysics, Health
-        ):
+        for ent, (tf, phys, health) in esper.get_components(Transform, VehiclePhysics, Health):
             if phys.airborne or health.hp <= 0:
                 continue
 
             if not is_land(tf.x, tf.y):
-                # Not grounded — but check if heading toward land and deflect
-                self._grounded_ticks.pop(ent, None)
+                # Not on land — only reset grounding counter after sustained time off land
+                if ent in self._grounded_ticks:
+                    off = self._offland_ticks.get(ent, 0) + 1
+                    if off >= GROUNDING_COOLDOWN_TICKS:
+                        del self._grounded_ticks[ent]
+                        self._offland_ticks.pop(ent, None)
+                    else:
+                        self._offland_ticks[ent] = off
                 continue
 
             still_grounded.add(ent)
+            self._offland_ticks.pop(ent, None)  # back on land, reset off-land counter
 
             # Entity is on land — push it toward open water
             escape_heading = self._find_water_direction(tf.x, tf.y, phys.size)
@@ -70,12 +81,10 @@ class GroundingProcessor(esper.Processor):
 
         # Clean up tracking for entities no longer grounded
         for ent in list(self._grounded_ticks):
-            if ent not in still_grounded:
+            if ent not in still_grounded and ent not in self._offland_ticks:
                 del self._grounded_ticks[ent]
 
-    def _find_water_direction(
-        self, x: float, y: float, size: float
-    ) -> float | None:
+    def _find_water_direction(self, x: float, y: float, size: float) -> float | None:
         """Sample 8 directions around the entity and return heading toward nearest water."""
         probe = max(PROBE_DISTANCE, size * 0.5)
         best_heading = None

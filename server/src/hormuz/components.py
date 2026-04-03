@@ -5,8 +5,16 @@ class Transform:
     """Position and orientation in world space."""
 
     __slots__ = (
-        "x", "y", "heading", "speed", "drift", "angular_velocity",
-        "flood_level", "list_angle", "hull_breaches", "breach_side",
+        "x",
+        "y",
+        "heading",
+        "speed",
+        "drift",
+        "angular_velocity",
+        "flood_level",
+        "list_angle",
+        "hull_breaches",
+        "breach_side",
     )
 
     def __init__(
@@ -130,9 +138,7 @@ class Collidable:
 
     def __init__(self, vertices: tuple[tuple[float, float], ...]) -> None:
         self.vertices = vertices
-        self.bounding_radius = max(
-            (x * x + y * y) ** 0.5 for x, y in vertices
-        )
+        self.bounding_radius = max((x * x + y * y) ** 0.5 for x, y in vertices)
 
 
 class BotControl:

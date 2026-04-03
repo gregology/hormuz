@@ -1,6 +1,5 @@
 """Tests for bot AI processor."""
 
-
 import esper
 import pytest
 

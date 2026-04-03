@@ -9,20 +9,19 @@ import * as THREE from "three";
 import { ARABIAN_COAST_POLYS, IRAN_COAST_POLYS } from "../map/coastlines";
 import {
 	DEEP_WATER_ROUTE,
+	EXCLUSION_ZONES,
 	IRAN_SPAWNS,
 	ISLAND_POLYGONS,
 	LANE_INBOUND,
 	LANE_OUTBOUND,
 	MAP,
-	type Polygon,
-	type Polyline,
 	ROCKS,
-	SHALLOW_WATER,
+	SHALLOW_WATERS,
 	SHOALS,
 	TANKER_SPAWNS,
 	US_BASES,
 	US_SPAWNS,
-	VERY_SHALLOW,
+	VERY_SHALLOW_WATERS,
 } from "../map/data";
 import {
 	HEIGHTMAP_CELL_SIZE,
@@ -48,6 +47,7 @@ export interface MapLayers {
 	showSpawnPoints: boolean;
 	showTerrain: boolean;
 	showGrid: boolean;
+	showExclusionZones: boolean;
 	gridSize: number;
 }
 
@@ -58,6 +58,7 @@ export const DEFAULT_LAYERS: MapLayers = {
 	showSpawnPoints: false,
 	showTerrain: true,
 	showGrid: false,
+	showExclusionZones: false,
 	gridSize: 1000,
 };
 
@@ -77,7 +78,7 @@ const Y_MARKERS = 0.35;
 // Helpers
 // ---------------------------------------------------------------------------
 
-function polygonToShape(poly: Polygon): THREE.Shape {
+function polygonToShape(poly: readonly [number, number][]): THREE.Shape {
 	const shape = new THREE.Shape();
 	shape.moveTo(poly[0][0], poly[0][1]);
 	for (let i = 1; i < poly.length; i++) {
@@ -125,7 +126,7 @@ function createHeightmapTexture(): THREE.DataTexture {
 }
 
 /** Collect line-segment vertex pairs for a closed polygon border. */
-function polygonBorderSegments(poly: Polygon, y: number): THREE.Vector3[] {
+function polygonBorderSegments(poly: readonly [number, number][], y: number): THREE.Vector3[] {
 	const pts: THREE.Vector3[] = [];
 	for (let i = 0; i < poly.length; i++) {
 		const a = poly[i];
@@ -137,7 +138,7 @@ function polygonBorderSegments(poly: Polygon, y: number): THREE.Vector3[] {
 }
 
 function createFilledShapes(
-	polys: Polygon[],
+	polys: readonly (readonly [number, number][])[],
 	color: number,
 	alpha: number,
 	y: number,
@@ -177,6 +178,7 @@ export class ThreeMapRenderer {
 	private laneGroup!: THREE.Group;
 	private gridGroup!: THREE.Group;
 	private spawnGroup!: THREE.Group;
+	private exclusionZoneGroup!: THREE.Group;
 
 	private geometries: THREE.BufferGeometry[] = [];
 	private materials: THREE.Material[] = [];
@@ -193,6 +195,7 @@ export class ThreeMapRenderer {
 		this.gridGroup = this.buildGrid(layers.gridSize);
 		this.spawnGroup = this.buildSpawns();
 		this.buildBases(this.spawnGroup);
+		this.exclusionZoneGroup = this.buildExclusionZones();
 
 		this.setLayers(layers);
 	}
@@ -209,6 +212,7 @@ export class ThreeMapRenderer {
 		this.laneGroup.visible = layers.showShippingLanes;
 		this.gridGroup.visible = layers.showGrid;
 		this.spawnGroup.visible = layers.showSpawnPoints;
+		this.exclusionZoneGroup.visible = layers.showExclusionZones;
 	}
 
 	dispose(): void {
@@ -255,9 +259,9 @@ export class ThreeMapRenderer {
 		const group = new THREE.Group();
 		group.renderOrder = 1;
 
-		if (SHALLOW_WATER.length > 0) {
+		if (SHALLOW_WATERS.length > 0) {
 			const { mesh, geo, mat } = createFilledShapes(
-				SHALLOW_WATER,
+				SHALLOW_WATERS,
 				COLORS.shallowWater,
 				0.4,
 				Y_DEPTH_ZONES,
@@ -269,9 +273,9 @@ export class ThreeMapRenderer {
 			group.add(mesh);
 		}
 
-		if (VERY_SHALLOW.length > 0) {
+		if (VERY_SHALLOW_WATERS.length > 0) {
 			const { mesh, geo, mat } = createFilledShapes(
-				VERY_SHALLOW,
+				VERY_SHALLOW_WATERS,
 				COLORS.veryShallowWater,
 				0.5,
 				Y_DEPTH_ZONES + 0.01,
@@ -467,7 +471,7 @@ export class ThreeMapRenderer {
 		group.renderOrder = 5;
 
 		const addLane = (
-			line: Polyline,
+			line: readonly [number, number][],
 			color: number,
 			dashSize: number,
 			gapSize: number,
@@ -607,6 +611,47 @@ export class ThreeMapRenderer {
 			const mesh = new THREE.Mesh(g, tankerMat);
 			mesh.position.set(sp.position[0], Y_MARKERS, sp.position[1]);
 			group.add(mesh);
+		}
+
+		this.root.add(group);
+		return group;
+	}
+
+	private buildExclusionZones(): THREE.Group {
+		const group = new THREE.Group();
+		group.renderOrder = 5;
+
+		const borderMat = this.mat(
+			new THREE.LineBasicMaterial({
+				color: 0xff2200,
+				transparent: true,
+				opacity: 0.6,
+			}),
+		);
+
+		for (const zone of EXCLUSION_ZONES) {
+			// Polygon fill
+			const poly = zone.polygon.map((p) => [p[0], p[1]] as [number, number]);
+			const { mesh, geo, mat } = createFilledShapes(
+				[poly],
+				0xff2200,
+				0.15,
+				Y_OVERLAYS,
+				false,
+			);
+			this.geo(geo);
+			this.mat(mat);
+			mesh.renderOrder = 5;
+			group.add(mesh);
+
+			// Border outline
+			const pts = zone.polygon.map(
+				(p) => new THREE.Vector3(p[0], Y_OVERLAYS, p[1]),
+			);
+			pts.push(pts[0].clone()); // close the loop
+			const lineGeo = this.geo(new THREE.BufferGeometry().setFromPoints(pts));
+			const line = new THREE.Line(lineGeo, borderMat);
+			group.add(line);
 		}
 
 		this.root.add(group);

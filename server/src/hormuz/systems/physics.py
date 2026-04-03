@@ -94,9 +94,7 @@ class PhysicsProcessor(esper.Processor):
                 tf = esper.component_for_entity(ent, Transform)
                 cargo = esper.try_component(ent, CargoState)
                 destination = cargo.destination if cargo else "oman"
-                _, rudder, pc.waypoint_index = run_tanker_ai(
-                    tf, pc.waypoint_index, destination
-                )
+                _, rudder, pc.waypoint_index = run_tanker_ai(tf, pc.waypoint_index, destination)
                 return pc.throttle, rudder
             return pc.throttle, pc.rudder
         bc = esper.try_component(ent, BotControl)
@@ -145,12 +143,7 @@ def _update_vehicle(
         rudder_angle = rudder * phys.rudder_max_angle
         sin_rudder = math.sin(rudder_angle)
         prop_wash_force = -thrust * sin_rudder
-        flow_force = (
-            -phys.rudder_flow_coefficient
-            * tf.speed
-            * abs(tf.speed)
-            * sin_rudder
-        )
+        flow_force = -phys.rudder_flow_coefficient * tf.speed * abs(tf.speed) * sin_rudder
         lateral_force = prop_wash_force + flow_force
         torque = phys.propeller_offset * phys.size * lateral_force
         tf.angular_velocity += (torque / phys.moment_of_inertia) * dt
@@ -165,9 +158,7 @@ def _update_vehicle(
             rudder_effect = 0.0 if speed_ratio < 0.05 else speed_ratio
         steer_sign = -1.0 if tf.speed < 0 else 1.0
         tf.heading += rudder * phys.turn_rate * rudder_effect * steer_sign * dt
-        tf.drift += (
-            rudder * phys.turn_rate * rudder_effect * tf.speed * phys.drift_factor * dt
-        )
+        tf.drift += rudder * phys.turn_rate * rudder_effect * tf.speed * phys.drift_factor * dt
 
     # Normalize heading to [0, 2pi)
     tf.heading = tf.heading % TWO_PI
@@ -218,10 +209,6 @@ def _update_flooding(tf: Transform, phys: VehiclePhysics, dt: float) -> None:
 
     # Flooding increases drag
     flood_drag = (
-        tf.flood_level
-        * FLOOD_DRAG_FACTOR
-        * phys.drag_coefficient
-        * tf.speed
-        * abs(tf.speed)
+        tf.flood_level * FLOOD_DRAG_FACTOR * phys.drag_coefficient * tf.speed * abs(tf.speed)
     )
     tf.speed -= (flood_drag / phys.mass) * dt
