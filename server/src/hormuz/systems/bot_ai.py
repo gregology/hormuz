@@ -39,10 +39,7 @@ TANKER_DANGER_RANGE_SQ = TANKER_DANGER_RANGE * TANKER_DANGER_RANGE
 TANKER_DANGER_RUDDER = 0.3
 
 # --- Frigate constants ---
-# Presence attraction: max range to sense tankers
-FRIGATE_PRESENCE_RANGE = 5000.0
-FRIGATE_PRESENCE_RANGE_SQ = FRIGATE_PRESENCE_RANGE * FRIGATE_PRESENCE_RANGE
-# Offset distance: frigates prefer to be this far from nearest tanker
+# Offset distance: frigates prefer to be this far from their assigned tanker
 FRIGATE_OFFSET_DIST = 800.0
 # Danger attraction range
 FRIGATE_DANGER_RANGE = 8000.0
@@ -64,6 +61,16 @@ SHAHED_VISUAL_RANGE_SQ = SHAHED_VISUAL_RANGE * SHAHED_VISUAL_RANGE
 # Quadcopter visual detection range — FPV camera, better optics than shahed
 QUADCOPTER_VISUAL_RANGE = 8000.0
 QUADCOPTER_VISUAL_RANGE_SQ = QUADCOPTER_VISUAL_RANGE * QUADCOPTER_VISUAL_RANGE
+
+# --- Drone swarm constants ---
+# Drone-drone repulsion range (approach angle diversification)
+DRONE_REPEL_RANGE_SHAHED = 1000.0
+DRONE_REPEL_RANGE_SHAHED_SQ = DRONE_REPEL_RANGE_SHAHED * DRONE_REPEL_RANGE_SHAHED
+DRONE_REPEL_RANGE_QUAD = 500.0
+DRONE_REPEL_RANGE_QUAD_SQ = DRONE_REPEL_RANGE_QUAD * DRONE_REPEL_RANGE_QUAD
+DRONE_REPEL_WEIGHT = 0.4
+# Target pressure: score bonus for current target (prevents oscillation)
+TARGET_STICKINESS = 0.5
 
 # --- Collision avoidance constants ---
 AVOID_VESSEL_FACTOR = 0.8
@@ -192,16 +199,53 @@ class BotAIProcessor(esper.Processor):
             if phys.vehicle_type == "oil_tanker" and health.hp > 0:
                 tanker_transforms.append(tf)
 
+        # Collect alive drone positions for swarm repulsion
+        shahed_transforms: list[tuple[int, Transform]] = []
+        quadcopter_transforms: list[tuple[int, Transform]] = []
+        for ent, (tf, phys, health, bot) in esper.get_components(
+            Transform, VehiclePhysics, Health, BotControl
+        ):
+            if health.hp <= 0:
+                continue
+            if phys.vehicle_type == "shahed":
+                shahed_transforms.append((ent, tf))
+            elif phys.vehicle_type == "quadcopter":
+                quadcopter_transforms.append((ent, tf))
+
+        # Build separate pressure counts for drones and frigates.
+        # Drones and frigates target different things so their pressure pools are independent.
+        drone_target_counts: dict[int, int] = {}
+        escort_target_counts: dict[int, int] = {}
+        for _, (_, bot) in esper.get_components(Transform, BotControl):
+            if bot.target_entity == 0:
+                continue
+            if bot.behavior in ("shahed_intercept", "quadcopter_intercept"):
+                drone_target_counts[bot.target_entity] = (
+                    drone_target_counts.get(bot.target_entity, 0) + 1
+                )
+            elif bot.behavior == "escort":
+                escort_target_counts[bot.target_entity] = (
+                    escort_target_counts.get(bot.target_entity, 0) + 1
+                )
+
         # Behavior dispatch
         for ent, (tf, bot) in esper.get_components(Transform, BotControl):
             if bot.behavior == "tanker_transit":
                 self._tanker_ai(ent, tf, bot, tanker_transforms)
             elif bot.behavior == "shahed_intercept":
-                self._shahed_ai(ent, tf, bot, frigate_transforms)
+                self._shahed_ai(
+                    ent, tf, bot, frigate_transforms,
+                    shahed_transforms, drone_target_counts,
+                )
             elif bot.behavior == "quadcopter_intercept":
-                self._quadcopter_ai(ent, tf, bot)
+                self._quadcopter_ai(
+                    ent, tf, bot,
+                    quadcopter_transforms, drone_target_counts,
+                )
             elif bot.behavior == "escort":
-                self._escort_ai(ent, tf, bot, tanker_transforms, frigate_transforms)
+                self._escort_ai(
+                    ent, tf, bot, frigate_transforms, escort_target_counts,
+                )
 
         # --- Collision avoidance post-processing ---
         ships: list[tuple[int, Transform, VehiclePhysics, str]] = []
@@ -283,36 +327,36 @@ class BotAIProcessor(esper.Processor):
         ent: int,
         tf: Transform,
         bot: BotControl,
-        tanker_transforms: list[Transform],
         frigate_transforms: list[Transform],
+        escort_target_counts: dict[int, int],
     ) -> None:
-        """Three local rules: attract to tanker presence, rush to danger, repel from frigates."""
+        """Three local rules: escort least-contested tanker, rush to danger, repel frigates."""
         rudder_sum = 0.0
-        has_nearby_tanker = False
 
-        # Rule 1: Attract toward nearest tanker (presence scent)
-        best_tanker_dist_sq = FRIGATE_PRESENCE_RANGE_SQ
-        best_tanker_tf: Transform | None = None
-        for t_tf in tanker_transforms:
-            dx = t_tf.x - tf.x
-            dy = t_tf.y - tf.y
-            d_sq = dx * dx + dy * dy
-            if d_sq < best_tanker_dist_sq:
-                best_tanker_dist_sq = d_sq
-                best_tanker_tf = t_tf
+        # Rule 1: Pick a tanker using pressure scoring (least-contested, closest)
+        tanker_tf = self._pick_drone_target(
+            tf, bot, ("civilian",), float("inf"), escort_target_counts
+        )
 
-        if best_tanker_tf is not None:
-            dist = math.sqrt(best_tanker_dist_sq)
-            has_nearby_tanker = True
+        if tanker_tf is not None:
+            dx = tanker_tf.x - tf.x
+            dy = tanker_tf.y - tf.y
+            dist = math.sqrt(dx * dx + dy * dy)
 
             if dist > FRIGATE_OFFSET_DIST:
-                # Move toward tanker
-                rudder_sum += steer_toward(tf, best_tanker_tf.x, best_tanker_tf.y) * WEIGHT_PRESENCE
+                # Navigate toward tanker — use lane waypoints if far to avoid islands
+                if dist > TRANSIT_DIST_SQ**0.5:
+                    wp = _find_lane_waypoint(tf.x, tf.y, tanker_tf.x, tanker_tf.y)
+                    if wp is not None:
+                        rudder_sum += steer_toward(tf, wp[0], wp[1]) * WEIGHT_PRESENCE
+                    else:
+                        rudder_sum += steer_toward(tf, tanker_tf.x, tanker_tf.y) * WEIGHT_PRESENCE
+                else:
+                    rudder_sum += steer_toward(tf, tanker_tf.x, tanker_tf.y) * WEIGHT_PRESENCE
             else:
-                # At desired offset — drift perpendicular (maintain spacing)
-                # Move along tanker's heading direction to escort alongside
-                cos_th = math.cos(best_tanker_tf.heading)
-                sin_th = math.sin(best_tanker_tf.heading)
+                # At desired offset — match tanker's heading direction
+                cos_th = math.cos(tanker_tf.heading)
+                sin_th = math.sin(tanker_tf.heading)
                 ahead_x = tf.x + cos_th * 500.0
                 ahead_y = tf.y + sin_th * 500.0
                 rudder_sum += steer_toward(tf, ahead_x, ahead_y) * WEIGHT_PRESENCE * 0.5
@@ -335,12 +379,11 @@ class BotAIProcessor(esper.Processor):
             if d_sq > FRIGATE_REPEL_RANGE_SQ or d_sq < 1.0:
                 continue
             dist = math.sqrt(d_sq)
-            # Steer away, stronger when closer
             repel_strength = (1.0 - dist / FRIGATE_REPEL_RANGE) * WEIGHT_REPEL
             rudder_sum -= steer_toward(tf, f_tf.x, f_tf.y) * repel_strength
 
-        # No tankers or danger nearby — head toward strait center via lane waypoints
-        if best_tanker_tf is None and danger is None:
+        # No tanker or danger — patrol toward strait center
+        if tanker_tf is None and danger is None:
             dx = STRAIT_CENTER[0] - tf.x
             dy = STRAIT_CENTER[1] - tf.y
             if dx * dx + dy * dy > TRANSIT_DIST_SQ:
@@ -354,21 +397,102 @@ class BotAIProcessor(esper.Processor):
 
         bot.rudder = max(-1.0, min(1.0, rudder_sum))
 
-        # Throttle: fast to close distance, cruise when near tankers
-        if has_nearby_tanker:
-            dist = math.sqrt(best_tanker_dist_sq)
+        # Throttle: fast when far from tanker, cruise when near
+        if tanker_tf is not None:
+            dx = tanker_tf.x - tf.x
+            dy = tanker_tf.y - tf.y
+            dist = math.sqrt(dx * dx + dy * dy)
             if dist > FRIGATE_OFFSET_DIST * 2:
                 bot.throttle = 1.0
             else:
                 bot.throttle = FRIGATE_CRUISE_THROTTLE
         elif danger is not None:
-            bot.throttle = 1.0  # rush to danger
+            bot.throttle = 1.0
         else:
-            bot.throttle = 0.7  # patrol
+            bot.throttle = 0.7
 
     # ------------------------------------------------------------------
-    # Iranian drone behaviors (unchanged)
+    # Iranian drone behaviors
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _pick_drone_target(
+        tf: Transform,
+        bot: BotControl,
+        factions: tuple[str, ...],
+        max_range_sq: float,
+        drone_target_counts: dict[int, int],
+    ) -> Transform | None:
+        """Score all valid targets by distance and pressure, pick the best.
+
+        Always re-evaluates — the current target gets a stickiness bonus to prevent
+        oscillation, but if pressure is high enough a drone will switch to a less
+        contested target. Updates drone_target_counts in-place so subsequent drones
+        in the same tick see accurate pressure.
+        """
+        old_target = bot.target_entity
+        best_score = -1.0
+        best_ent = 0
+        best_tf: Transform | None = None
+
+        for t_ent, (t_tf, t_faction, t_health) in esper.get_components(
+            Transform, Faction, Health
+        ):
+            if t_health.hp <= 0 or t_faction.name not in factions:
+                continue
+            dx = t_tf.x - tf.x
+            dy = t_tf.y - tf.y
+            d_sq = dx * dx + dy * dy
+            if d_sq > max_range_sq:
+                continue
+            d_sq = max(d_sq, 1.0)
+            # Pressure: how many other drones are already targeting this entity
+            pressure = drone_target_counts.get(t_ent, 0)
+            score = 1.0 / (d_sq * (1 + pressure))
+            # Stickiness: current target gets a bonus to prevent oscillation
+            if t_ent == bot.target_entity:
+                score *= 1.0 + TARGET_STICKINESS
+            if score > best_score:
+                best_score = score
+                best_ent = t_ent
+                best_tf = t_tf
+
+        # Update pressure counts live
+        if old_target != best_ent:
+            if old_target != 0:
+                drone_target_counts[old_target] = (
+                    drone_target_counts.get(old_target, 1) - 1
+                )
+            if best_ent != 0:
+                drone_target_counts[best_ent] = (
+                    drone_target_counts.get(best_ent, 0) + 1
+                )
+
+        bot.target_entity = best_ent
+        return best_tf
+
+    @staticmethod
+    def _drone_repulsion(
+        ent: int,
+        tf: Transform,
+        swarm: list[tuple[int, Transform]],
+        repel_range_sq: float,
+        repel_range: float,
+    ) -> float:
+        """Return rudder adjustment from repulsion by nearby same-type drones."""
+        rudder_adjust = 0.0
+        for other_ent, other_tf in swarm:
+            if other_ent == ent:
+                continue
+            dx = other_tf.x - tf.x
+            dy = other_tf.y - tf.y
+            d_sq = dx * dx + dy * dy
+            if d_sq > repel_range_sq or d_sq < 1.0:
+                continue
+            dist = math.sqrt(d_sq)
+            strength = (1.0 - dist / repel_range) * DRONE_REPEL_WEIGHT
+            rudder_adjust -= steer_toward(tf, other_tf.x, other_tf.y) * strength
+        return rudder_adjust
 
     def _shahed_ai(
         self,
@@ -376,7 +500,10 @@ class BotAIProcessor(esper.Processor):
         tf: Transform,
         bot: BotControl,
         frigate_transforms: list[Transform],
+        shahed_swarm: list[tuple[int, Transform]],
+        drone_target_counts: dict[int, int],
     ) -> None:
+        # Check if jammed by a nearby frigate
         jammed = False
         for f_tf in frigate_transforms:
             dx = f_tf.x - tf.x
@@ -385,49 +512,55 @@ class BotAIProcessor(esper.Processor):
                 jammed = True
                 break
 
-        if not jammed:
-            best_dist_sq = float("inf")
-            best_tf: Transform | None = None
-            for _, (t_tf, t_faction, t_health) in esper.get_components(
-                Transform, Faction, Health
-            ):
-                if t_faction.name == "civilian" and t_health.hp > 0:
-                    dx = t_tf.x - tf.x
-                    dy = t_tf.y - tf.y
-                    d_sq = dx * dx + dy * dy
-                    if d_sq < best_dist_sq:
-                        best_dist_sq = d_sq
-                        best_tf = t_tf
-            if best_tf is not None:
-                bot.rudder = steer_toward(tf, best_tf.x, best_tf.y)
-            else:
-                bot.rudder = 0.0
-        else:
+        if jammed:
             bot.rudder = 0.0
+            bot.throttle = 1.0
+            return
 
+        # Pick target using pressure scoring (re-evaluated every tick)
+        target_tf = self._pick_drone_target(
+            tf, bot, ("civilian",), float("inf"), drone_target_counts
+        )
+
+        rudder = 0.0
+        if target_tf is not None:
+            rudder = steer_toward(tf, target_tf.x, target_tf.y)
+
+        # Drone-drone repulsion
+        rudder += self._drone_repulsion(
+            ent, tf, shahed_swarm,
+            DRONE_REPEL_RANGE_SHAHED_SQ, DRONE_REPEL_RANGE_SHAHED,
+        )
+
+        bot.rudder = max(-1.0, min(1.0, rudder))
         bot.throttle = 1.0
 
-    def _quadcopter_ai(self, ent: int, tf: Transform, bot: BotControl) -> None:
-        best_dist_sq = QUADCOPTER_VISUAL_RANGE_SQ
-        best_tf: Transform | None = None
+    def _quadcopter_ai(
+        self,
+        ent: int,
+        tf: Transform,
+        bot: BotControl,
+        quad_swarm: list[tuple[int, Transform]],
+        drone_target_counts: dict[int, int],
+    ) -> None:
+        # Pick target using pressure scoring (re-evaluated every tick)
+        target_tf = self._pick_drone_target(
+            tf, bot, ("civilian", "us"), QUADCOPTER_VISUAL_RANGE_SQ,
+            drone_target_counts,
+        )
 
-        for _, (t_tf, t_faction, t_health) in esper.get_components(Transform, Faction, Health):
-            if t_health.hp <= 0:
-                continue
-            if t_faction.name not in ("civilian", "us"):
-                continue
-            dx = t_tf.x - tf.x
-            dy = t_tf.y - tf.y
-            d_sq = dx * dx + dy * dy
-            if d_sq < best_dist_sq:
-                best_dist_sq = d_sq
-                best_tf = t_tf
-
-        if best_tf is not None:
-            bot.rudder = steer_toward(tf, best_tf.x, best_tf.y)
+        if target_tf is not None:
+            rudder = steer_toward(tf, target_tf.x, target_tf.y)
         else:
-            bot.rudder = steer_toward(tf, STRAIT_CENTER[0], STRAIT_CENTER[1])
+            rudder = steer_toward(tf, STRAIT_CENTER[0], STRAIT_CENTER[1])
 
+        # Drone-drone repulsion
+        rudder += self._drone_repulsion(
+            ent, tf, quad_swarm,
+            DRONE_REPEL_RANGE_QUAD_SQ, DRONE_REPEL_RANGE_QUAD,
+        )
+
+        bot.rudder = max(-1.0, min(1.0, rudder))
         bot.throttle = 1.0
 
     # ------------------------------------------------------------------

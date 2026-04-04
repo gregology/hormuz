@@ -32,14 +32,12 @@ spawns:
   - {position: [26.13102, 54.86660], heading: 5, scatter_radius: 2000, group: gulf, label: Persian Gulf}
   - {position: [24.93806, 58.77596], heading: 3.14159, scatter_radius: 2000, group: oman, label: Gulf of Oman Arrival}
   quadcopter:
-  - {position: [26.26139, 55.30789], heading: 4.5, scatter_radius: 500, label: Quad Launch Central 1}
-  - {position: [26.56370, 55.30480], heading: 1.6, scatter_radius: 500, label: Quad Launch Central 2}
-  - {position: [26.64139, 55.87989], heading: 1.6, scatter_radius: 500, label: Quad Launch Strait 1}
-  - {position: [26.79009, 56.03430], heading: 1.8, scatter_radius: 500, label: Quad Launch Strait 2}
-  - {position: [26.84722, 56.35455], heading: 2, scatter_radius: 500, label: Quad Launch Strait 3}
-  - {position: [26.40315, 57.12258], scatter_radius: 500, label: Quad Launch East 1}
-  - {position: [25.78759, 57.32581], heading: 2.4, scatter_radius: 500, label: Quad Launch East 2}
-  - {position: [25.56000, 58.19458], heading: 2, scatter_radius: 500, label: Quad Launch East 3}
+  - {position: [26.62537, 55.34497], heading: 1.6, scatter_radius: 500, label: Quad Launch Central 2}
+  - {position: [26.81093, 55.94994], heading: 1.8, scatter_radius: 1000, label: Quad Launch Strait 2}
+  - {position: [26.43278, 57.19736], heading: 2.5, scatter_radius: 1000, label: Quad Launch East 1}
+  - {position: [25.86759, 57.39895], heading: 2.4, scatter_radius: 1000, label: Quad Launch East 2}
+  - {position: [25.65519, 58.15049], heading: 2, scatter_radius: 1000, label: Quad Launch East 3}
+  - {position: [26.63046, 54.77998], heading: 1, scatter_radius: 1000, label: Quad Launch West 1}
   bases:
   - {position: [26.22000, 50.60002], heading: 0, scatter_radius: 500, label: NSA Bahrain (5th Fleet)}
   - {position: [25.12000, 51.32005], heading: 0, scatter_radius: 500, label: Al Udeid Air Base (Qatar)}

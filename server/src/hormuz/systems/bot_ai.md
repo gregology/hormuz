@@ -38,34 +38,56 @@ the impact site.
 
 Three rules:
 
-1. **Attract toward tanker presence.** Steer toward the nearest tanker within 5000u.
-   If closer than 800u (offset distance), match the tanker's heading direction instead
-   of closing further.
+1. **Escort the least-contested tanker.** Pick a tanker using pressure scoring
+   (`1 / (distance² × (1 + frigates_already_escorting_it))`). Steer toward it;
+   if closer than 800u (offset distance), match the tanker's heading direction.
+   Uses lane waypoints for long-distance navigation to avoid islands.
 2. **Rush toward danger.** Steer toward the nearest danger scent within 8000u.
    Strength scales with scent freshness. Full throttle when danger is active.
 3. **Repel from other frigates.** Steer away from any frigate within 2000u. Closer
    frigates push harder.
 
-If no tankers or danger are nearby, the frigate patrols toward the strait center
-using shipping lane waypoints.
+If no tankers or danger exist, the frigate patrols toward the strait center.
 
-**Emergent effect:** In peacetime, frigates distribute evenly around the tanker column
-(presence attraction pulls them in, mutual repulsion spaces them out). When an attack
-happens, danger scent pulls nearby frigates toward the threat — they concentrate
-firepower where it's needed. As the scent fades (60s), they redistribute back to
-even coverage. The number of frigates doesn't matter — 2 frigates naturally cover
-front and back, 4 cover roughly cardinal positions, 8 form an even ring.
+**Emergent effect:** With 8 frigates and 20 tankers, pressure scoring distributes
+frigates roughly 1 per 2–3 tankers across the entire shipping lane — no clustering
+around Qeshm or any single group. Each frigate follows its assigned tanker for the
+full transit. When a tanker is sunk, its frigate automatically redistributes to
+the next least-protected tanker. When an attack happens, danger scent temporarily
+pulls nearby frigates toward the threat. As the scent fades (60s), they return to
+their assigned tankers.
+
+Frigates and drones use separate pressure pools, so a frigate escorting a tanker
+doesn't affect which tanker a shahed targets (and vice versa).
 
 ### Iranian Drones
 
+Both drone types use the same two-rule swarm system:
+
+1. **Target pressure avoidance** — score each potential target by
+   `1 / (distance² × (1 + drones_already_targeting_it))`. Pick the highest-scoring
+   target. The current target gets a stickiness bonus (`TARGET_STICKINESS = 0.5`) to
+   prevent oscillation, but if pressure is high enough the drone switches. Counts are
+   updated live during the dispatch loop so each successive drone sees accurate pressure.
+
+2. **Drone-drone repulsion** — steer away from nearby same-type drones (shaheds: 1000u,
+   quadcopters: 500u). This diversifies approach angles on the same target.
+
+**Emergent effect:** Drones naturally distribute across multiple targets (no piling on
+one ship) and approach each target from different angles (no single firing arc for CIWS
+to cover). Two drones on the same target fan out into a pincer. Eight drones across
+four tankers distribute 2-per-target. If one target is destroyed, its drones
+immediately redistribute to others.
+
 #### `shahed_intercept`
-Fly toward nearest civilian tanker at full throttle. If jammed by a nearby frigate's
-RF (within `JAM_RADIUS`), lose steering — fly straight until out of jam range or dead.
+Targets: civilian tankers only. Unlimited detection range (they can see any tanker).
+If jammed by a nearby frigate's RF (within `JAM_RADIUS`), lose steering — fly straight
+until out of jam range or dead. Repulsion range: 1000u.
 
 #### `quadcopter_intercept`
-Autonomous (immune to RF jamming). Target both civilian tankers and US frigates.
-Better optics (8000u detection range). If no target visible, head toward strait center.
-Limited by battery.
+Targets: civilian tankers and US frigates. Detection range: 8000u (FPV camera).
+Autonomous (immune to RF jamming). If no target visible, head toward strait center.
+Limited by battery. Repulsion range: 500u (tighter formation, but diverges on approach).
 
 ## Danger Scent System
 
@@ -108,8 +130,8 @@ after a grace period.
 | `TANKER_BRAKE_MIN_THROTTLE` | 0.4 | Minimum throttle when braking |
 | `TANKER_DANGER_RANGE` | 3000u | Tanker danger sensing radius |
 | `TANKER_DANGER_RUDDER` | 0.3 | Max rudder bias from danger |
-| `FRIGATE_PRESENCE_RANGE` | 5000u | Frigate tanker sensing radius |
-| `FRIGATE_OFFSET_DIST` | 800u | Desired distance from nearest tanker |
+
+| `FRIGATE_OFFSET_DIST` | 800u | Desired distance from assigned tanker |
 | `FRIGATE_DANGER_RANGE` | 8000u | Frigate danger sensing radius |
 | `FRIGATE_REPEL_RANGE` | 2000u | Frigate-frigate repulsion radius |
 | `WEIGHT_PRESENCE` | 0.6 | Steering weight for tanker attraction |
@@ -117,3 +139,7 @@ after a grace period.
 | `WEIGHT_REPEL` | 0.5 | Steering weight for frigate repulsion |
 | `FRIGATE_CRUISE_THROTTLE` | 0.6 | Throttle when near tankers |
 | `DANGER_SCENT_DURATION` | 60s | Time until danger scent expires |
+| `DRONE_REPEL_RANGE_SHAHED` | 1000u | Shahed-shahed repulsion radius |
+| `DRONE_REPEL_RANGE_QUAD` | 500u | Quadcopter-quadcopter repulsion radius |
+| `DRONE_REPEL_WEIGHT` | 0.4 | Steering weight for drone repulsion |
+| `TARGET_STICKINESS` | 0.5 | Score bonus for keeping current target |
