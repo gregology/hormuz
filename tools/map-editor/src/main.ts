@@ -47,6 +47,7 @@ editor.getHitRadius = () => overlay.hitRadius(cam.zoom);
 
 function rebuildOverlay(): void {
 	overlay.rebuild(editor);
+	threeMap.updateLanes(editor.data.lanes);
 }
 
 const ui = buildUI(

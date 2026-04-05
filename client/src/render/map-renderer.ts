@@ -126,7 +126,10 @@ function createHeightmapTexture(): THREE.DataTexture {
 }
 
 /** Collect line-segment vertex pairs for a closed polygon border. */
-function polygonBorderSegments(poly: readonly [number, number][], y: number): THREE.Vector3[] {
+function polygonBorderSegments(
+	poly: readonly [number, number][],
+	y: number,
+): THREE.Vector3[] {
 	const pts: THREE.Vector3[] = [];
 	for (let i = 0; i < poly.length; i++) {
 		const a = poly[i];
@@ -135,6 +138,16 @@ function polygonBorderSegments(poly: readonly [number, number][], y: number): TH
 		pts.push(new THREE.Vector3(b[0], y, b[1]));
 	}
 	return pts;
+}
+
+/** Configure a material to only render where there is no land (stencil ≠ 1). */
+function applyWaterOnlyStencil(mat: THREE.Material): void {
+	mat.stencilWrite = true;
+	mat.stencilFunc = THREE.NotEqualStencilFunc;
+	mat.stencilRef = 1;
+	mat.stencilFail = THREE.KeepStencilOp;
+	mat.stencilZFail = THREE.KeepStencilOp;
+	mat.stencilZPass = THREE.KeepStencilOp;
 }
 
 function createFilledShapes(
@@ -183,9 +196,12 @@ export class ThreeMapRenderer {
 	private geometries: THREE.BufferGeometry[] = [];
 	private materials: THREE.Material[] = [];
 	private textures: THREE.Texture[] = [];
+	private laneGeometries: THREE.BufferGeometry[] = [];
+	private laneMaterials: THREE.Material[] = [];
 
 	constructor(layers: MapLayers = DEFAULT_LAYERS) {
 		this.buildWater();
+		this.buildLandStencil();
 		this.depthZoneGroup = this.buildDepthZones();
 		this.buildLandFills();
 		this.terrainMesh = this.buildTerrain();
@@ -205,6 +221,23 @@ export class ThreeMapRenderer {
 		this.waterUniforms.uZoom.value = zoom;
 	}
 
+	/** Rebuild lane geometry from external (editor) data. */
+	updateLanes(lanes: {
+		inbound: readonly [number, number][];
+		outbound: readonly [number, number][];
+		deepWaterRoute: readonly [number, number][];
+	}): void {
+		const wasVisible = this.laneGroup.visible;
+		this.root.remove(this.laneGroup);
+		this.disposeLaneGroup();
+		this.laneGroup = this.buildLanesFrom(
+			lanes.inbound,
+			lanes.outbound,
+			lanes.deepWaterRoute,
+		);
+		this.laneGroup.visible = wasVisible;
+	}
+
 	setLayers(layers: MapLayers): void {
 		this.depthZoneGroup.visible = layers.showDepthZones;
 		this.terrainMesh.visible = layers.showTerrain;
@@ -219,6 +252,7 @@ export class ThreeMapRenderer {
 		for (const g of this.geometries) g.dispose();
 		for (const m of this.materials) m.dispose();
 		for (const t of this.textures) t.dispose();
+		this.disposeLaneGroup();
 	}
 
 	// --- Resource tracking ---
@@ -255,6 +289,39 @@ export class ThreeMapRenderer {
 		this.root.add(mesh);
 	}
 
+	/** Stencil-write land polygons so depth zones can be clipped to water only. */
+	private buildLandStencil(): void {
+		const allLandPolys = [
+			...IRAN_COAST_POLYS,
+			...ARABIAN_COAST_POLYS,
+			...ISLAND_POLYGONS.map((i) => i.polygon),
+		];
+		const shapes = allLandPolys
+			.filter((p) => p.length >= 3)
+			.map(polygonToShape);
+		if (shapes.length === 0) return;
+
+		const geo = this.geo(new THREE.ShapeGeometry(shapes));
+		shapeGeoToXZ(geo);
+		const mat = this.mat(
+			new THREE.MeshBasicMaterial({
+				colorWrite: false,
+				depthWrite: false,
+				stencilWrite: true,
+				stencilRef: 1,
+				stencilFunc: THREE.AlwaysStencilFunc,
+				stencilFail: THREE.KeepStencilOp,
+				stencilZFail: THREE.KeepStencilOp,
+				stencilZPass: THREE.ReplaceStencilOp,
+				side: THREE.DoubleSide,
+			}),
+		);
+		const mesh = new THREE.Mesh(geo, mat);
+		mesh.position.y = Y_DEPTH_ZONES;
+		mesh.renderOrder = 0;
+		this.root.add(mesh);
+	}
+
 	private buildDepthZones(): THREE.Group {
 		const group = new THREE.Group();
 		group.renderOrder = 1;
@@ -269,6 +336,7 @@ export class ThreeMapRenderer {
 			);
 			this.geo(geo);
 			this.mat(mat);
+			applyWaterOnlyStencil(mat);
 			mesh.renderOrder = 1;
 			group.add(mesh);
 		}
@@ -283,6 +351,7 @@ export class ThreeMapRenderer {
 			);
 			this.geo(geo);
 			this.mat(mat);
+			applyWaterOnlyStencil(mat);
 			mesh.renderOrder = 1;
 			group.add(mesh);
 		}
@@ -432,6 +501,7 @@ export class ThreeMapRenderer {
 			);
 			this.geo(geo);
 			this.mat(mat);
+			applyWaterOnlyStencil(mat);
 			group.add(mesh);
 
 			const borderPts: THREE.Vector3[] = [];
@@ -442,6 +512,7 @@ export class ThreeMapRenderer {
 			const bm = this.mat(
 				new THREE.LineBasicMaterial({ color: COLORS.shoalBorder }),
 			);
+			applyWaterOnlyStencil(bm);
 			group.add(new THREE.LineSegments(bg, bm));
 		}
 
@@ -454,6 +525,7 @@ export class ThreeMapRenderer {
 				depthWrite: false,
 			}),
 		);
+		applyWaterOnlyStencil(rockMat);
 		for (const rock of ROCKS) {
 			const g = this.geo(new THREE.CircleGeometry(rock.radius, 24));
 			shapeGeoToXZ(g);
@@ -467,6 +539,14 @@ export class ThreeMapRenderer {
 	}
 
 	private buildLanes(): THREE.Group {
+		return this.buildLanesFrom(LANE_INBOUND, LANE_OUTBOUND, DEEP_WATER_ROUTE);
+	}
+
+	private buildLanesFrom(
+		inbound: readonly [number, number][],
+		outbound: readonly [number, number][],
+		deepWaterRoute: readonly [number, number][],
+	): THREE.Group {
 		const group = new THREE.Group();
 		group.renderOrder = 5;
 
@@ -478,27 +558,34 @@ export class ThreeMapRenderer {
 		) => {
 			if (line.length < 2) return;
 			const points = line.map(([x, y]) => new THREE.Vector3(x, Y_OVERLAYS, y));
-			const g = this.geo(new THREE.BufferGeometry().setFromPoints(points));
-			const m = this.mat(
-				new THREE.LineDashedMaterial({
-					color,
-					dashSize,
-					gapSize,
-					transparent: true,
-					opacity: 0.6,
-				}),
-			);
+			const g = new THREE.BufferGeometry().setFromPoints(points);
+			this.laneGeometries.push(g);
+			const m = new THREE.LineDashedMaterial({
+				color,
+				dashSize,
+				gapSize,
+				transparent: true,
+				opacity: 0.6,
+			});
+			this.laneMaterials.push(m);
 			const line3 = new THREE.Line(g, m);
 			line3.computeLineDistances();
 			group.add(line3);
 		};
 
-		addLane(DEEP_WATER_ROUTE, COLORS.deepWaterRoute, 800, 500);
-		addLane(LANE_INBOUND, COLORS.laneInbound, 600, 400);
-		addLane(LANE_OUTBOUND, COLORS.laneOutbound, 600, 400);
+		addLane(deepWaterRoute, COLORS.deepWaterRoute, 800, 500);
+		addLane(inbound, COLORS.laneInbound, 600, 400);
+		addLane(outbound, COLORS.laneOutbound, 600, 400);
 
 		this.root.add(group);
 		return group;
+	}
+
+	private disposeLaneGroup(): void {
+		for (const g of this.laneGeometries) g.dispose();
+		for (const m of this.laneMaterials) m.dispose();
+		this.laneGeometries = [];
+		this.laneMaterials = [];
 	}
 
 	private buildGrid(gridSize: number): THREE.Group {

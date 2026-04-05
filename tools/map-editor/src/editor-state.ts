@@ -142,12 +142,12 @@ export class EditorState {
 	getItemVertices(index: number): [number, number][] | null {
 		const layer = this.activeLayer;
 		const items = this.getItems();
+		if (layer.kind === "polyline") return items as [number, number][];
 		const item = items[index];
 		if (layer.kind === "polygon") {
 			if (layer.key === "exclusionZones") return (item as EditableZone).polygon;
 			return item as [number, number][];
 		}
-		if (layer.kind === "polyline") return item as [number, number][];
 		return null;
 	}
 
