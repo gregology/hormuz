@@ -39,23 +39,30 @@ the impact site.
 Three rules:
 
 1. **Escort the least-contested tanker.** Pick a tanker using pressure scoring
-   (`1 / (distance² × (1 + frigates_already_escorting_it))`). Steer toward it;
-   if closer than 800u (offset distance), match the tanker's heading direction.
-   Uses lane waypoints for long-distance navigation to avoid islands.
+   (`1 / (distance × (1 + frigates_already_escorting_it)³)`). Linear distance
+   (not squared) and cubic pressure ensure that unescorted tankers far away
+   outscore crowded nearby ones — a tanker 10,000u away with 0 escorts beats
+   a tanker 1,000u away with 3 escorts. Steer toward it; if closer than 800u
+   (offset distance), match the tanker's heading direction. Uses lane waypoints
+   for long-distance navigation to avoid islands.
 2. **Rush toward danger.** Steer toward the nearest danger scent within 8000u.
    Strength scales with scent freshness. Full throttle when danger is active.
 3. **Repel from other frigates.** Steer away from any frigate within 2000u. Closer
    frigates push harder.
 
-If no tankers or danger exist, the frigate patrols toward the strait center.
+If no tankers or danger exist, the frigate patrols toward the least-covered
+**patrol anchor** — the lane entrance (west gate) or lane exit (east gate),
+whichever has fewer frigates nearby. This splits idle frigates across both
+ends of the shipping lane instead of bunching at the center.
 
-**Emergent effect:** With 8 frigates and 20 tankers, pressure scoring distributes
-frigates roughly 1 per 2–3 tankers across the entire shipping lane — no clustering
-around Qeshm or any single group. Each frigate follows its assigned tanker for the
-full transit. When a tanker is sunk, its frigate automatically redistributes to
-the next least-protected tanker. When an attack happens, danger scent temporarily
-pulls nearby frigates toward the threat. As the scent fades (60s), they return to
-their assigned tankers.
+**Emergent effect:** With 8 frigates and 20 tankers, the cubic pressure term
+ensures each tanker gets ~1 escort before any gets 2 — frigates distribute
+across the entire shipping lane rather than clustering around the nearest group.
+Each frigate follows its assigned tanker for the full transit. When a tanker is
+sunk, its frigate automatically redistributes to the next least-protected tanker.
+When an attack happens, danger scent temporarily pulls nearby frigates toward
+the threat. As the scent fades (60s), they return to their assigned tankers.
+When no tankers are present, frigates split between lane endpoints for coverage.
 
 Frigates and drones use separate pressure pools, so a frigate escorting a tanker
 doesn't affect which tanker a shahed targets (and vice versa).
@@ -138,6 +145,8 @@ after a grace period.
 | `WEIGHT_DANGER` | 1.0 | Steering weight for danger attraction |
 | `WEIGHT_REPEL` | 0.5 | Steering weight for frigate repulsion |
 | `FRIGATE_CRUISE_THROTTLE` | 0.6 | Throttle when near tankers |
+| `ESCORT_PRESSURE_POWER` | 3 | Exponent on (1+pressure) for escort scoring |
+| `PATROL_ANCHORS` | lane endpoints | West/east gate patrol positions |
 | `DANGER_SCENT_DURATION` | 60s | Time until danger scent expires |
 | `DRONE_REPEL_RANGE_SHAHED` | 1000u | Shahed-shahed repulsion radius |
 | `DRONE_REPEL_RANGE_QUAD` | 500u | Quadcopter-quadcopter repulsion radius |

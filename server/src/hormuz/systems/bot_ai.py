@@ -54,6 +54,14 @@ WEIGHT_REPEL = 0.5
 # Frigate cruise throttle when near tankers
 FRIGATE_CRUISE_THROTTLE = 0.6
 
+# Escort pressure scoring: use d^1 (linear) and (1+pressure)^3 (cubic)
+# so unescorted tankers far away outscore crowded nearby ones
+ESCORT_PRESSURE_POWER = 3
+
+# Patrol anchors: lane endpoints where frigates idle when no tankers exist.
+# Derived from the first/last waypoints of the shipping lanes.
+PATROL_ANCHORS: list[tuple[float, float]] = []
+
 # Shahed visual detection range — no radar, must see targets visually
 SHAHED_VISUAL_RANGE = 5000.0
 SHAHED_VISUAL_RANGE_SQ = SHAHED_VISUAL_RANGE * SHAHED_VISUAL_RANGE
@@ -91,6 +99,19 @@ _ROUTE_CONFIG = {
     "oman": (LANE_OUTBOUND, OMAN_DESTINATION["position"]),
     "gulf": (LANE_INBOUND, GULF_DESTINATION["position"]),
 }
+
+
+def _init_patrol_anchors() -> None:
+    """Populate PATROL_ANCHORS from lane endpoints (called once at import)."""
+    if PATROL_ANCHORS:
+        return
+    # West gate: start of outbound / end of inbound
+    PATROL_ANCHORS.append(LANE_OUTBOUND[0])
+    # East gate: end of outbound / start of inbound
+    PATROL_ANCHORS.append(LANE_OUTBOUND[-1])
+
+
+_init_patrol_anchors()
 
 
 def steer_toward(tf: Transform, target_x: float, target_y: float) -> float:
@@ -334,8 +355,10 @@ class BotAIProcessor(esper.Processor):
         rudder_sum = 0.0
 
         # Rule 1: Pick a tanker using pressure scoring (least-contested, closest)
+        # Linear distance + cubic pressure so unescorted far tankers outscore crowded near ones
         tanker_tf = self._pick_drone_target(
-            tf, bot, ("civilian",), float("inf"), escort_target_counts
+            tf, bot, ("civilian",), float("inf"), escort_target_counts,
+            pressure_power=ESCORT_PRESSURE_POWER, use_linear_distance=True,
         )
 
         if tanker_tf is not None:
@@ -382,18 +405,19 @@ class BotAIProcessor(esper.Processor):
             repel_strength = (1.0 - dist / FRIGATE_REPEL_RANGE) * WEIGHT_REPEL
             rudder_sum -= steer_toward(tf, f_tf.x, f_tf.y) * repel_strength
 
-        # No tanker or danger — patrol toward strait center
+        # No tanker or danger — patrol toward the least-covered lane endpoint
         if tanker_tf is None and danger is None:
-            dx = STRAIT_CENTER[0] - tf.x
-            dy = STRAIT_CENTER[1] - tf.y
+            px, py = self._pick_patrol_anchor(tf, frigate_transforms)
+            dx = px - tf.x
+            dy = py - tf.y
             if dx * dx + dy * dy > TRANSIT_DIST_SQ:
-                wp = _find_lane_waypoint(tf.x, tf.y, STRAIT_CENTER[0], STRAIT_CENTER[1])
+                wp = _find_lane_waypoint(tf.x, tf.y, px, py)
                 if wp is not None:
                     rudder_sum = steer_toward(tf, wp[0], wp[1])
                 else:
-                    rudder_sum = steer_toward(tf, STRAIT_CENTER[0], STRAIT_CENTER[1])
+                    rudder_sum = steer_toward(tf, px, py)
             else:
-                rudder_sum = steer_toward(tf, STRAIT_CENTER[0], STRAIT_CENTER[1])
+                rudder_sum = steer_toward(tf, px, py)
 
         bot.rudder = max(-1.0, min(1.0, rudder_sum))
 
@@ -422,6 +446,8 @@ class BotAIProcessor(esper.Processor):
         factions: tuple[str, ...],
         max_range_sq: float,
         drone_target_counts: dict[int, int],
+        pressure_power: int = 1,
+        use_linear_distance: bool = False,
     ) -> Transform | None:
         """Score all valid targets by distance and pressure, pick the best.
 
@@ -429,6 +455,13 @@ class BotAIProcessor(esper.Processor):
         oscillation, but if pressure is high enough a drone will switch to a less
         contested target. Updates drone_target_counts in-place so subsequent drones
         in the same tick see accurate pressure.
+
+        Args:
+            pressure_power: exponent on (1 + pressure) term. Higher = stronger
+                aversion to crowded targets. Drones use 1 (default), escorts use 3.
+            use_linear_distance: if True, score uses d instead of d². Escorts use
+                linear distance so far-away unescorted tankers can outscore nearby
+                crowded ones.
         """
         old_target = bot.target_entity
         best_score = -1.0
@@ -446,9 +479,10 @@ class BotAIProcessor(esper.Processor):
             if d_sq > max_range_sq:
                 continue
             d_sq = max(d_sq, 1.0)
-            # Pressure: how many other drones are already targeting this entity
+            dist_term = math.sqrt(d_sq) if use_linear_distance else d_sq
+            # Pressure: how many other drones/escorts are already targeting this entity
             pressure = drone_target_counts.get(t_ent, 0)
-            score = 1.0 / (d_sq * (1 + pressure))
+            score = 1.0 / (dist_term * (1 + pressure) ** pressure_power)
             # Stickiness: current target gets a bonus to prevent oscillation
             if t_ent == bot.target_entity:
                 score *= 1.0 + TARGET_STICKINESS
@@ -470,6 +504,42 @@ class BotAIProcessor(esper.Processor):
 
         bot.target_entity = best_ent
         return best_tf
+
+    @staticmethod
+    def _pick_patrol_anchor(
+        tf: Transform,
+        frigate_transforms: list[Transform],
+    ) -> tuple[float, float]:
+        """Pick the patrol anchor (lane endpoint) with fewest nearby frigates."""
+        best_anchor = PATROL_ANCHORS[0]
+        best_pressure = float("inf")
+
+        for anchor in PATROL_ANCHORS:
+            # Count frigates closer to this anchor than to any other
+            count = 0
+            for f_tf in frigate_transforms:
+                if f_tf is tf:
+                    continue
+                fd_sq = (f_tf.x - anchor[0]) ** 2 + (f_tf.y - anchor[1]) ** 2
+                closer_to_other = False
+                for other in PATROL_ANCHORS:
+                    if other is anchor:
+                        continue
+                    od_sq = (f_tf.x - other[0]) ** 2 + (f_tf.y - other[1]) ** 2
+                    if od_sq < fd_sq:
+                        closer_to_other = True
+                        break
+                if not closer_to_other:
+                    count += 1
+            # Tiebreak: prefer the anchor closer to this frigate
+            d_sq = (tf.x - anchor[0]) ** 2 + (tf.y - anchor[1]) ** 2
+            # Small distance bias so equal-pressure anchors prefer the nearer one
+            pressure = count + d_sq * 1e-12
+            if pressure < best_pressure:
+                best_pressure = pressure
+                best_anchor = anchor
+
+        return best_anchor
 
     @staticmethod
     def _drone_repulsion(
