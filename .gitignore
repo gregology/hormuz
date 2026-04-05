@@ -46,3 +46,6 @@ shared/scripts/.cache/
 .claude/
 .pi/
 **CLAUDE.md
+
+# Fallow analysis cache
+.fallow/

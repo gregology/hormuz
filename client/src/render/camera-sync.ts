@@ -37,7 +37,6 @@
  */
 
 import * as THREE from "three";
-import type { Camera } from "./camera";
 
 /**
  * Project a Three.js world point to screen pixels using the given
@@ -69,25 +68,4 @@ export function gameToThree(
 	return new THREE.Vector3(wx, height, wy);
 }
 
-/**
- * Verify that the Three.js camera projection matches the 2D isometric
- * worldToScreen for a given point. Returns the pixel error.
- */
-export function projectionError(
-	camera: THREE.OrthographicCamera,
-	cam: Camera,
-	wx: number,
-	wy: number,
-	height: number,
-	worldToScreen: (cam: Camera, wx: number, wy: number) => { x: number; y: number },
-): number {
-	const expected = worldToScreen(cam, wx, wy);
-	expected.y -= height * cam.zoom;
 
-	const threePoint = gameToThree(wx, wy, height);
-	const actual = threeToScreen(camera, threePoint, cam.screenWidth, cam.screenHeight);
-
-	const dx = actual.x - expected.x;
-	const dy = actual.y - expected.y;
-	return Math.sqrt(dx * dx + dy * dy);
-}

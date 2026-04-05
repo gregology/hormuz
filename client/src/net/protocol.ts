@@ -7,14 +7,14 @@ import { decode, encode } from "@msgpack/msgpack";
 
 // Server -> Client
 export const MSG_FULL_SNAPSHOT = 1;
-export const MSG_SNAPSHOT_DELTA = 2;
+// const MSG_SNAPSHOT_DELTA = 2;
 export const MSG_EVENT = 3;
 export const MSG_ASSIGN_VEHICLE = 4;
 export const MSG_WAR_COST = 5;
 
 // Client -> Server
-export const MSG_INPUT = 10;
-export const MSG_HEARTBEAT = 11;
+const MSG_INPUT = 10;
+// const MSG_HEARTBEAT = 11;
 
 // Vehicle type index -> name
 const VEHICLE_TYPES = [

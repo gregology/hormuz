@@ -21,7 +21,7 @@ import { CIWS_MUZZLE_OFFSET, CIWS_TURRET_POS } from "./vehicle-meshes";
 // Server-shared values sourced from YAML; visual-only params are local.
 // ---------------------------------------------------------------------------
 
-export const CIWS_PARAMS = {
+const CIWS_PARAMS = {
 	/** Turret rotation speed in rad/s. */
 	rotationSpeed: Math.PI,
 	/** Seconds between burst starts. */
@@ -48,7 +48,7 @@ export const CIWS_PARAMS = {
 	muzzleFlashDuration: 0.06,
 };
 
-export type CiwsParams = typeof CIWS_PARAMS;
+type CiwsParams = typeof CIWS_PARAMS;
 
 // ---------------------------------------------------------------------------
 // Constants

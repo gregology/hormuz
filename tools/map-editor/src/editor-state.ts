@@ -513,7 +513,7 @@ function loadMapData(): EditableMapData {
 }
 
 // Expose for convenience
-export { getLayerItems };
+{ getLayerItems };
 
 // ---------------------------------------------------------------------------
 // Geometry utilities

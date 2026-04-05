@@ -11,20 +11,12 @@
  */
 
 // Re-export generated map data
-export type {
-	Point,
-	Polygon,
-	Polyline,
-	SpawnPoint,
-	Rock,
-	ExclusionZone,
-} from "../generated/map_data";
+export type { Polygon } from "../generated/map_data";
 
 export {
 	IRAN_SPAWNS,
 	US_SPAWNS,
 	TANKER_SPAWNS,
-	QUADCOPTER_SPAWNS,
 	US_BASES,
 	LANE_INBOUND,
 	LANE_OUTBOUND,
@@ -37,13 +29,7 @@ export {
 } from "../generated/map_data";
 
 // Re-export coastlines (generated from Natural Earth data, separate pipeline)
-export {
-	IRAN_COAST,
-	IRAN_COAST_POLYS,
-	ARABIAN_COAST,
-	ARABIAN_COAST_POLYS,
-	ISLAND_POLYGONS,
-} from "./coastlines";
+export { ISLAND_POLYGONS } from "./coastlines";
 
 // ---------------------------------------------------------------------------
 // Map bounds
@@ -64,17 +50,6 @@ const ORIGIN_LAT = 30.5;
 const LON_SCALE = 9708;
 const LAT_SCALE = 10800;
 
-export function geo(lat: number, lon: number): [number, number] {
-	return [
-		Math.round((lon - ORIGIN_LON) * LON_SCALE),
-		Math.round((ORIGIN_LAT - lat) * LAT_SCALE),
-	];
-}
-
 export function toLatLon(gx: number, gy: number): [number, number] {
 	return [ORIGIN_LAT - gy / LAT_SCALE, ORIGIN_LON + gx / LON_SCALE];
 }
-
-/** Lane width: ~2 nautical miles each ≈ 3.7km ≈ 400 game units */
-export const LANE_WIDTH = 400;
-export const SEPARATION_ZONE_WIDTH = 200;

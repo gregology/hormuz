@@ -95,12 +95,9 @@ const LIGHT_DX = -0.5773; // -1/√3
 const LIGHT_DY = -0.5773; // -1/√3
 const LIGHT_DZ = 0.5773; //  1/√3
 
-// Dot product of the light with a flat surface normal (0, 0, 1)
-const FLAT_SHADE = LIGHT_DZ; // ≈ 0.577
-
 /**
  * Get the pre-computed hillshade value for a grid cell.
- * Returns the raw light dot product: 0 = full shadow, FLAT_SHADE ≈ 0.577 = flat,
+ * Returns the raw light dot product: 0 = full shadow, ~0.577 = flat,
  * up to ~1.0 = fully lit slope. Returns -1 for ocean cells.
  */
 export function getHillshade(col: number, row: number): number {
@@ -111,9 +108,6 @@ export function getHillshade(col: number, row: number): number {
 		return -1;
 	return hillshadeCache[row * HEIGHTMAP_WIDTH + col];
 }
-
-/** Flat ground baseline — used by the renderer to center shading. */
-export const HILLSHADE_FLAT = FLAT_SHADE;
 
 function computeHillshade(): Float32Array {
 	const shade = new Float32Array(HEIGHTMAP_WIDTH * HEIGHTMAP_HEIGHT);
@@ -152,59 +146,6 @@ function computeHillshade(): Float32Array {
 	}
 
 	return shade;
-}
-
-// ---------------------------------------------------------------------------
-// Hillshade texture (RGBA pixel data for GPU rendering)
-// ---------------------------------------------------------------------------
-
-/**
- * Generate RGBA pixel data for a hillshade texture.
- * The GPU's bilinear filtering produces smooth shading.
- * Shadows are black with alpha, highlights are white with alpha,
- * flat/ocean areas are fully transparent.
- */
-export function createHillshadePixels(): {
-	data: Uint8Array;
-	width: number;
-	height: number;
-} {
-	// Ensure hillshade is computed
-	if (!hillshadeCache) {
-		hillshadeCache = computeHillshade();
-	}
-
-	const w = HEIGHTMAP_WIDTH;
-	const h = HEIGHTMAP_HEIGHT;
-	const pixels = new Uint8Array(w * h * 4);
-	const DEAD_ZONE = 0.03;
-
-	for (let row = 0; row < h; row++) {
-		for (let col = 0; col < w; col++) {
-			const shade = hillshadeCache[row * w + col];
-			const idx = (row * w + col) * 4;
-
-			if (shade < 0) {
-				// Ocean — fully transparent
-				pixels[idx] = pixels[idx + 1] = pixels[idx + 2] = pixels[idx + 3] = 0;
-			} else if (shade < FLAT_SHADE - DEAD_ZONE) {
-				// Shadow
-				const intensity = (FLAT_SHADE - shade) / FLAT_SHADE;
-				pixels[idx] = pixels[idx + 1] = pixels[idx + 2] = 0;
-				pixels[idx + 3] = Math.round(intensity * 115);
-			} else if (shade > FLAT_SHADE + DEAD_ZONE) {
-				// Highlight
-				const intensity = (shade - FLAT_SHADE) / (1 - FLAT_SHADE);
-				pixels[idx] = pixels[idx + 1] = pixels[idx + 2] = 255;
-				pixels[idx + 3] = Math.round(intensity * 77);
-			} else {
-				// Flat — transparent
-				pixels[idx] = pixels[idx + 1] = pixels[idx + 2] = pixels[idx + 3] = 0;
-			}
-		}
-	}
-
-	return { data: pixels, width: w, height: h };
 }
 
 // ---------------------------------------------------------------------------

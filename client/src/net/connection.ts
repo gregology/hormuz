@@ -15,10 +15,10 @@ import {
 	encodeInput,
 } from "./protocol";
 
-export type SnapshotHandler = (snapshot: FullSnapshot) => void;
-export type AssignHandler = (msg: AssignVehicle) => void;
-export type WarCostHandler = (msg: WarCost) => void;
-export type EventHandler = (msg: GameEvent) => void;
+type SnapshotHandler = (snapshot: FullSnapshot) => void;
+type AssignHandler = (msg: AssignVehicle) => void;
+type WarCostHandler = (msg: WarCost) => void;
+type EventHandler = (msg: GameEvent) => void;
 
 export class GameConnection {
 	private ws: WebSocket | null = null;

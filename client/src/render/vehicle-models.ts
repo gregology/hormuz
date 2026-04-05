@@ -44,7 +44,7 @@ export interface FlatDetail {
 	tag?: string;
 }
 
-export interface VehicleModel {
+interface VehicleModel {
 	blocks: Block[];
 	details: FlatDetail[];
 }
@@ -53,7 +53,7 @@ export interface VehicleModel {
 // Color utilities
 // ---------------------------------------------------------------------------
 
-export function darken(color: number, factor: number): number {
+function darken(color: number, factor: number): number {
 	const r = ((color >> 16) & 0xff) * factor;
 	const g = ((color >> 8) & 0xff) * factor;
 	const b = (color & 0xff) * factor;

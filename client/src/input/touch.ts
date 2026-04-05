@@ -6,9 +6,9 @@
  * into the methods here.
  */
 
-export type VehicleMode = "ship" | "drone";
+type VehicleMode = "ship" | "drone";
 
-export interface TouchCallbacks {
+interface TouchCallbacks {
 	/** Called when up/down is pressed in ship mode. delta: +1 or -1. */
 	onThrottleAdjust: (delta: number) => void;
 	/** Called when the camera toggle button is tapped. */
