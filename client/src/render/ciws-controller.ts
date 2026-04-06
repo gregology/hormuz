@@ -12,7 +12,7 @@
 
 import * as THREE from "three";
 import type { EntityState } from "../game/entities";
-import { AUTOCANNON, RADAR_DETECTION } from "../generated/vehicles";
+import { AUTOCANNON, DETECTION_RANGE } from "../generated/vehicles";
 import { getElevation } from "../map/heightmap";
 import { CIWS_MUZZLE_OFFSET, CIWS_TURRET_POS } from "./vehicle-meshes";
 
@@ -58,8 +58,10 @@ const FRIGATE_SIZE = 100;
 const MAX_TRACERS = 512;
 const SQRT6 = Math.sqrt(6);
 
+// Frigate detection range² per target type (from radar model)
+const FRIGATE_DET = DETECTION_RANGE.frigate ?? {};
 const RADAR_RANGE_SQ: Record<string, number> = Object.fromEntries(
-	Object.entries(RADAR_DETECTION).map(([k, v]) => [k, v * v]),
+	Object.entries(FRIGATE_DET).map(([k, v]) => [k, (v ?? 0) * (v ?? 0)]),
 );
 
 // ---------------------------------------------------------------------------
@@ -205,7 +207,11 @@ export class CiwsController {
 		for (const e of entities) {
 			if (e.hp <= 0) continue;
 			if (e.vehicleType === "frigate") frigates.push(e);
-			else if (e.vehicleType === "shahed" || e.vehicleType === "quadcopter")
+			else if (
+				e.vehicleType === "shahed" ||
+				e.vehicleType === "quadcopter" ||
+				e.vehicleType === "speedboat"
+			)
 				drones.push(e);
 		}
 

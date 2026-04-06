@@ -52,3 +52,8 @@ server_messages:
       total_usd: uint64
       tankers_delivered: uint32
       tankers_sunk: uint32
+      frigates_sunk: uint32
+      shaheds_intercepted: uint32
+      quadcopters_intercepted: uint32
+      speedboats_sunk: uint32
+      players_online: uint32

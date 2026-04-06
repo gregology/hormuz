@@ -25,6 +25,7 @@ from hormuz.map_data import (
     random_frigate_oman_spawn,
     random_oman_spawn,
     random_quadcopter_spawn,
+    random_speedboat_spawn,
     random_tanker_spawn,
 )
 
@@ -134,7 +135,9 @@ class SpawnProcessor(esper.Processor):
                 else:
                     x, y, heading = random_frigate_oman_spawn()
             else:
-                if phys.vehicle_type == "quadcopter":
+                if phys.vehicle_type == "speedboat":
+                    x, y, heading = random_speedboat_spawn()
+                elif phys.vehicle_type == "quadcopter":
                     tanker_positions = self._get_tanker_positions()
                     x, y, heading = random_quadcopter_spawn(tanker_positions)
                 else:

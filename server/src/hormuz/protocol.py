@@ -76,6 +76,7 @@ def encode_war_cost(
     frigates_sunk: int,
     shaheds_intercepted: int,
     quadcopters_intercepted: int,
+    speedboats_sunk: int,
     players_online: int,
 ) -> bytes:
     return msgpack.packb(
@@ -87,6 +88,7 @@ def encode_war_cost(
             frigates_sunk,
             shaheds_intercepted,
             quadcopters_intercepted,
+            speedboats_sunk,
             players_online,
         ]
     )

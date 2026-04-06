@@ -97,6 +97,7 @@ function init() {
 		frigatesSunk: 0,
 		shahedsIntercepted: 0,
 		quadcoptersIntercepted: 0,
+		speedboatsSunk: 0,
 		playersOnline: 0,
 	};
 	let elapsedTime = 0;

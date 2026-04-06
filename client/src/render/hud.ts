@@ -15,6 +15,7 @@ export interface GameStats {
 	frigatesSunk: number;
 	shahedsIntercepted: number;
 	quadcoptersIntercepted: number;
+	speedboatsSunk: number;
 	playersOnline: number;
 }
 
@@ -341,6 +342,7 @@ export class HUD {
 			"frigatesSunk",
 			"shahedsIntercepted",
 			"quadcoptersIntercepted",
+			"speedboatsSunk",
 			"warCost",
 			"playersOnline",
 		];
@@ -473,6 +475,7 @@ export class HUD {
 		this.sitrepLines.frigatesSunk.textContent = `Frigates Sunk      ${fmt(stats.frigatesSunk)}`;
 		this.sitrepLines.shahedsIntercepted.textContent = `Shaheds Shot Down  ${fmt(stats.shahedsIntercepted)}`;
 		this.sitrepLines.quadcoptersIntercepted.textContent = `Quads Shot Down    ${fmt(stats.quadcoptersIntercepted)}`;
+		this.sitrepLines.speedboatsSunk.textContent = `Speedboats Sunk    ${fmt(stats.speedboatsSunk)}`;
 
 		const costStr = stats.totalUsd.toLocaleString("en-US", {
 			style: "currency",

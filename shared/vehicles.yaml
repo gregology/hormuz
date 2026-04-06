@@ -37,6 +37,10 @@ vehicles:
         - [-0.3, -0.09]
         - [0.1, -0.09]
         - [0.38, -0.085]
+      radar_cross_section: 50000
+      radar:
+        sensitivity: 300
+        max_range: 3000
       oil_cargo:
         loaded: true
         spill_on_death: true
@@ -92,6 +96,7 @@ vehicles:
         range: 100
         cooldown: 3.0
         arc: all
+      radar_cross_section: 8
     ai_behavior: swarm_attack
     sprite: speedboat_iran
 
@@ -135,6 +140,10 @@ vehicles:
         damage: 40
         range: 400
         cooldown: 1.5
+      radar_cross_section: 5000
+      radar:
+        sensitivity: 2378
+        max_range: 20000
       rf_jammer:
         active: true
     ai_behavior: escort
@@ -173,7 +182,7 @@ vehicles:
         - [-0.4, 0]
         - [-0.2, -0.35]
         - [0.15, -0.1]
-      radar_detection_range: 10000
+      radar_cross_section: 0.5
     ai_behavior: shahed_intercept
     sprite: shahed
 
@@ -208,7 +217,7 @@ vehicles:
         - [-0.38, 0.38]
         - [-0.38, -0.38]
         - [0.38, -0.38]
-      radar_detection_range: 750
+      radar_cross_section: 0.01
     ai_behavior: quadcopter_intercept
     sprite: quadcopter
 
@@ -243,6 +252,7 @@ vehicles:
         - [-0.48, 0.18]
         - [-0.48, -0.18]
         - [0.44, -0.18]
+      radar_cross_section: 100
     ai_behavior: ground_logistics
     sprite: truck
 
@@ -251,11 +261,12 @@ world:
     oil_tanker:
       outbound: 10
       inbound: 10
-    shahed: 8
-    quadcopter: 8
+    shahed: 4
+    quadcopter: 6
+    speedboat: 4
     frigate:
-      gulf: 4
-      oman: 4
+      gulf: 5
+      oman: 5
 
 combat:
   autocannon:
@@ -267,6 +278,7 @@ combat:
     hit_radius:
       shahed: 10
       quadcopter: 3
+      speedboat: 6
     spread: 0.02
   jam_radius: 2000
   breaches_to_sink: 12

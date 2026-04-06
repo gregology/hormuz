@@ -35,6 +35,7 @@ export interface EditableMapData {
 		iran: EditableSpawn[];
 		us: EditableSpawn[];
 		tanker: EditableSpawn[];
+		speedboat: EditableSpawn[];
 		quadcopter: EditableSpawn[];
 		bases: EditableSpawn[];
 	};
@@ -58,6 +59,8 @@ export interface EditableMapData {
 	lanes: {
 		inbound: [number, number][];
 		outbound: [number, number][];
+		altInbound: [number, number][];
+		altOutbound: [number, number][];
 		deepWaterRoute: [number, number][];
 	};
 }
@@ -80,6 +83,7 @@ export const LAYERS: LayerDef[] = [
 	{ key: "spawn_iran", label: "Shahed Spawns", kind: "point", category: "Spawns" },
 	{ key: "spawn_us", label: "Frigate Spawns", kind: "point", category: "Spawns" },
 	{ key: "spawn_tanker", label: "Tanker Spawns", kind: "point", category: "Spawns" },
+	{ key: "spawn_speedboat", label: "Speedboat Spawns", kind: "point", category: "Spawns" },
 	{ key: "spawn_quadcopter", label: "Quadcopter Spawns", kind: "point", category: "Spawns" },
 	{ key: "spawn_bases", label: "US Bases", kind: "point", category: "Spawns" },
 	{ key: "landmark_straitCenter", label: "Strait Center", kind: "point", category: "Landmarks" },
@@ -95,6 +99,8 @@ export const LAYERS: LayerDef[] = [
 	{ key: "rocks", label: "Rocks", kind: "point", category: "Hazards" },
 	{ key: "lane_inbound", label: "Inbound Lane", kind: "polyline", category: "Shipping Lanes" },
 	{ key: "lane_outbound", label: "Outbound Lane", kind: "polyline", category: "Shipping Lanes" },
+	{ key: "lane_altInbound", label: "Alt Inbound Lane", kind: "polyline", category: "Shipping Lanes" },
+	{ key: "lane_altOutbound", label: "Alt Outbound Lane", kind: "polyline", category: "Shipping Lanes" },
 	{ key: "lane_deepWater", label: "Deep Water Route", kind: "polyline", category: "Shipping Lanes" },
 ];
 
@@ -416,6 +422,7 @@ function getLayerItems(data: EditableMapData, key: string): unknown[] {
 		case "spawn_iran": return data.spawns.iran;
 		case "spawn_us": return data.spawns.us;
 		case "spawn_tanker": return data.spawns.tanker;
+		case "spawn_speedboat": return data.spawns.speedboat;
 		case "spawn_quadcopter": return data.spawns.quadcopter;
 		case "spawn_bases": return data.spawns.bases;
 		case "landmark_straitCenter": return [data.landmarks.straitCenter];
@@ -431,6 +438,8 @@ function getLayerItems(data: EditableMapData, key: string): unknown[] {
 		case "rocks": return data.rocks;
 		case "lane_inbound": return data.lanes.inbound;
 		case "lane_outbound": return data.lanes.outbound;
+		case "lane_altInbound": return data.lanes.altInbound;
+		case "lane_altOutbound": return data.lanes.altOutbound;
 		case "lane_deepWater": return data.lanes.deepWaterRoute;
 		default: return [];
 	}
@@ -468,6 +477,7 @@ function loadMapData(): EditableMapData {
 			iran: copySpawns(MapData.IRAN_SPAWNS),
 			us: copySpawns(MapData.US_SPAWNS),
 			tanker: copySpawns(MapData.TANKER_SPAWNS),
+			speedboat: copySpawns(MapData.SPEEDBOAT_SPAWNS),
 			quadcopter: copySpawns(MapData.QUADCOPTER_SPAWNS),
 			bases: copySpawns(MapData.US_BASES),
 		},
@@ -507,6 +517,8 @@ function loadMapData(): EditableMapData {
 		lanes: {
 			inbound: copyPoly(MapData.LANE_INBOUND),
 			outbound: copyPoly(MapData.LANE_OUTBOUND),
+			altInbound: copyPoly(MapData.LANE_ALT_INBOUND),
+			altOutbound: copyPoly(MapData.LANE_ALT_OUTBOUND),
 			deepWaterRoute: copyPoly(MapData.DEEP_WATER_ROUTE),
 		},
 	};

@@ -14,11 +14,14 @@ from hormuz.generated.map_data import (  # noqa: F401
     EXCLUSION_ZONES,
     GULF_DESTINATION,
     IRAN_SPAWNS,
+    LANE_ALT_INBOUND,
+    LANE_ALT_OUTBOUND,
     LANE_INBOUND,
     LANE_OUTBOUND,
     OMAN_DESTINATION,
     PATROL_ZONES,
     QUADCOPTER_SPAWNS,
+    SPEEDBOAT_SPAWNS,
     STRAIT_CENTER,
     TANKER_SPAWNS,
     US_BASES,
@@ -75,6 +78,11 @@ def random_frigate_gulf_spawn() -> tuple[float, float, float]:
 def random_frigate_oman_spawn() -> tuple[float, float, float]:
     """Return (x, y, heading) for a frigate spawning near Oman."""
     return _scatter_around(random.choice(_FRIGATE_OMAN_SPAWNS))
+
+
+def random_speedboat_spawn() -> tuple[float, float, float]:
+    """Return (x, y, heading) for a speedboat spawning near the Iranian coast."""
+    return _scatter_around(random.choice(SPEEDBOAT_SPAWNS))
 
 
 def random_quadcopter_spawn(

@@ -46,6 +46,7 @@ export function exportYAML(data: EditableMapData): string {
 	writeSpawnGroup(lines, "iran", data.spawns.iran);
 	writeSpawnGroup(lines, "us", data.spawns.us);
 	writeSpawnGroup(lines, "tanker", data.spawns.tanker);
+	writeSpawnGroup(lines, "speedboat", data.spawns.speedboat);
 	writeSpawnGroup(lines, "quadcopter", data.spawns.quadcopter);
 	writeSpawnGroup(lines, "bases", data.spawns.bases);
 
@@ -79,6 +80,8 @@ export function exportYAML(data: EditableMapData): string {
 	lines.push("shipping_lanes:");
 	writePolyline(lines, "inbound", data.lanes.inbound);
 	writePolyline(lines, "outbound", data.lanes.outbound);
+	writePolyline(lines, "alt_inbound", data.lanes.altInbound);
+	writePolyline(lines, "alt_outbound", data.lanes.altOutbound);
 	writePolyline(lines, "deep_water_route", data.lanes.deepWaterRoute);
 
 	// --- Shallow waters ---

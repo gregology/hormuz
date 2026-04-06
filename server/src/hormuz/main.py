@@ -36,6 +36,7 @@ from hormuz.map_data import (
     random_frigate_oman_spawn,
     random_oman_spawn,
     random_quadcopter_spawn,
+    random_speedboat_spawn,
     random_tanker_spawn,
 )
 from hormuz.protocol import (
@@ -75,6 +76,7 @@ game_state = {
     "frigates_sunk": 0,
     "shaheds_intercepted": 0,
     "quadcopters_intercepted": 0,
+    "speedboats_sunk": 0,
     "uptime_seconds": 0.0,
 }
 
@@ -162,6 +164,19 @@ def setup_world() -> None:
             BotControl("quadcopter_intercept"),
             SpawnConfig("quadcopter_intercept"),
             Battery(),
+        )
+
+    # --- Speedboats ---
+    for _ in range(WORLD_SPAWNS["speedboat"]):
+        x, y, heading = random_speedboat_spawn()
+        esper.create_entity(
+            Transform(x=x, y=y, heading=heading),
+            VehiclePhysics(**VEHICLE_PHYSICS["speedboat"]),
+            Faction("iran"),
+            Health(MAX_HP["speedboat"], MAX_HP["speedboat"]),
+            Collidable(COLLISION_POLYGONS["speedboat"]),
+            BotControl("swarm_attack"),
+            SpawnConfig("swarm_attack"),
         )
 
     # --- Frigates ---
@@ -299,6 +314,8 @@ def _teleport_to_spawn(ent: int) -> None:
             if t_phys.vehicle_type == "oil_tanker" and t_health.hp > 0:
                 tanker_positions.append((t_tf.x, t_tf.y))
         tf.x, tf.y, tf.heading = random_quadcopter_spawn(tanker_positions)
+    elif phys.vehicle_type == "speedboat":
+        tf.x, tf.y, tf.heading = random_speedboat_spawn()
     else:
         tf.x, tf.y, tf.heading = random_tanker_spawn()
     tf.speed = 0.0
@@ -336,7 +353,7 @@ def assign_vehicle_type_to_player(conn_id: int, vehicle_type: str) -> int | None
     Picks randomly among matching vehicles, weighted toward the strait.
     Teleports the vehicle to a safe spawn so the player starts fresh.
     """
-    if vehicle_type not in ("oil_tanker", "shahed", "frigate", "quadcopter"):
+    if vehicle_type not in ("oil_tanker", "shahed", "frigate", "quadcopter", "speedboat"):
         return None
 
     candidates = [
@@ -469,6 +486,8 @@ async def game_loop() -> None:
                 game_state["shaheds_intercepted"] += 1
             elif vtype == "quadcopter" and kill["cause"] == "autocannon":
                 game_state["quadcopters_intercepted"] += 1
+            elif vtype == "speedboat":
+                game_state["speedboats_sunk"] += 1
         for vtype in physics_proc.flood_kills:
             if vtype == "oil_tanker":
                 game_state["tankers_sunk"] += 1
@@ -482,6 +501,7 @@ async def game_loop() -> None:
             + game_state["frigates_sunk"] * VEHICLES["frigate"].cost_usd
             + game_state["shaheds_intercepted"] * VEHICLES["shahed"].cost_usd
             + game_state["quadcopters_intercepted"] * VEHICLES["quadcopter"].cost_usd
+            + game_state["speedboats_sunk"] * VEHICLES["speedboat"].cost_usd
             + spawn_proc.tankers_delivered * tanker_cost
         )
 
@@ -536,6 +556,7 @@ async def game_loop() -> None:
                     game_state["frigates_sunk"],
                     game_state["shaheds_intercepted"],
                     game_state["quadcopters_intercepted"],
+                    game_state["speedboats_sunk"],
                     len(player_entities),
                 )
             )
@@ -567,6 +588,7 @@ async def status() -> JSONResponse:
             "frigates_sunk": game_state["frigates_sunk"],
             "shaheds_intercepted": game_state["shaheds_intercepted"],
             "quadcopters_intercepted": game_state["quadcopters_intercepted"],
+            "speedboats_sunk": game_state["speedboats_sunk"],
             "entities": len(list(esper.get_component(Transform))),
             "players": len(player_entities),
             "uptime_seconds": game_state["uptime_seconds"],
@@ -619,6 +641,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             game_state["frigates_sunk"],
             game_state["shaheds_intercepted"],
             game_state["quadcopters_intercepted"],
+            game_state["speedboats_sunk"],
             len(player_entities),
         )
     )

@@ -16,12 +16,14 @@ from hormuz.generated.terrain_grid import is_land
 from hormuz.generated.vehicles import JAM_RADIUS
 from hormuz.map_data import (
     GULF_DESTINATION,
-    LANE_INBOUND,
-    LANE_OUTBOUND,
+    LANE_ALT_INBOUND,
+    LANE_ALT_OUTBOUND,
     OMAN_DESTINATION,
+    SPEEDBOAT_SPAWNS,
     STRAIT_CENTER,
 )
 from hormuz.systems.danger_scent import nearest_danger, prune_danger_scents
+from hormuz.systems.threat_picture import build_threat_picture, get_threats_near
 
 JAM_RADIUS_SQ = JAM_RADIUS * JAM_RADIUS
 
@@ -41,8 +43,8 @@ TANKER_DANGER_RUDDER = 0.3
 # --- Frigate constants ---
 # Offset distance: frigates prefer to be this far from their assigned tanker
 FRIGATE_OFFSET_DIST = 800.0
-# Danger attraction range
-FRIGATE_DANGER_RANGE = 8000.0
+# Danger attraction range — large enough to sense attacks across most of the lane
+FRIGATE_DANGER_RANGE = 25000.0
 FRIGATE_DANGER_RANGE_SQ = FRIGATE_DANGER_RANGE * FRIGATE_DANGER_RANGE
 # Frigate-frigate repulsion range
 FRIGATE_REPEL_RANGE = 2000.0
@@ -62,6 +64,13 @@ ESCORT_PRESSURE_POWER = 3
 # Derived from the first/last waypoints of the shipping lanes.
 PATROL_ANCHORS: list[tuple[float, float]] = []
 
+# --- Threat proximity scoring for escort AI ---
+# Radius around a tanker to count nearby threats from the coalition picture
+ESCORT_THREAT_RADIUS = 5000.0
+ESCORT_THREAT_RADIUS_SQ = ESCORT_THREAT_RADIUS * ESCORT_THREAT_RADIUS
+# Score multiplier per nearby threat (additive: 1 + k * count)
+ESCORT_THREAT_WEIGHT = 2.0
+
 # Shahed visual detection range — no radar, must see targets visually
 SHAHED_VISUAL_RANGE = 5000.0
 SHAHED_VISUAL_RANGE_SQ = SHAHED_VISUAL_RANGE * SHAHED_VISUAL_RANGE
@@ -80,6 +89,39 @@ DRONE_REPEL_WEIGHT = 0.4
 # Target pressure: score bonus for current target (prevents oscillation)
 TARGET_STICKINESS = 0.5
 
+# --- Speedboat wolf pack constants ---
+# Speedboat visual detection range (bow gun range is 200u, approach from further)
+SPEEDBOAT_VISUAL_RANGE = 8000.0
+SPEEDBOAT_VISUAL_RANGE_SQ = SPEEDBOAT_VISUAL_RANGE * SPEEDBOAT_VISUAL_RANGE
+# Distance at which speedboat transitions to attack run (matches bow gun range)
+SPEEDBOAT_ATTACK_RANGE = 300.0
+# Danger attraction range (rush to ongoing attacks)
+SPEEDBOAT_DANGER_RANGE = 6000.0
+SPEEDBOAT_DANGER_RANGE_SQ = SPEEDBOAT_DANGER_RANGE * SPEEDBOAT_DANGER_RANGE
+SPEEDBOAT_WEIGHT_DANGER = 0.6
+# Frigate evasion: flee well before weapons range (autocannon is 1500u)
+SPEEDBOAT_EVASION_RANGE = 1500.0
+SPEEDBOAT_EVASION_RANGE_SQ = SPEEDBOAT_EVASION_RANGE * SPEEDBOAT_EVASION_RANGE
+SPEEDBOAT_EVASION_WEIGHT = 1.5
+# Frigate proximity penalty for target selection — avoid escorted tankers
+SPEEDBOAT_FRIGATE_PROXIMITY = 4000.0
+SPEEDBOAT_FRIGATE_PROXIMITY_SQ = SPEEDBOAT_FRIGATE_PROXIMITY * SPEEDBOAT_FRIGATE_PROXIMITY
+# Pack repulsion (tighter than drones — they're smaller and coordinate closely)
+SPEEDBOAT_REPEL_RANGE = 300.0
+SPEEDBOAT_REPEL_RANGE_SQ = SPEEDBOAT_REPEL_RANGE * SPEEDBOAT_REPEL_RANGE
+# Stamina: foraging wasp model — hunt while bold, retreat to recharge
+SPEEDBOAT_STAMINA_DRAIN = 0.015  # per second while hunting (~45s of aggression after transit)
+SPEEDBOAT_STAMINA_DRAIN_ATTACK = 0.04  # per second while in attack range (burns faster)
+SPEEDBOAT_STAMINA_RECHARGE = 0.1  # per second near spawn (~7s to refuel)
+SPEEDBOAT_STAMINA_THRESHOLD = 0.3  # retreat when stamina falls below this
+SPEEDBOAT_HOME_RADIUS = 1500.0  # distance from spawn to start recharging
+SPEEDBOAT_HOME_RADIUS_SQ = SPEEDBOAT_HOME_RADIUS * SPEEDBOAT_HOME_RADIUS
+
+# Precompute spawn positions as tuples for distance checks
+_SPEEDBOAT_HOME_POSITIONS: list[tuple[float, float]] = [
+    (s["position"][0], s["position"][1]) for s in SPEEDBOAT_SPAWNS
+]
+
 # --- Collision avoidance constants ---
 AVOID_VESSEL_FACTOR = 0.8
 AVOID_VESSEL_STRENGTH = 0.5
@@ -96,19 +138,32 @@ EXIT_DIST_SQ = 1500.0**2
 
 # Route/destination lookup by cargo destination
 _ROUTE_CONFIG = {
-    "oman": (LANE_OUTBOUND, OMAN_DESTINATION["position"]),
-    "gulf": (LANE_INBOUND, GULF_DESTINATION["position"]),
+    "oman": (LANE_ALT_OUTBOUND, OMAN_DESTINATION["position"]),
+    "gulf": (LANE_ALT_INBOUND, GULF_DESTINATION["position"]),
 }
 
 
 def _init_patrol_anchors() -> None:
-    """Populate PATROL_ANCHORS from lane endpoints (called once at import)."""
+    """Populate PATROL_ANCHORS from lane endpoints and midpoints.
+
+    Spreads idle frigates across the full lane instead of bunching at the ends.
+    """
     if PATROL_ANCHORS:
         return
     # West gate: start of outbound / end of inbound
-    PATROL_ANCHORS.append(LANE_OUTBOUND[0])
+    PATROL_ANCHORS.append(LANE_ALT_OUTBOUND[0])
+    # Mid-lane anchors for geographic spread
+    mid = len(LANE_ALT_OUTBOUND) // 2
+    quarter = len(LANE_ALT_OUTBOUND) // 4
+    if quarter > 0 and quarter != mid:
+        PATROL_ANCHORS.append(LANE_ALT_OUTBOUND[quarter])
+    if mid > 0:
+        PATROL_ANCHORS.append(LANE_ALT_OUTBOUND[mid])
+    three_quarter = mid + quarter
+    if three_quarter < len(LANE_ALT_OUTBOUND) and three_quarter != mid:
+        PATROL_ANCHORS.append(LANE_ALT_OUTBOUND[three_quarter])
     # East gate: end of outbound / start of inbound
-    PATROL_ANCHORS.append(LANE_OUTBOUND[-1])
+    PATROL_ANCHORS.append(LANE_ALT_OUTBOUND[-1])
 
 
 _init_patrol_anchors()
@@ -127,7 +182,7 @@ def _find_lane_waypoint(
 ) -> tuple[float, float] | None:
     """Return nearest shipping lane waypoint that makes progress toward the target."""
     going_west = target_x < tf_x
-    lane = LANE_INBOUND if going_west else LANE_OUTBOUND
+    lane = LANE_ALT_INBOUND if going_west else LANE_ALT_OUTBOUND
     frig_to_target_sq = (target_x - tf_x) ** 2 + (target_y - tf_y) ** 2
 
     best_wp = None
@@ -220,9 +275,10 @@ class BotAIProcessor(esper.Processor):
             if phys.vehicle_type == "oil_tanker" and health.hp > 0:
                 tanker_transforms.append(tf)
 
-        # Collect alive drone positions for swarm repulsion
+        # Collect alive drone and speedboat positions for swarm repulsion
         shahed_transforms: list[tuple[int, Transform]] = []
         quadcopter_transforms: list[tuple[int, Transform]] = []
+        speedboat_transforms: list[tuple[int, Transform]] = []
         for ent, (tf, phys, health, bot) in esper.get_components(
             Transform, VehiclePhysics, Health, BotControl
         ):
@@ -232,11 +288,28 @@ class BotAIProcessor(esper.Processor):
                 shahed_transforms.append((ent, tf))
             elif phys.vehicle_type == "quadcopter":
                 quadcopter_transforms.append((ent, tf))
+            elif phys.vehicle_type == "speedboat":
+                speedboat_transforms.append((ent, tf))
 
-        # Build separate pressure counts for drones and frigates.
-        # Drones and frigates target different things so their pressure pools are independent.
+        # Build coalition threat picture from radar detections
+        radar_vessels: list[tuple[str, float, float, str]] = []
+        enemy_vessels: list[tuple[int, float, float, str]] = []
+        for ent, (tf, phys, health, faction) in esper.get_components(
+            Transform, VehiclePhysics, Health, Faction
+        ):
+            if health.hp <= 0:
+                continue
+            if faction.name in ("us", "civilian"):
+                radar_vessels.append((phys.vehicle_type, tf.x, tf.y, faction.name))
+            elif faction.name == "iran":
+                enemy_vessels.append((ent, tf.x, tf.y, phys.vehicle_type))
+        build_threat_picture(radar_vessels, enemy_vessels)
+
+        # Build separate pressure counts for drones, frigates, and speedboats.
+        # Each group targets independently so their pressure pools are separate.
         drone_target_counts: dict[int, int] = {}
         escort_target_counts: dict[int, int] = {}
+        speedboat_target_counts: dict[int, int] = {}
         for _, (_, bot) in esper.get_components(Transform, BotControl):
             if bot.target_entity == 0:
                 continue
@@ -247,6 +320,10 @@ class BotAIProcessor(esper.Processor):
             elif bot.behavior == "escort":
                 escort_target_counts[bot.target_entity] = (
                     escort_target_counts.get(bot.target_entity, 0) + 1
+                )
+            elif bot.behavior == "swarm_attack":
+                speedboat_target_counts[bot.target_entity] = (
+                    speedboat_target_counts.get(bot.target_entity, 0) + 1
                 )
 
         # Behavior dispatch
@@ -266,6 +343,12 @@ class BotAIProcessor(esper.Processor):
             elif bot.behavior == "escort":
                 self._escort_ai(
                     ent, tf, bot, frigate_transforms, escort_target_counts,
+                )
+            elif bot.behavior == "swarm_attack":
+                self._speedboat_ai(
+                    ent, tf, bot,
+                    speedboat_transforms, speedboat_target_counts,
+                    frigate_transforms, dt,
                 )
 
         # --- Collision avoidance post-processing ---
@@ -359,6 +442,7 @@ class BotAIProcessor(esper.Processor):
         tanker_tf = self._pick_drone_target(
             tf, bot, ("civilian",), float("inf"), escort_target_counts,
             pressure_power=ESCORT_PRESSURE_POWER, use_linear_distance=True,
+            threat_boost=True,
         )
 
         if tanker_tf is not None:
@@ -436,6 +520,142 @@ class BotAIProcessor(esper.Processor):
             bot.throttle = 0.7
 
     # ------------------------------------------------------------------
+    # Speedboat wolf pack behavior
+    # ------------------------------------------------------------------
+
+    def _speedboat_ai(
+        self,
+        ent: int,
+        tf: Transform,
+        bot: BotControl,
+        speedboat_swarm: list[tuple[int, Transform]],
+        speedboat_target_counts: dict[int, int],
+        frigate_transforms: list[Transform],
+        dt: float = 0.05,
+    ) -> None:
+        """Wolf pack attack with stamina-based hit-and-run cycles.
+
+        Stamina drains while hunting, recharges near spawn. Below threshold
+        the speedboat retreats home. Frigate evasion overrides everything.
+        """
+
+        # --- Stamina: recharge near home, drain while out ---
+        near_home = False
+        for hx, hy in _SPEEDBOAT_HOME_POSITIONS:
+            dx = hx - tf.x
+            dy = hy - tf.y
+            if dx * dx + dy * dy < SPEEDBOAT_HOME_RADIUS_SQ:
+                near_home = True
+                break
+
+        if near_home:
+            bot.stamina = min(1.0, bot.stamina + SPEEDBOAT_STAMINA_RECHARGE * dt)
+        else:
+            # Drain faster when in attack range of a target
+            drain = SPEEDBOAT_STAMINA_DRAIN
+            if bot.target_entity != 0:
+                t_tf = esper.try_component(bot.target_entity, Transform)
+                if t_tf is not None:
+                    tdx = t_tf.x - tf.x
+                    tdy = t_tf.y - tf.y
+                    if tdx * tdx + tdy * tdy < SPEEDBOAT_ATTACK_RANGE * SPEEDBOAT_ATTACK_RANGE:
+                        drain = SPEEDBOAT_STAMINA_DRAIN_ATTACK
+            bot.stamina = max(0.0, bot.stamina - drain * dt)
+
+        # --- Frigate evasion: highest priority, always active ---
+        nearest_frigate_dist_sq = float("inf")
+        nearest_frigate_tf: Transform | None = None
+        for f_tf in frigate_transforms:
+            fdx = f_tf.x - tf.x
+            fdy = f_tf.y - tf.y
+            fd_sq = fdx * fdx + fdy * fdy
+            if fd_sq < nearest_frigate_dist_sq:
+                nearest_frigate_dist_sq = fd_sq
+                nearest_frigate_tf = f_tf
+
+        if nearest_frigate_tf is not None and nearest_frigate_dist_sq < SPEEDBOAT_EVASION_RANGE_SQ:
+            dist_f = math.sqrt(nearest_frigate_dist_sq)
+            proximity = 1.0 - dist_f / SPEEDBOAT_EVASION_RANGE
+            evasion_rudder = -steer_toward(tf, nearest_frigate_tf.x, nearest_frigate_tf.y)
+            evasion_strength = min(1.0, proximity * SPEEDBOAT_EVASION_WEIGHT)
+            bot.rudder = max(-1.0, min(1.0, evasion_rudder * evasion_strength))
+            bot.throttle = 1.0
+            self._release_speedboat_target(bot, speedboat_target_counts)
+            return
+
+        # --- Retreat: stamina depleted, head to nearest spawn ---
+        if bot.stamina <= SPEEDBOAT_STAMINA_THRESHOLD and not near_home:
+            best_home = _SPEEDBOAT_HOME_POSITIONS[0]
+            best_dist_sq = float("inf")
+            for hx, hy in _SPEEDBOAT_HOME_POSITIONS:
+                dx = hx - tf.x
+                dy = hy - tf.y
+                d_sq = dx * dx + dy * dy
+                if d_sq < best_dist_sq:
+                    best_dist_sq = d_sq
+                    best_home = (hx, hy)
+            bot.rudder = steer_toward(tf, best_home[0], best_home[1])
+            bot.throttle = 1.0
+            self._release_speedboat_target(bot, speedboat_target_counts)
+            return
+
+        # --- Hunt: stamina is good, attack tankers ---
+        target_tf = self._pick_drone_target(
+            tf, bot, ("civilian",), SPEEDBOAT_VISUAL_RANGE_SQ,
+            speedboat_target_counts,
+            frigate_penalty_transforms=frigate_transforms,
+        )
+
+        rudder = 0.0
+        throttle = 1.0
+
+        if target_tf is not None:
+            dx = target_tf.x - tf.x
+            dy = target_tf.y - tf.y
+            dist = math.sqrt(dx * dx + dy * dy)
+
+            if dist > SPEEDBOAT_ATTACK_RANGE:
+                rudder = steer_toward(tf, target_tf.x, target_tf.y)
+            else:
+                cos_th = math.cos(target_tf.heading)
+                sin_th = math.sin(target_tf.heading)
+                ahead_x = target_tf.x + cos_th * 200.0
+                ahead_y = target_tf.y + sin_th * 200.0
+                rudder = steer_toward(tf, ahead_x, ahead_y)
+                throttle = 0.5 + 0.5 * (dist / SPEEDBOAT_ATTACK_RANGE)
+        else:
+            rudder = steer_toward(tf, STRAIT_CENTER[0], STRAIT_CENTER[1])
+            throttle = 0.7
+
+        # Danger attraction: rush toward active attacks (only while hunting)
+        danger = nearest_danger(tf.x, tf.y, SPEEDBOAT_DANGER_RANGE_SQ)
+        if danger is not None:
+            ddx, ddy, strength = danger
+            target_x = tf.x + ddx
+            target_y = tf.y + ddy
+            rudder += steer_toward(tf, target_x, target_y) * SPEEDBOAT_WEIGHT_DANGER * strength
+
+        # Pack repulsion
+        rudder += self._drone_repulsion(
+            ent, tf, speedboat_swarm,
+            SPEEDBOAT_REPEL_RANGE_SQ, SPEEDBOAT_REPEL_RANGE,
+        )
+
+        bot.rudder = max(-1.0, min(1.0, rudder))
+        bot.throttle = throttle
+
+    @staticmethod
+    def _release_speedboat_target(
+        bot: BotControl, speedboat_target_counts: dict[int, int]
+    ) -> None:
+        """Clear the speedboat's target and update pressure counts."""
+        if bot.target_entity != 0:
+            speedboat_target_counts[bot.target_entity] = max(
+                0, speedboat_target_counts.get(bot.target_entity, 1) - 1
+            )
+            bot.target_entity = 0
+
+    # ------------------------------------------------------------------
     # Iranian drone behaviors
     # ------------------------------------------------------------------
 
@@ -448,6 +668,8 @@ class BotAIProcessor(esper.Processor):
         drone_target_counts: dict[int, int],
         pressure_power: int = 1,
         use_linear_distance: bool = False,
+        threat_boost: bool = False,
+        frigate_penalty_transforms: list[Transform] | None = None,
     ) -> Transform | None:
         """Score all valid targets by distance and pressure, pick the best.
 
@@ -462,6 +684,12 @@ class BotAIProcessor(esper.Processor):
             use_linear_distance: if True, score uses d instead of d². Escorts use
                 linear distance so far-away unescorted tankers can outscore nearby
                 crowded ones.
+            threat_boost: if True, multiply score by (1 + ESCORT_THREAT_WEIGHT *
+                nearby_threat_count) using the coalition threat picture. Used by
+                escort AI so frigates prioritize endangered tankers.
+            frigate_penalty_transforms: if provided, penalize targets that have a
+                frigate within SPEEDBOAT_FRIGATE_PROXIMITY. Used by speedboat AI
+                to avoid escorted tankers.
         """
         old_target = bot.target_entity
         best_score = -1.0
@@ -483,6 +711,18 @@ class BotAIProcessor(esper.Processor):
             # Pressure: how many other drones/escorts are already targeting this entity
             pressure = drone_target_counts.get(t_ent, 0)
             score = 1.0 / (dist_term * (1 + pressure) ** pressure_power)
+            # Threat boost: tankers with nearby enemies score higher
+            if threat_boost:
+                nearby = get_threats_near(t_tf.x, t_tf.y, ESCORT_THREAT_RADIUS_SQ)
+                score *= 1.0 + ESCORT_THREAT_WEIGHT * len(nearby)
+            # Frigate penalty: tankers near a frigate are much less attractive
+            if frigate_penalty_transforms is not None:
+                for f_tf in frigate_penalty_transforms:
+                    fx = f_tf.x - t_tf.x
+                    fy = f_tf.y - t_tf.y
+                    if fx * fx + fy * fy < SPEEDBOAT_FRIGATE_PROXIMITY_SQ:
+                        score *= 0.05
+                        break
             # Stickiness: current target gets a bonus to prevent oscillation
             if t_ent == bot.target_entity:
                 score *= 1.0 + TARGET_STICKINESS
@@ -660,7 +900,7 @@ class BotAIProcessor(esper.Processor):
             best_rudder = land_rudder
             best_throttle *= land_throttle_mult
 
-        zone_result = self._calc_exclusion_zone_steering(tf, bot)
+        zone_result = self._calc_exclusion_zone_steering(ent, tf, bot)
         if zone_result is not None:
             zone_rudder, zone_strength = zone_result
             best_rudder = best_rudder * (1.0 - zone_strength) + zone_rudder * zone_strength
@@ -705,7 +945,7 @@ class BotAIProcessor(esper.Processor):
 
     @staticmethod
     def _calc_exclusion_zone_steering(
-        tf: Transform, bot: BotControl
+        ent: int, tf: Transform, bot: BotControl
     ) -> tuple[float, float] | None:
         for zone in EXCLUSION_ZONES:
             if bot.behavior not in zone["behaviors"]:
@@ -720,11 +960,25 @@ class BotAIProcessor(esper.Processor):
             else:
                 strength = 1.0
 
-            wp = _find_lane_waypoint(tf.x, tf.y, STRAIT_CENTER[0], STRAIT_CENTER[1])
+            # For tankers following waypoints, steer toward their current
+            # route waypoint instead of STRAIT_CENTER. This prevents the
+            # exclusion zone from steering tankers onto the wrong lane
+            # when the alt lanes run close to the southern coast.
+            target_x, target_y = STRAIT_CENTER[0], STRAIT_CENTER[1]
+            if bot.behavior == "tanker_transit":
+                cargo = esper.try_component(ent, CargoState)
+                destination = cargo.destination if cargo else "oman"
+                route, exit_point = _ROUTE_CONFIG.get(destination, _ROUTE_CONFIG["oman"])
+                if bot.waypoint_index < len(route):
+                    target_x, target_y = route[bot.waypoint_index]
+                else:
+                    target_x, target_y = exit_point[0], exit_point[1]
+
+            wp = _find_lane_waypoint(tf.x, tf.y, target_x, target_y)
             if wp is not None:
                 rudder = steer_toward(tf, wp[0], wp[1])
             else:
-                rudder = steer_toward(tf, STRAIT_CENTER[0], STRAIT_CENTER[1])
+                rudder = steer_toward(tf, target_x, target_y)
             return rudder, strength
         return None
 

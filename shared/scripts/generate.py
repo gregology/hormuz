@@ -143,14 +143,34 @@ def generate_python_vehicles(vehicles: dict, combat: dict, world: dict) -> str:
         lines.append(f'    "{key}": {hp},')
     lines.append("}")
 
-    # --- RADAR_DETECTION ---
+    # --- RADAR_CROSS_SECTION ---
     lines.append("")
     lines.append("")
-    lines.append("RADAR_DETECTION: dict[str, float] = {")
+    lines.append("RADAR_CROSS_SECTION: dict[str, float] = {")
     for key, v in vehicles.items():
-        rdr = v["components"].get("radar_detection_range")
-        if rdr is not None:
-            lines.append(f'    "{key}": {fmt_float(float(rdr))},')
+        rcs = v["components"].get("radar_cross_section")
+        if rcs is not None:
+            lines.append(f'    "{key}": {fmt_float(float(rcs))},')
+    lines.append("}")
+
+    # --- DETECTION_RANGE (computed from radar sensitivity × rcs^0.25) ---
+    lines.append("")
+    lines.append("")
+    lines.append("DETECTION_RANGE: dict[str, dict[str, float]] = {")
+    for obs_key, obs_v in vehicles.items():
+        radar = obs_v["components"].get("radar")
+        if radar is None:
+            continue
+        sensitivity = float(radar["sensitivity"])
+        max_range = float(radar["max_range"])
+        lines.append(f'    "{obs_key}": {{')
+        for tgt_key, tgt_v in vehicles.items():
+            rcs = tgt_v["components"].get("radar_cross_section")
+            if rcs is None:
+                continue
+            det_range = min(max_range, sensitivity * float(rcs) ** 0.25)
+            lines.append(f'        "{tgt_key}": {fmt_float(det_range)},')
+        lines.append("    },")
     lines.append("}")
 
     # --- Combat constants ---
@@ -312,13 +332,32 @@ def generate_ts_vehicles(vehicles: dict, combat: dict, world: dict) -> str:
         lines.append(f"  {key}: {hp},")
     lines.append("} as const;")
 
-    # --- RADAR_DETECTION ---
+    # --- RADAR_CROSS_SECTION ---
     lines.append("")
-    lines.append("export const RADAR_DETECTION: Partial<Record<VehicleType, number>> = {")
+    lines.append("export const RADAR_CROSS_SECTION: Partial<Record<VehicleType, number>> = {")
     for key, v in vehicles.items():
-        rdr = v["components"].get("radar_detection_range")
-        if rdr is not None:
-            lines.append(f"  {key}: {fmt_float(float(rdr))},")
+        rcs = v["components"].get("radar_cross_section")
+        if rcs is not None:
+            lines.append(f"  {key}: {fmt_float(float(rcs))},")
+    lines.append("} as const;")
+
+    # --- DETECTION_RANGE (computed from radar sensitivity × rcs^0.25) ---
+    lines.append("")
+    lines.append("export const DETECTION_RANGE: Partial<Record<VehicleType, Partial<Record<VehicleType, number>>>> = {")
+    for obs_key, obs_v in vehicles.items():
+        radar = obs_v["components"].get("radar")
+        if radar is None:
+            continue
+        sensitivity = float(radar["sensitivity"])
+        max_range = float(radar["max_range"])
+        lines.append(f"  {obs_key}: {{")
+        for tgt_key, tgt_v in vehicles.items():
+            rcs = tgt_v["components"].get("radar_cross_section")
+            if rcs is None:
+                continue
+            det_range = min(max_range, sensitivity * float(rcs) ** 0.25)
+            lines.append(f"    {tgt_key}: {fmt_float(det_range)},")
+        lines.append("  },")
     lines.append("} as const;")
 
     # --- Combat constants ---
@@ -422,7 +461,7 @@ def generate_python_map_data(map_data: dict) -> str:
     spawns = map_data["spawns"]
 
     # --- Spawn points ---
-    for group_name in ("iran", "us", "tanker", "quadcopter"):
+    for group_name in ("iran", "us", "tanker", "speedboat", "quadcopter"):
         var = f"{group_name.upper()}_SPAWNS"
         lines.append(f"{var}: list[dict] = [")
         for sp in spawns.get(group_name, []):
@@ -500,6 +539,8 @@ def generate_python_map_data(map_data: dict) -> str:
     for lane_name, var_name in [
         ("inbound", "LANE_INBOUND"),
         ("outbound", "LANE_OUTBOUND"),
+        ("alt_inbound", "LANE_ALT_INBOUND"),
+        ("alt_outbound", "LANE_ALT_OUTBOUND"),
         ("deep_water_route", "DEEP_WATER_ROUTE"),
     ]:
         lines.append(f"{var_name}: list[tuple[float, float]] = {_py_polyline(lanes[lane_name])}")
@@ -588,6 +629,7 @@ def generate_ts_map_data(map_data: dict) -> str:
         ("iran", "IRAN_SPAWNS"),
         ("us", "US_SPAWNS"),
         ("tanker", "TANKER_SPAWNS"),
+        ("speedboat", "SPEEDBOAT_SPAWNS"),
         ("quadcopter", "QUADCOPTER_SPAWNS"),
     ]:
         lines.append(f"export const {var_name}: readonly SpawnPoint[] = [")
@@ -674,6 +716,8 @@ def generate_ts_map_data(map_data: dict) -> str:
     for lane_name, var_name in [
         ("inbound", "LANE_INBOUND"),
         ("outbound", "LANE_OUTBOUND"),
+        ("alt_inbound", "LANE_ALT_INBOUND"),
+        ("alt_outbound", "LANE_ALT_OUTBOUND"),
         ("deep_water_route", "DEEP_WATER_ROUTE"),
     ]:
         pts = ", ".join(_ts_point(p) for p in lanes[lane_name])
