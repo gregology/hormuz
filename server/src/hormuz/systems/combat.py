@@ -1,8 +1,9 @@
-"""Combat processor — shahed kamikaze attacks + frigate autocannon.
+"""Combat processor — shahed kamikaze, frigate autocannon, speedboat guns.
 
 Shaheds attack tankers and frigates via polygon collision (SAT).
-Frigates engage shaheds with an autocannon: lead-predicted projectiles
+Frigates engage hostile targets with an autocannon: lead-predicted projectiles
 tracked as lightweight data (not ECS entities).
+Speedboats engage tankers/frigates with a bow gun and RPG at close range.
 """
 
 import math
@@ -28,11 +29,12 @@ from hormuz.generated.vehicles import (
     AUTOCANNON_RANGE,
     AUTOCANNON_SPREAD,
     BREACHES_TO_SINK,
+    DETECTION_RANGE,
     JAM_RADIUS,
     QUADCOPTER_FRIGATE_BREACHES,
     QUADCOPTER_HP_DAMAGE,
     QUADCOPTER_TANKER_BREACHES,
-    RADAR_DETECTION,
+    VEHICLES,
 )
 from hormuz.systems.collision import _sat_collision, _transform_polygon
 from hormuz.systems.danger_scent import emit_danger_scent
@@ -40,8 +42,25 @@ from hormuz.systems.danger_scent import emit_danger_scent
 # Derived squared constants for distance checks
 JAM_RADIUS_SQ = JAM_RADIUS * JAM_RADIUS
 AUTOCANNON_RANGE_SQ = AUTOCANNON_RANGE * AUTOCANNON_RANGE
-RADAR_RANGE_SQ: dict[str, float] = {k: v * v for k, v in RADAR_DETECTION.items()}
+# Frigate detection range² per target type (from radar model)
+_FRIGATE_DET = DETECTION_RANGE.get("frigate", {})
+RADAR_RANGE_SQ: dict[str, float] = {k: v * v for k, v in _FRIGATE_DET.items()}
 AUTOCANNON_HIT_RADIUS_SQ: dict[str, float] = {k: v * v for k, v in AUTOCANNON_HIT_RADIUS.items()}
+
+# --- Speedboat weapon constants (extracted from YAML definitions) ---
+_SB_BOW_GUN = VEHICLES["speedboat"].components["bow_gun"]
+BOW_GUN_DAMAGE: int = _SB_BOW_GUN["damage"]
+BOW_GUN_RANGE: float = float(_SB_BOW_GUN["range"])
+BOW_GUN_RANGE_SQ: float = BOW_GUN_RANGE * BOW_GUN_RANGE
+BOW_GUN_COOLDOWN: float = float(_SB_BOW_GUN["cooldown"])
+BOW_GUN_ARC_COS: float = 0.707  # forward arc: ±45° from heading
+
+_SB_RPG = VEHICLES["speedboat"].components["rpg"]
+RPG_DAMAGE: int = _SB_RPG["damage"]
+RPG_RANGE: float = float(_SB_RPG["range"])
+RPG_RANGE_SQ: float = RPG_RANGE * RPG_RANGE
+RPG_COOLDOWN: float = float(_SB_RPG["cooldown"])
+RPG_TANKER_BREACHES: int = 1
 
 
 class _Projectile:
@@ -63,6 +82,14 @@ class _AutocannonState:
         self.cooldown: float = 0.0
 
 
+class _SpeedboatWeaponState:
+    __slots__ = ("bow_gun_cooldown", "rpg_cooldown")
+
+    def __init__(self) -> None:
+        self.bow_gun_cooldown: float = 0.0
+        self.rpg_cooldown: float = 0.0
+
+
 class CombatProcessor(esper.Processor):
     def __init__(self) -> None:
         super().__init__()
@@ -70,6 +97,7 @@ class CombatProcessor(esper.Processor):
         self.kills: list[dict] = []  # {"victim_type": str, "cause": str}
         self._projectiles: list[_Projectile] = []
         self._autocannon: dict[int, _AutocannonState] = {}
+        self._speedboat_weapons: dict[int, _SpeedboatWeaponState] = {}
 
     def process(self, dt: float = 0.05) -> None:
         self.events.clear()
@@ -80,6 +108,7 @@ class CombatProcessor(esper.Processor):
         quadcopters: list[tuple[int, Transform, VehiclePhysics, Collidable]] = []
         tankers: list[tuple[int, Transform, VehiclePhysics, Collidable]] = []
         frigates: list[tuple[int, Transform, VehiclePhysics, Collidable]] = []
+        speedboats: list[tuple[int, Transform, VehiclePhysics, Collidable]] = []
 
         for ent, (tf, phys, col, health) in esper.get_components(
             Transform, VehiclePhysics, Collidable, Health
@@ -94,24 +123,30 @@ class CombatProcessor(esper.Processor):
                 tankers.append((ent, tf, phys, col))
             elif phys.vehicle_type == "frigate":
                 frigates.append((ent, tf, phys, col))
+            elif phys.vehicle_type == "speedboat":
+                speedboats.append((ent, tf, phys, col))
 
-        # Combine all drones for autocannon targeting
-        all_drones = shaheds + quadcopters
+        # Combine all hostile targets for autocannon (drones + speedboats)
+        all_targets = shaheds + quadcopters + speedboats
 
         # 1. Autocannon — target, fire, advance projectiles, check hits
-        self._update_autocannons(frigates, all_drones, dt)
-        killed_by_autocannon = self._advance_projectiles(all_drones, dt)
+        self._update_autocannons(frigates, all_targets, dt)
+        killed_by_autocannon = self._advance_projectiles(all_targets, dt)
 
-        # Filter killed drones before kamikaze phase
+        # Filter killed entities before kamikaze/attack phase
         if killed_by_autocannon:
             shaheds = [s for s in shaheds if s[0] not in killed_by_autocannon]
             quadcopters = [q for q in quadcopters if q[0] not in killed_by_autocannon]
+            speedboats = [s for s in speedboats if s[0] not in killed_by_autocannon]
 
         # 2. Shahed kamikaze — vs tankers and frigates
         self._shahed_kamikaze(shaheds, tankers, frigates)
 
         # 3. Quadcopter kamikaze — vs tankers and frigates
         self._quadcopter_kamikaze(quadcopters, tankers, frigates)
+
+        # 4. Speedboat weapons — bow gun + RPG vs tankers and frigates
+        self._speedboat_attacks(speedboats, tankers, frigates, dt)
 
     # ------------------------------------------------------------------
     # Autocannon
@@ -396,6 +431,104 @@ class CombatProcessor(esper.Processor):
                     }
                 )
                 break
+
+    # ------------------------------------------------------------------
+    # Speedboat weapons
+    # ------------------------------------------------------------------
+
+    def _speedboat_attacks(
+        self,
+        speedboats: list[tuple[int, Transform, VehiclePhysics, Collidable]],
+        tankers: list[tuple[int, Transform, VehiclePhysics, Collidable]],
+        frigates: list[tuple[int, Transform, VehiclePhysics, Collidable]],
+        dt: float,
+    ) -> None:
+        """Speedboat bow gun + RPG attacks against tankers and frigates."""
+        # Prune state for dead/removed speedboats
+        active_ids = {ent for ent, _, _, _ in speedboats}
+        for eid in [k for k in self._speedboat_weapons if k not in active_ids]:
+            del self._speedboat_weapons[eid]
+
+        targets = tankers + frigates
+
+        for sb_ent, sb_tf, _, _ in speedboats:
+            state = self._speedboat_weapons.get(sb_ent)
+            if state is None:
+                state = _SpeedboatWeaponState()
+                self._speedboat_weapons[sb_ent] = state
+
+            state.bow_gun_cooldown -= dt
+            state.rpg_cooldown -= dt
+
+            cos_h = math.cos(sb_tf.heading)
+            sin_h = math.sin(sb_tf.heading)
+
+            # Find closest target within bow gun range (longer of the two weapons)
+            best_ent: int | None = None
+            best_tf: Transform | None = None
+            best_phys: VehiclePhysics | None = None
+            best_dist_sq = BOW_GUN_RANGE_SQ
+            best_in_forward_arc = False
+
+            for t_ent, t_tf, t_phys, _ in targets:
+                dx = t_tf.x - sb_tf.x
+                dy = t_tf.y - sb_tf.y
+                d_sq = dx * dx + dy * dy
+                if d_sq > BOW_GUN_RANGE_SQ:
+                    continue
+                if d_sq < best_dist_sq:
+                    best_dist_sq = d_sq
+                    best_ent = t_ent
+                    best_tf = t_tf
+                    best_phys = t_phys
+                    dist = math.sqrt(d_sq)
+                    if dist > 0:
+                        best_in_forward_arc = (
+                            (cos_h * dx + sin_h * dy) / dist > BOW_GUN_ARC_COS
+                        )
+                    else:
+                        best_in_forward_arc = True
+
+            if best_ent is None or best_tf is None or best_phys is None:
+                continue
+
+            t_health = esper.component_for_entity(best_ent, Health)
+
+            # Bow gun: forward arc, shorter cooldown, lower damage
+            if state.bow_gun_cooldown <= 0 and best_in_forward_arc:
+                state.bow_gun_cooldown = BOW_GUN_COOLDOWN
+                t_health.hp = max(0, t_health.hp - BOW_GUN_DAMAGE)
+                emit_danger_scent(best_tf.x, best_tf.y)
+                if t_health.hp <= 0:
+                    self._kill(best_ent)
+                    self.kills.append(
+                        {"victim_type": best_phys.vehicle_type, "cause": "speedboat"}
+                    )
+                self.events.append(
+                    {"type": "explosion", "x": best_tf.x, "y": best_tf.y}
+                )
+
+            # RPG: all arcs, longer cooldown, heavy damage + breach
+            if (
+                state.rpg_cooldown <= 0
+                and best_dist_sq <= RPG_RANGE_SQ
+                and t_health.hp > 0
+            ):
+                state.rpg_cooldown = RPG_COOLDOWN
+                t_health.hp = max(0, t_health.hp - RPG_DAMAGE)
+                emit_danger_scent(best_tf.x, best_tf.y)
+                # RPG causes hull breaches on tankers
+                if best_phys.vehicle_type == "oil_tanker" and RPG_TANKER_BREACHES > 0:
+                    side = self._breach_side(best_tf, sb_tf.x, sb_tf.y)
+                    self._breach_hull(best_tf, side, RPG_TANKER_BREACHES)
+                if t_health.hp <= 0:
+                    self._kill(best_ent)
+                    self.kills.append(
+                        {"victim_type": best_phys.vehicle_type, "cause": "speedboat"}
+                    )
+                self.events.append(
+                    {"type": "explosion", "x": best_tf.x, "y": best_tf.y}
+                )
 
     # ------------------------------------------------------------------
     # Helpers

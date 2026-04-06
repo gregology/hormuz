@@ -62,6 +62,7 @@ export interface WarCost {
 	frigatesSunk: number;
 	shahedsIntercepted: number;
 	quadcoptersIntercepted: number;
+	speedboatsSunk: number;
 	playersOnline: number;
 }
 
@@ -116,7 +117,8 @@ export function decodeMessage(data: ArrayBuffer): ServerMessage | null {
 			frigatesSunk: (msg[4] as number) ?? 0,
 			shahedsIntercepted: (msg[5] as number) ?? 0,
 			quadcoptersIntercepted: (msg[6] as number) ?? 0,
-			playersOnline: (msg[7] as number) ?? 0,
+			speedboatsSunk: (msg[7] as number) ?? 0,
+			playersOnline: (msg[8] as number) ?? 0,
 		};
 	}
 

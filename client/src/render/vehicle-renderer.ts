@@ -11,7 +11,7 @@
 
 import * as THREE from "three";
 import type { EntityState } from "../game/entities";
-import { RADAR_DETECTION, VEHICLE_PHYSICS } from "../generated/vehicles";
+import { DETECTION_RANGE, VEHICLE_PHYSICS } from "../generated/vehicles";
 import { getElevation, getSlopeAlongHeading } from "../map/heightmap";
 import type { VehicleType } from "../vehicles/physics";
 import {
@@ -21,12 +21,24 @@ import {
 } from "./vehicle-meshes";
 
 // ---------------------------------------------------------------------------
-// Frigate radar detection — derived from YAML
+// Coalition radar detection — derived from YAML
 // ---------------------------------------------------------------------------
 
-const RADAR_RANGE_SQ: Record<string, number> = Object.fromEntries(
-	Object.entries(RADAR_DETECTION).map(([k, v]) => [k, v * v]),
-);
+// Detection range² per observer type per target type
+// Used for coalition threat picture: if ANY allied radar vessel detects a target,
+// the detection ring shows for frigate players.
+const DETECTION_RANGE_SQ: Record<string, Record<string, number>> = {};
+for (const [obsType, targets] of Object.entries(DETECTION_RANGE)) {
+	if (!targets) continue;
+	const sq: Record<string, number> = {};
+	for (const [tgtType, range] of Object.entries(targets)) {
+		if (range != null) sq[tgtType] = range * range;
+	}
+	DETECTION_RANGE_SQ[obsType] = sq;
+}
+
+// Allied factions that share radar detections with the US coalition
+const COALITION_FACTIONS = new Set(["us", "civilian"]);
 
 // Detection indicator ring (world-space units)
 const DETECTION_RING_INNER = 80;
@@ -57,6 +69,14 @@ interface VehicleEntry {
 	currentColor: number;
 }
 
+// Two-tier detection: "direct" = own radar (red), "shared" = coalition intel (pink)
+type DetectionTier = "direct" | "shared";
+
+interface DetectionEntry {
+	obj: THREE.Object3D;
+	tier: DetectionTier;
+}
+
 // ---------------------------------------------------------------------------
 // Renderer
 // ---------------------------------------------------------------------------
@@ -64,26 +84,58 @@ interface VehicleEntry {
 export class ThreeVehicleRenderer {
 	readonly root: THREE.Group;
 	private pool = new Map<number, VehicleEntry>();
-	private detectionIndicators = new Map<number, THREE.Mesh>();
-	private detectionGeo: THREE.RingGeometry;
-	private detectionMat: THREE.MeshBasicMaterial;
+	private detectionIndicators = new Map<number, DetectionEntry>();
+	private directDetectionGeo: THREE.RingGeometry;
+	private directDetectionMat: THREE.MeshBasicMaterial;
+	private sharedDetectionGroup: THREE.Group;
+	private sharedDetectionMat: THREE.MeshBasicMaterial;
 
 	constructor() {
 		this.root = new THREE.Group();
-		this.detectionGeo = new THREE.RingGeometry(
+
+		// Solid red ring — own radar detection
+		this.directDetectionGeo = new THREE.RingGeometry(
 			DETECTION_RING_INNER,
 			DETECTION_RING_OUTER,
 			DETECTION_RING_SEGMENTS,
 		);
-		// Rotate from XY plane to XZ plane (flat on ground)
-		this.detectionGeo.rotateX(-Math.PI / 2);
-		this.detectionMat = new THREE.MeshBasicMaterial({
+		this.directDetectionGeo.rotateX(-Math.PI / 2);
+		this.directDetectionMat = new THREE.MeshBasicMaterial({
 			color: 0xff0000,
 			side: THREE.DoubleSide,
 			transparent: true,
 			opacity: 0.6,
 			depthWrite: false,
 		});
+
+		// Dashed red ring — shared coalition intel
+		// Built as a group of arc-segment meshes to match the solid ring thickness.
+		this.sharedDetectionMat = new THREE.MeshBasicMaterial({
+			color: 0xff0000,
+			side: THREE.DoubleSide,
+			transparent: true,
+			opacity: 0.6,
+			depthWrite: false,
+		});
+		const DASH_COUNT = 8;
+		const DASH_FRACTION = 0.5;
+		const dashArc = (Math.PI * 2 * DASH_FRACTION) / DASH_COUNT;
+		const gapArc = (Math.PI * 2 * (1 - DASH_FRACTION)) / DASH_COUNT;
+		this.sharedDetectionGroup = new THREE.Group();
+		for (let i = 0; i < DASH_COUNT; i++) {
+			const startAngle = i * (dashArc + gapArc);
+			const segGeo = new THREE.RingGeometry(
+				DETECTION_RING_INNER,
+				DETECTION_RING_OUTER,
+				Math.max(3, Math.round(DETECTION_RING_SEGMENTS / DASH_COUNT)),
+				1,
+				startAngle,
+				dashArc,
+			);
+			segGeo.rotateX(-Math.PI / 2);
+			const seg = new THREE.Mesh(segGeo, this.sharedDetectionMat);
+			this.sharedDetectionGroup.add(seg);
+		}
 	}
 
 	/**
@@ -101,20 +153,32 @@ export class ThreeVehicleRenderer {
 	): void {
 		const activeIds = new Set<number>();
 
-		// Detection rings are only visible to frigate players (radar/AWACS)
-		const showDetectionRings = assignedVehicleType === "frigate";
+		// Detection rings: frigate players see both tiers, tanker players see own radar only
+		const showDirectRings =
+			assignedVehicleType === "frigate" || assignedVehicleType === "oil_tanker";
+		const showSharedRings = assignedVehicleType === "frigate";
 
-		// Collect frigate positions for radar detection
-		const frigatePositions: { x: number; y: number }[] = [];
-		if (showDetectionRings) {
+		// Collect radar observers: "direct" = the player's own vessel, "shared" = everyone else
+		const directObservers: { x: number; y: number; vehicleType: string }[] = [];
+		const sharedObservers: { x: number; y: number; vehicleType: string }[] = [];
+		if (showDirectRings || showSharedRings) {
 			for (const e of entities) {
-				if (e.hp > 0 && e.vehicleType === "frigate") {
-					frigatePositions.push({ x: e.x, y: e.y });
+				if (
+					e.hp > 0 &&
+					COALITION_FACTIONS.has(e.faction) &&
+					DETECTION_RANGE_SQ[e.vehicleType] != null
+				) {
+					if (e.id === assignedEntityId) {
+						directObservers.push({ x: e.x, y: e.y, vehicleType: e.vehicleType });
+					} else {
+						sharedObservers.push({ x: e.x, y: e.y, vehicleType: e.vehicleType });
+					}
 				}
 			}
 		}
 
-		const detectedDroneIds = new Set<number>();
+		// Two-tier detection: direct (red) takes priority over shared (pink)
+		const detectionTiers = new Map<number, DetectionTier>();
 
 		for (const e of entities) {
 			if (e.hp <= 0) continue;
@@ -174,15 +238,30 @@ export class ThreeVehicleRenderer {
 				}
 			}
 
-			// Radar detection: only computed for frigate players
-			if (showDetectionRings) {
-				const rangeSq = RADAR_RANGE_SQ[e.vehicleType];
-				if (rangeSq !== undefined) {
-					for (const fp of frigatePositions) {
-						const dx = fp.x - e.x;
-						const dy = fp.y - e.y;
+			// Two-tier radar detection for enemy entities
+			if (e.faction === "iran") {
+				// Direct detection: player's own vessel type radar
+				if (showDirectRings) {
+					for (const obs of directObservers) {
+						const rangeSq = DETECTION_RANGE_SQ[obs.vehicleType]?.[e.vehicleType];
+						if (rangeSq === undefined) continue;
+						const dx = obs.x - e.x;
+						const dy = obs.y - e.y;
 						if (dx * dx + dy * dy < rangeSq) {
-							detectedDroneIds.add(e.id);
+							detectionTiers.set(e.id, "direct");
+							break;
+						}
+					}
+				}
+				// Shared detection: other coalition vessel types (only if not already direct)
+				if (showSharedRings && !detectionTiers.has(e.id)) {
+					for (const obs of sharedObservers) {
+						const rangeSq = DETECTION_RANGE_SQ[obs.vehicleType]?.[e.vehicleType];
+						if (rangeSq === undefined) continue;
+						const dx = obs.x - e.x;
+						const dy = obs.y - e.y;
+						if (dx * dx + dy * dy < rangeSq) {
+							detectionTiers.set(e.id, "shared");
 							break;
 						}
 					}
@@ -190,28 +269,39 @@ export class ThreeVehicleRenderer {
 			}
 		}
 
-		// Update detection indicator rings (frigate players only)
+		// Update detection indicator rings (two-tier: red=direct, pink=shared)
 		for (const e of entities) {
 			if (
 				e.hp <= 0 ||
-				(e.vehicleType !== "shahed" && e.vehicleType !== "quadcopter")
+				(e.vehicleType !== "shahed" && e.vehicleType !== "quadcopter" && e.vehicleType !== "speedboat")
 			)
 				continue;
 
-			if (detectedDroneIds.has(e.id)) {
-				let ring = this.detectionIndicators.get(e.id);
-				if (!ring) {
-					ring = new THREE.Mesh(this.detectionGeo, this.detectionMat);
-					ring.renderOrder = 5;
-					this.root.add(ring);
-					this.detectionIndicators.set(e.id, ring);
+			const tier = detectionTiers.get(e.id);
+			if (tier) {
+				let entry = this.detectionIndicators.get(e.id);
+				if (!entry || entry.tier !== tier) {
+					// Create or recreate with correct geometry/material for the tier
+					if (entry) {
+						this.root.remove(entry.obj);
+					}
+					let obj: THREE.Object3D;
+					if (tier === "direct") {
+						obj = new THREE.Mesh(this.directDetectionGeo, this.directDetectionMat);
+					} else {
+						obj = this.sharedDetectionGroup.clone();
+					}
+					obj.renderOrder = 5;
+					this.root.add(obj);
+					entry = { obj, tier };
+					this.detectionIndicators.set(e.id, entry);
 				}
 				const elevation = getElevation(e.x, e.y) + 31;
-				ring.position.set(e.x, elevation, e.y);
+				entry.obj.position.set(e.x, elevation, e.y);
 			} else {
-				const ring = this.detectionIndicators.get(e.id);
-				if (ring) {
-					this.root.remove(ring);
+				const entry = this.detectionIndicators.get(e.id);
+				if (entry) {
+					this.root.remove(entry.obj);
 					this.detectionIndicators.delete(e.id);
 				}
 			}
@@ -226,9 +316,9 @@ export class ThreeVehicleRenderer {
 			}
 		}
 		// Remove detection indicators for dead/removed drones
-		for (const [id, ring] of this.detectionIndicators) {
+		for (const [id, det] of this.detectionIndicators) {
 			if (!activeIds.has(id)) {
-				this.root.remove(ring);
+				this.root.remove(det.obj);
 				this.detectionIndicators.delete(id);
 			}
 		}
@@ -248,11 +338,15 @@ export class ThreeVehicleRenderer {
 			disposeVehicleMesh(entry.group);
 		}
 		this.pool.clear();
-		for (const [, ring] of this.detectionIndicators) {
-			this.root.remove(ring);
+		for (const [, det] of this.detectionIndicators) {
+			this.root.remove(det.obj);
 		}
 		this.detectionIndicators.clear();
-		this.detectionGeo.dispose();
-		this.detectionMat.dispose();
+		this.directDetectionGeo.dispose();
+		this.directDetectionMat.dispose();
+		for (const child of this.sharedDetectionGroup.children) {
+			(child as THREE.Mesh).geometry.dispose();
+		}
+		this.sharedDetectionMat.dispose();
 	}
 }

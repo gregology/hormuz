@@ -97,9 +97,9 @@ class TestSteerToward:
 
 class TestTankerAIWaypointAdvance:
     def test_tanker_advances_waypoint_when_close(self):
-        from hormuz.systems.bot_ai import LANE_OUTBOUND
+        from hormuz.map_data import LANE_ALT_OUTBOUND
 
-        wp = LANE_OUTBOUND[0]
+        wp = LANE_ALT_OUTBOUND[0]
         tf = Transform(x=wp[0], y=wp[1], heading=0, speed=5.0)
         phys = VehiclePhysics(
             vehicle_type="oil_tanker",

@@ -144,7 +144,9 @@ class Collidable:
 class BotControl:
     """AI-controlled entity. Removed when a human takes over."""
 
-    __slots__ = ("behavior", "throttle", "rudder", "waypoint_index", "target_entity")
+    __slots__ = (
+        "behavior", "throttle", "rudder", "waypoint_index", "target_entity", "stamina",
+    )
 
     def __init__(
         self,
@@ -153,12 +155,14 @@ class BotControl:
         rudder: float = 0.0,
         waypoint_index: int = 0,
         target_entity: int = 0,
+        stamina: float = 1.0,
     ) -> None:
         self.behavior = behavior
         self.throttle = throttle
         self.rudder = rudder
         self.waypoint_index = waypoint_index
         self.target_entity = target_entity
+        self.stamina = stamina
 
 
 class PlayerControl:
