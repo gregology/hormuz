@@ -263,10 +263,10 @@ world:
       inbound: 10
     shahed: 4
     quadcopter: 6
-    speedboat: 4
+    speedboat: 8
     frigate:
-      gulf: 5
-      oman: 5
+      gulf: 4
+      oman: 4
 
 combat:
   autocannon:
