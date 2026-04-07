@@ -38,13 +38,17 @@ the impact site.
 
 Three rules:
 
-1. **Escort the least-contested tanker.** Pick a tanker using pressure scoring
-   (`1 / (distance × (1 + frigates_already_escorting_it)³)`). Linear distance
-   (not squared) and cubic pressure ensure that unescorted tankers far away
-   outscore crowded nearby ones — a tanker 10,000u away with 0 escorts beats
-   a tanker 1,000u away with 3 escorts. Steer toward it; if closer than 800u
-   (offset distance), match the tanker's heading direction. Uses lane waypoints
-   for long-distance navigation to avoid islands.
+1. **Escort the least-covered tanker.** Pick a tanker using pressure scoring
+   (`1 / (distance × (1 + pressure)³)`). Pressure is the *greater* of direct
+   escort count and **geographic coverage** — a distance-weighted count of
+   frigates within 6,000u of the tanker (`ESCORT_COVERAGE_RADIUS`). This
+   prevents clustering: a tanker near 5 frigates (even if they're escorting
+   different ships) appears well-covered, pushing new frigates toward the
+   unprotected ends of the route. Linear distance (not squared) and cubic
+   pressure ensure that uncovered tankers far away outscore covered nearby
+   ones. Steer toward it; if closer than 800u (offset distance), match the
+   tanker's heading direction. Uses lane waypoints for long-distance
+   navigation to avoid islands.
 2. **Rush toward danger.** Steer toward the nearest danger scent within 8000u.
    Strength scales with scent freshness. Full throttle when danger is active.
 3. **Repel from other frigates.** Steer away from any frigate within 2000u. Closer
@@ -244,6 +248,7 @@ after a grace period.
 | `WEIGHT_REPEL` | 0.5 | Steering weight for frigate repulsion |
 | `FRIGATE_CRUISE_THROTTLE` | 0.6 | Throttle when near tankers |
 | `ESCORT_PRESSURE_POWER` | 3 | Exponent on (1+pressure) for escort scoring |
+| `ESCORT_COVERAGE_RADIUS` | 6000u | Frigates within this range count as soft coverage |
 | `ESCORT_THREAT_RADIUS` | 5000u | Radius to count threats near tanker |
 | `ESCORT_THREAT_WEIGHT` | 2.0 | Score multiplier per nearby threat |
 | `PATROL_ANCHORS` | 5 lane points | West/quarter/mid/three-quarter/east patrol positions |

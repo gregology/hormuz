@@ -60,6 +60,11 @@ FRIGATE_CRUISE_THROTTLE = 0.6
 # so unescorted tankers far away outscore crowded nearby ones
 ESCORT_PRESSURE_POWER = 3
 
+# Geographic coverage: frigates within this radius of a tanker count as soft coverage,
+# discouraging other frigates from clustering in the same area
+ESCORT_COVERAGE_RADIUS = 6000.0
+ESCORT_COVERAGE_RADIUS_SQ = ESCORT_COVERAGE_RADIUS * ESCORT_COVERAGE_RADIUS
+
 # Patrol anchors: lane endpoints where frigates idle when no tankers exist.
 # Derived from the first/last waypoints of the shipping lanes.
 PATROL_ANCHORS: list[tuple[float, float]] = []
@@ -443,6 +448,7 @@ class BotAIProcessor(esper.Processor):
             tf, bot, ("civilian",), float("inf"), escort_target_counts,
             pressure_power=ESCORT_PRESSURE_POWER, use_linear_distance=True,
             threat_boost=True,
+            coverage_transforms=frigate_transforms,
         )
 
         if tanker_tf is not None:
@@ -670,6 +676,7 @@ class BotAIProcessor(esper.Processor):
         use_linear_distance: bool = False,
         threat_boost: bool = False,
         frigate_penalty_transforms: list[Transform] | None = None,
+        coverage_transforms: list[Transform] | None = None,
     ) -> Transform | None:
         """Score all valid targets by distance and pressure, pick the best.
 
@@ -690,6 +697,10 @@ class BotAIProcessor(esper.Processor):
             frigate_penalty_transforms: if provided, penalize targets that have a
                 frigate within SPEEDBOAT_FRIGATE_PROXIMITY. Used by speedboat AI
                 to avoid escorted tankers.
+            coverage_transforms: if provided, count nearby transforms within
+                ESCORT_COVERAGE_RADIUS of each target as additional soft pressure.
+                Used by escort AI so frigates spread along the full route instead
+                of clustering where many tankers are close together.
         """
         old_target = bot.target_entity
         best_score = -1.0
@@ -710,6 +721,17 @@ class BotAIProcessor(esper.Processor):
             dist_term = math.sqrt(d_sq) if use_linear_distance else d_sq
             # Pressure: how many other drones/escorts are already targeting this entity
             pressure = drone_target_counts.get(t_ent, 0)
+            # Geographic coverage: count nearby frigates as soft pressure so
+            # tankers in frigate-dense areas are deprioritized
+            if coverage_transforms is not None:
+                coverage = 0.0
+                for c_tf in coverage_transforms:
+                    cx = c_tf.x - t_tf.x
+                    cy = c_tf.y - t_tf.y
+                    c_sq = cx * cx + cy * cy
+                    if c_sq < ESCORT_COVERAGE_RADIUS_SQ:
+                        coverage += 1.0 - math.sqrt(c_sq) / ESCORT_COVERAGE_RADIUS
+                pressure = max(pressure, coverage)
             score = 1.0 / (dist_term * (1 + pressure) ** pressure_power)
             # Threat boost: tankers with nearby enemies score higher
             if threat_boost:
