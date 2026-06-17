@@ -1,9 +1,8 @@
-#  cd path/to/hormuz
-#  docker build -t hormuz-server:latest -f server/Dockerfile .
-#  docker build -t hormuz-client:latest -f client/Dockerfile .   
-
 services:
   server:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
     image: hormuz-server:latest
     networks:
       - hormuz
@@ -16,6 +15,9 @@ services:
       start_period: 10s
 
   client:
+    build:
+      context: .
+      dockerfile: client/Dockerfile
     image: hormuz-client:latest
     ports:
       - "5567:80"
