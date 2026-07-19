@@ -76,3 +76,40 @@ Each phase was developed and tuned in the playground, validated by tests, then p
 - **Physical intuition guides tuning.** "More engine power" and "heavier ship" are intuitive; "exponential drag coefficient 0.97" is not.
 - **Progressive flooding adds drama.** Ships list and slow before sinking, visible to all players. Much more impactful than binary alive/dead.
 - **Staged migration reduced risk.** Each phase was testable and revertible independently.
+
+---
+
+## 003: Shared Lua AI — one behavior source embedded in both hosts
+
+**Date:** 2026-07-16
+**Status:** Complete
+
+### Context
+
+Bot AI lived only in the Python server (`systems/bot_ai.py`, `danger_scent.py`, `threat_picture.py`, ~1,100 lines). The playground — the project's primary development tool — had no AI at all, so emergent behavior (escort formations, wolf-pack attacks, danger responses) could only be observed by booting the full server. The obvious fix (port the AI to TypeScript for the playground) would create two implementations that drift, the same risk the project already carries for physics (`physics.ts` ↔ `physics.py`). Sharing via a single package is blocked by the language barrier: the server is Python, the playground is a browser. Alternatives considered: TS package + Node sidecar (runtime fragility in a 24/7 game), Rust dual-target (third toolchain, slowest iteration loop), YAML behavior DSL (drift moves into two interpreters with worse tooling), dual implementation + golden tests (parity work forever).
+
+### Decision
+
+Write the AI once in **Lua**, embedded in both hosts:
+
+- **`shared/ai/`** — `config.lua` (all tunables), `lib/steering.lua` (primitives + pressure-scored target selection + waypoint following), `behaviors/*.lua` (tanker_transit, escort, swarm_attack, shahed_intercept, quadcopter_intercept), `main.lua` (dispatch, danger scent, threat picture, collision-avoidance post-pass, pcall isolation per entity).
+- **Browser host:** `client/src/ai/lua-host.ts` embeds the scripts via fengari (pure-JS Lua VM), bundled with `import.meta.glob`. Used by the playground (per-vehicle AI toggle, master switch, lil-gui sliders bound live to `config.lua`).
+- **Server host:** `server/src/hormuz/systems/ai_bridge.py` embeds the same scripts via lupa (Lua 5.5). `systems/bot_ai.py` is now a thin esper adapter; `physics.py` routes the player tanker autopilot through the same Lua waypoint follower; `combat.py` emits danger scents into the VM. The bridge hot-reloads the VM when scripts change on disk (~3s poll).
+- **Host contract:** both hosts inject an `ai.gamedata` module (lanes, routes, exclusion zones, spawn points, detection ranges — all derived from generated YAML data) and a global `is_land(x, y)`. Bot state (target, waypoint index, stamina) persists in the hosts (`BotControl` esper component / playground state), so VM rebuilds lose nothing but danger scents (which decay within 60s anyway).
+- **Parity testing:** `shared/ai/contract_fixtures.json` pins tick-by-tick control outputs for 7 scenarios. Vitest runs them through fengari (`client/src/ai/contract.test.ts`), pytest through lupa (`server/tests/test_ai_contract.py`). Regenerate with `UPDATE_AI_FIXTURES=1 pnpm --filter @hormuz/client test -- contract` after intentional behavior changes, then run server tests to confirm hosts still agree.
+
+### Rationale
+
+- **Single source of truth.** Behaviors are authored once; drift between server and playground is impossible by construction.
+- **Hot reload everywhere.** Scripts are data — the playground picks up edits instantly (Vite reload) and the server reloads the VM without dropping connections, which matters for a 24/7 persistent game.
+- **Iteration speed where it matters.** AI rules are the hottest tuning loop in the project; editing a Lua file beats editing two languages or recompiling WASM.
+- **Extensibility for future tooling.** Headless behavior tests run in Vitest against scripted scenarios; the same host can serve replay analysis or balance sims later.
+- **Industry-proven pattern.** Embedding Lua for game logic (WoW, Factorio, Roblox) is the standard solution to exactly this problem.
+
+### Costs accepted
+
+- **Third language in the repo.** Lua is deliberately small; `lua-language-server` + EmmyLua annotations give real IDE support.
+- **Two Lua runtimes** (fengari = Lua 5.3 semantics, lupa = Lua 5.5). Scripts stick to the common subset; the `math.atan2` compat shim in `lib/steering.lua` is the canonical example. Contract tests catch any residual float/semantic drift.
+- **Runtime hardening is the project's job.** Every behavior call is wrapped in `pcall`; errors are isolated per entity and surfaced (playground AI panel, server logs) without killing the tick.
+- **lupa quirks discovered during integration:** `table_from(recursive=True)` breaks on objects referenced twice in one structure (lanes/routes each get their own copies), and Lua 5.5's preload searcher rejects non-Lua callables (gamedata loader is wrapped in a Lua function).
+- **fengari assumes Node:** its CJS entry reads `process.env.FENGARICONF` at module load and its io/os libraries touch `process.stdin`/`fs`/`tmp`. The Vite configs shim `process.env`/`process.versions.node` via `define`, and the hosts open only the libraries the sandbox needs (base, package, table, string, math) instead of `luaL_openlibs` — the lupa side removes the same globals for parity.

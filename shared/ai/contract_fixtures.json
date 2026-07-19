@@ -1,0 +1,776 @@
+[
+  {
+    "name": "tanker convoy: follower brakes behind leader",
+    "dt": 0.05,
+    "ticks": 3,
+    "entities": [
+      {
+        "type": "oil_tanker",
+        "faction": "civilian",
+        "x": 60000,
+        "y": 43000,
+        "heading": 0,
+        "speed": 10,
+        "hp": 100,
+        "airborne": false,
+        "size": 220,
+        "id": 1,
+        "behavior": "tanker_transit",
+        "bot": {
+          "throttle": 0,
+          "rudder": 0,
+          "stamina": 1,
+          "waypoint_index": 0,
+          "target": 0,
+          "destination": "oman"
+        }
+      },
+      {
+        "type": "oil_tanker",
+        "faction": "civilian",
+        "x": 60200,
+        "y": 43000,
+        "heading": 0,
+        "speed": 5,
+        "hp": 100,
+        "airborne": false,
+        "size": 220,
+        "id": 2,
+        "behavior": "tanker_transit",
+        "bot": {
+          "throttle": 0,
+          "rudder": 0,
+          "stamina": 1,
+          "waypoint_index": 0,
+          "target": 0,
+          "destination": "oman"
+        }
+      }
+    ],
+    "scents": [],
+    "expected": [
+      [
+        {
+          "id": 1,
+          "throttle": 0.7,
+          "rudder": 0.7840909090909092,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1
+        },
+        {
+          "id": 2,
+          "throttle": 1,
+          "rudder": 1,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1
+        }
+      ],
+      [
+        {
+          "id": 1,
+          "throttle": 0.7,
+          "rudder": 0.7840909090909092,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1
+        },
+        {
+          "id": 2,
+          "throttle": 1,
+          "rudder": 1,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1
+        }
+      ],
+      [
+        {
+          "id": 1,
+          "throttle": 0.7,
+          "rudder": 0.7840909090909092,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1
+        },
+        {
+          "id": 2,
+          "throttle": 1,
+          "rudder": 1,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1
+        }
+      ]
+    ]
+  },
+  {
+    "name": "escort: two frigates split across two tankers",
+    "dt": 0.05,
+    "ticks": 3,
+    "entities": [
+      {
+        "type": "frigate",
+        "faction": "us",
+        "x": 60000,
+        "y": 43000,
+        "heading": 0,
+        "speed": 10,
+        "hp": 100,
+        "airborne": false,
+        "size": 100,
+        "id": 1,
+        "behavior": "escort",
+        "bot": {
+          "throttle": 0,
+          "rudder": 0,
+          "stamina": 1,
+          "waypoint_index": 0,
+          "target": 0,
+          "destination": "oman"
+        }
+      },
+      {
+        "type": "frigate",
+        "faction": "us",
+        "x": 60000,
+        "y": 43500,
+        "heading": 0,
+        "speed": 10,
+        "hp": 100,
+        "airborne": false,
+        "size": 100,
+        "id": 2,
+        "behavior": "escort",
+        "bot": {
+          "throttle": 0,
+          "rudder": 0,
+          "stamina": 1,
+          "waypoint_index": 0,
+          "target": 0,
+          "destination": "oman"
+        }
+      },
+      {
+        "type": "oil_tanker",
+        "faction": "civilian",
+        "x": 63000,
+        "y": 42500,
+        "heading": 0,
+        "speed": 10,
+        "hp": 100,
+        "airborne": false,
+        "size": 220,
+        "id": 10
+      },
+      {
+        "type": "oil_tanker",
+        "faction": "civilian",
+        "x": 63000,
+        "y": 43500,
+        "heading": 0,
+        "speed": 10,
+        "hp": 100,
+        "airborne": false,
+        "size": 220,
+        "id": 11
+      }
+    ],
+    "scents": [],
+    "expected": [
+      [
+        {
+          "id": 1,
+          "throttle": 1,
+          "rudder": -0.5731784128975523,
+          "target": 10,
+          "waypoint_index": 0,
+          "stamina": 1
+        },
+        {
+          "id": 2,
+          "throttle": 1,
+          "rudder": 0.375,
+          "target": 11,
+          "waypoint_index": 0,
+          "stamina": 1
+        }
+      ],
+      [
+        {
+          "id": 1,
+          "throttle": 1,
+          "rudder": -0.5731784128975523,
+          "target": 10,
+          "waypoint_index": 0,
+          "stamina": 1
+        },
+        {
+          "id": 2,
+          "throttle": 1,
+          "rudder": 0.375,
+          "target": 11,
+          "waypoint_index": 0,
+          "stamina": 1
+        }
+      ],
+      [
+        {
+          "id": 1,
+          "throttle": 1,
+          "rudder": -0.5731784128975523,
+          "target": 10,
+          "waypoint_index": 0,
+          "stamina": 1
+        },
+        {
+          "id": 2,
+          "throttle": 1,
+          "rudder": 0.375,
+          "target": 11,
+          "waypoint_index": 0,
+          "stamina": 1
+        }
+      ]
+    ]
+  },
+  {
+    "name": "shaheds: one jammed near frigate, one hunts",
+    "dt": 0.05,
+    "ticks": 3,
+    "entities": [
+      {
+        "type": "shahed",
+        "faction": "iran",
+        "x": 60000,
+        "y": 41000,
+        "heading": 0,
+        "speed": 80,
+        "hp": 100,
+        "airborne": true,
+        "size": 4,
+        "id": 1,
+        "behavior": "shahed_intercept",
+        "bot": {
+          "throttle": 0,
+          "rudder": 0,
+          "stamina": 1,
+          "waypoint_index": 0,
+          "target": 0,
+          "destination": "oman"
+        }
+      },
+      {
+        "type": "shahed",
+        "faction": "iran",
+        "x": 60000,
+        "y": 45000,
+        "heading": 0,
+        "speed": 80,
+        "hp": 100,
+        "airborne": true,
+        "size": 4,
+        "id": 2,
+        "behavior": "shahed_intercept",
+        "bot": {
+          "throttle": 0,
+          "rudder": 0,
+          "stamina": 1,
+          "waypoint_index": 0,
+          "target": 0,
+          "destination": "oman"
+        }
+      },
+      {
+        "type": "frigate",
+        "faction": "us",
+        "x": 60500,
+        "y": 41000,
+        "heading": 0,
+        "speed": 10,
+        "hp": 100,
+        "airborne": false,
+        "size": 100,
+        "id": 3
+      },
+      {
+        "type": "oil_tanker",
+        "faction": "civilian",
+        "x": 63000,
+        "y": 42500,
+        "heading": 0,
+        "speed": 10,
+        "hp": 100,
+        "airborne": false,
+        "size": 220,
+        "id": 10
+      },
+      {
+        "type": "oil_tanker",
+        "faction": "civilian",
+        "x": 63000,
+        "y": 43500,
+        "heading": 0,
+        "speed": 10,
+        "hp": 100,
+        "airborne": false,
+        "size": 220,
+        "id": 11
+      }
+    ],
+    "scents": [],
+    "expected": [
+      [
+        {
+          "id": 1,
+          "throttle": 1,
+          "rudder": 0,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1
+        },
+        {
+          "id": 2,
+          "throttle": 1,
+          "rudder": -0.9272952180016123,
+          "target": 11,
+          "waypoint_index": 0,
+          "stamina": 1
+        }
+      ],
+      [
+        {
+          "id": 1,
+          "throttle": 1,
+          "rudder": 0,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1
+        },
+        {
+          "id": 2,
+          "throttle": 1,
+          "rudder": -0.9272952180016123,
+          "target": 11,
+          "waypoint_index": 0,
+          "stamina": 1
+        }
+      ],
+      [
+        {
+          "id": 1,
+          "throttle": 1,
+          "rudder": 0,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1
+        },
+        {
+          "id": 2,
+          "throttle": 1,
+          "rudder": -0.9272952180016123,
+          "target": 11,
+          "waypoint_index": 0,
+          "stamina": 1
+        }
+      ]
+    ]
+  },
+  {
+    "name": "speedboat: frigate evasion overrides hunting",
+    "dt": 0.05,
+    "ticks": 3,
+    "entities": [
+      {
+        "type": "speedboat",
+        "faction": "iran",
+        "x": 60000,
+        "y": 43000,
+        "heading": 0,
+        "speed": 10,
+        "hp": 100,
+        "airborne": false,
+        "size": 20,
+        "id": 1,
+        "behavior": "swarm_attack",
+        "bot": {
+          "throttle": 0,
+          "rudder": 0,
+          "stamina": 0.5,
+          "waypoint_index": 0,
+          "target": 0,
+          "destination": "oman"
+        }
+      },
+      {
+        "type": "frigate",
+        "faction": "us",
+        "x": 60500,
+        "y": 43100,
+        "heading": 0,
+        "speed": 10,
+        "hp": 100,
+        "airborne": false,
+        "size": 100,
+        "id": 3
+      },
+      {
+        "type": "oil_tanker",
+        "faction": "civilian",
+        "x": 60000,
+        "y": 45000,
+        "heading": 0,
+        "speed": 10,
+        "hp": 100,
+        "airborne": false,
+        "size": 220,
+        "id": 10
+      }
+    ],
+    "scents": [],
+    "expected": [
+      [
+        {
+          "id": 1,
+          "throttle": 1,
+          "rudder": -0.39088191723541965,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 0.49925
+        }
+      ],
+      [
+        {
+          "id": 1,
+          "throttle": 1,
+          "rudder": -0.39088191723541965,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 0.49850000000000005
+        }
+      ],
+      [
+        {
+          "id": 1,
+          "throttle": 1,
+          "rudder": -0.39088191723541965,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 0.4977500000000001
+        }
+      ]
+    ]
+  },
+  {
+    "name": "danger scent: frigate rushes, tanker drifts away",
+    "dt": 0.05,
+    "ticks": 4,
+    "entities": [
+      {
+        "type": "frigate",
+        "faction": "us",
+        "x": 60000,
+        "y": 43000,
+        "heading": 0,
+        "speed": 10,
+        "hp": 100,
+        "airborne": false,
+        "size": 100,
+        "id": 1,
+        "behavior": "escort",
+        "bot": {
+          "throttle": 0,
+          "rudder": 0,
+          "stamina": 1,
+          "waypoint_index": 0,
+          "target": 0,
+          "destination": "oman"
+        }
+      },
+      {
+        "type": "oil_tanker",
+        "faction": "civilian",
+        "x": 62000,
+        "y": 44000,
+        "heading": 0,
+        "speed": 10,
+        "hp": 100,
+        "airborne": false,
+        "size": 220,
+        "id": 10,
+        "behavior": "tanker_transit",
+        "bot": {
+          "throttle": 0,
+          "rudder": 0,
+          "stamina": 1,
+          "waypoint_index": 0,
+          "target": 0,
+          "destination": "oman"
+        }
+      }
+    ],
+    "scents": [
+      {
+        "x": 64000,
+        "y": 43000,
+        "at_tick": 1
+      }
+    ],
+    "expected": [
+      [
+        {
+          "id": 1,
+          "throttle": 1,
+          "rudder": 0.5563771308009674,
+          "target": 10,
+          "waypoint_index": 0,
+          "stamina": 1
+        },
+        {
+          "id": 10,
+          "throttle": 1,
+          "rudder": 0.8,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1
+        }
+      ],
+      [
+        {
+          "id": 1,
+          "throttle": 1,
+          "rudder": 0.5563771308009674,
+          "target": 10,
+          "waypoint_index": 0,
+          "stamina": 1
+        },
+        {
+          "id": 10,
+          "throttle": 1,
+          "rudder": 0.8,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1
+        }
+      ],
+      [
+        {
+          "id": 1,
+          "throttle": 1,
+          "rudder": 0.5563771308009674,
+          "target": 10,
+          "waypoint_index": 0,
+          "stamina": 1
+        },
+        {
+          "id": 10,
+          "throttle": 1,
+          "rudder": 0.8,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1
+        }
+      ],
+      [
+        {
+          "id": 1,
+          "throttle": 1,
+          "rudder": 0.5563771308009674,
+          "target": 10,
+          "waypoint_index": 0,
+          "stamina": 1
+        },
+        {
+          "id": 10,
+          "throttle": 1,
+          "rudder": 0.8,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1
+        }
+      ]
+    ]
+  },
+  {
+    "name": "quadcopters: spread across mixed targets",
+    "dt": 0.05,
+    "ticks": 3,
+    "entities": [
+      {
+        "type": "quadcopter",
+        "faction": "iran",
+        "x": 60000,
+        "y": 43000,
+        "heading": 0,
+        "speed": 30,
+        "hp": 100,
+        "airborne": true,
+        "size": 2,
+        "id": 1,
+        "behavior": "quadcopter_intercept",
+        "bot": {
+          "throttle": 0,
+          "rudder": 0,
+          "stamina": 1,
+          "waypoint_index": 0,
+          "target": 0,
+          "destination": "oman"
+        }
+      },
+      {
+        "type": "quadcopter",
+        "faction": "iran",
+        "x": 60000,
+        "y": 43200,
+        "heading": 0,
+        "speed": 30,
+        "hp": 100,
+        "airborne": true,
+        "size": 2,
+        "id": 2,
+        "behavior": "quadcopter_intercept",
+        "bot": {
+          "throttle": 0,
+          "rudder": 0,
+          "stamina": 1,
+          "waypoint_index": 0,
+          "target": 0,
+          "destination": "oman"
+        }
+      },
+      {
+        "type": "oil_tanker",
+        "faction": "civilian",
+        "x": 62000,
+        "y": 42700,
+        "heading": 0,
+        "speed": 10,
+        "hp": 100,
+        "airborne": false,
+        "size": 220,
+        "id": 10
+      },
+      {
+        "type": "frigate",
+        "faction": "us",
+        "x": 62000,
+        "y": 43300,
+        "heading": 0,
+        "speed": 10,
+        "hp": 100,
+        "airborne": false,
+        "size": 100,
+        "id": 11
+      }
+    ],
+    "scents": [],
+    "expected": [
+      [
+        {
+          "id": 1,
+          "throttle": 1,
+          "rudder": -0.5377798952189943,
+          "target": 10,
+          "waypoint_index": 0,
+          "stamina": 1
+        },
+        {
+          "id": 2,
+          "throttle": 1,
+          "rudder": 0.33991679144388587,
+          "target": 11,
+          "waypoint_index": 0,
+          "stamina": 1
+        }
+      ],
+      [
+        {
+          "id": 1,
+          "throttle": 1,
+          "rudder": -0.5377798952189943,
+          "target": 10,
+          "waypoint_index": 0,
+          "stamina": 1
+        },
+        {
+          "id": 2,
+          "throttle": 1,
+          "rudder": 0.33991679144388587,
+          "target": 11,
+          "waypoint_index": 0,
+          "stamina": 1
+        }
+      ],
+      [
+        {
+          "id": 1,
+          "throttle": 1,
+          "rudder": -0.5377798952189943,
+          "target": 10,
+          "waypoint_index": 0,
+          "stamina": 1
+        },
+        {
+          "id": 2,
+          "throttle": 1,
+          "rudder": 0.33991679144388587,
+          "target": 11,
+          "waypoint_index": 0,
+          "stamina": 1
+        }
+      ]
+    ]
+  },
+  {
+    "name": "tanker at lane start advances waypoint",
+    "dt": 0.05,
+    "ticks": 2,
+    "entities": [
+      {
+        "type": "oil_tanker",
+        "faction": "civilian",
+        "x": 76227,
+        "y": 52473,
+        "heading": 0,
+        "speed": 10,
+        "hp": 100,
+        "airborne": false,
+        "size": 220,
+        "id": 1,
+        "behavior": "tanker_transit",
+        "bot": {
+          "throttle": 0,
+          "rudder": 0,
+          "stamina": 1,
+          "waypoint_index": 0,
+          "target": 0,
+          "destination": "oman"
+        }
+      }
+    ],
+    "scents": [],
+    "expected": [
+      [
+        {
+          "id": 1,
+          "throttle": 1,
+          "rudder": -1,
+          "target": 0,
+          "waypoint_index": 1,
+          "stamina": 1
+        }
+      ],
+      [
+        {
+          "id": 1,
+          "throttle": 1,
+          "rudder": -1,
+          "target": 0,
+          "waypoint_index": 1,
+          "stamina": 1
+        }
+      ]
+    ]
+  }
+]

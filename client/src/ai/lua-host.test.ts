@@ -1,0 +1,344 @@
+import { describe, expect, it } from "vitest";
+import { buildClientGameData } from "./game-data";
+import type { AIBotState, AIEntitySnapshot } from "./lua-host";
+import { LuaAIHost } from "./lua-host";
+
+function createHost(isLand: (x: number, y: number) => boolean = () => false) {
+	return new LuaAIHost({ isLand, gameData: buildClientGameData() });
+}
+
+function botState(overrides: Partial<AIBotState> = {}): AIBotState {
+	return {
+		throttle: 0,
+		rudder: 0,
+		stamina: 1,
+		waypoint_index: 0,
+		target: 0,
+		destination: "oman",
+		...overrides,
+	};
+}
+
+function entity(overrides: Partial<AIEntitySnapshot>): AIEntitySnapshot {
+	return {
+		id: 1,
+		type: "oil_tanker",
+		faction: "civilian",
+		x: 0,
+		y: 0,
+		heading: 0,
+		speed: 10,
+		hp: 100,
+		airborne: false,
+		size: 220,
+		...overrides,
+	};
+}
+
+describe("LuaAIHost", () => {
+	it("loads scripts and returns config", () => {
+		const host = createHost();
+		const config = host.getConfigFlat();
+		expect(config["tanker.brake_range"]).toBe(400);
+		expect(config["escort.weight_presence"]).toBeCloseTo(0.6);
+	});
+
+	it("config writes take effect", () => {
+		const host = createHost();
+		host.setConfig("tanker.brake_range", 999);
+		expect(host.getConfigFlat()["tanker.brake_range"]).toBe(999);
+	});
+});
+
+describe("tanker_transit behavior", () => {
+	it("steers toward the next lane waypoint at full throttle", () => {
+		const host = createHost();
+		// At outbound lane start, heading exactly toward waypoint 2
+		const tanker = entity({
+			id: 1,
+			behavior: "tanker_transit",
+			bot: botState(),
+			x: 76227,
+			y: 52473,
+			heading: Math.atan2(50890 - 52473, 77877 - 76227),
+		});
+		const { controls, errors } = host.compute([tanker], 0.05, 0);
+		expect(errors).toEqual([]);
+		expect(controls).toHaveLength(1);
+		expect(controls[0].throttle).toBe(1);
+		expect(Math.abs(controls[0].rudder)).toBeLessThan(0.01);
+	});
+
+	it("advances the waypoint index when close to the waypoint", () => {
+		const host = createHost();
+		const tanker = entity({
+			id: 1,
+			behavior: "tanker_transit",
+			bot: botState({ waypoint_index: 0 }),
+			x: 76300,
+			y: 52450,
+		});
+		const { controls } = host.compute([tanker], 0.05, 0);
+		expect(controls[0].waypoint_index).toBe(1);
+	});
+
+	it("brakes behind a slower tanker ahead", () => {
+		const host = createHost();
+		const leader = entity({
+			id: 2,
+			x: 76427,
+			y: 52473,
+			behavior: undefined,
+			bot: undefined,
+		});
+		const follower = entity({
+			id: 1,
+			behavior: "tanker_transit",
+			bot: botState(),
+			x: 76227,
+			y: 52473,
+			heading: 0,
+		});
+		const { controls } = host.compute([follower, leader], 0.05, 0);
+		expect(controls[0].throttle).toBeLessThan(1);
+		expect(controls[0].throttle).toBeGreaterThan(0.4);
+	});
+});
+
+describe("shahed_intercept behavior", () => {
+	it("steers toward the nearest civilian vessel", () => {
+		const host = createHost();
+		const shahed = entity({
+			id: 1,
+			type: "shahed",
+			faction: "iran",
+			airborne: true,
+			size: 12,
+			behavior: "shahed_intercept",
+			bot: botState(),
+			x: 0,
+			y: 0,
+			heading: 0,
+		});
+		// Target due south — rudder should be positive (turn right from east heading)
+		const tanker = entity({ id: 2, x: 0, y: 1000 });
+		const { controls } = host.compute([shahed, tanker], 0.05, 0);
+		expect(controls[0].target).toBe(2);
+		expect(controls[0].rudder).toBeGreaterThan(0.5);
+	});
+
+	it("is jammed near a frigate: flies straight", () => {
+		const host = createHost();
+		const shahed = entity({
+			id: 1,
+			type: "shahed",
+			faction: "iran",
+			airborne: true,
+			size: 12,
+			behavior: "shahed_intercept",
+			bot: botState(),
+			x: 0,
+			y: 0,
+			heading: 0,
+		});
+		const frigate = entity({
+			id: 3,
+			type: "frigate",
+			faction: "us",
+			x: 500,
+			y: 0,
+			size: 120,
+		});
+		const tanker = entity({ id: 2, x: 0, y: 1000 });
+		const { controls } = host.compute([shahed, frigate, tanker], 0.05, 0);
+		expect(controls[0].rudder).toBe(0);
+	});
+});
+
+describe("escort behavior", () => {
+	it("two frigates split between two distant tankers (pressure scoring)", () => {
+		const host = createHost();
+		// Frigates far apart, one tanker near each — the second frigate must
+		// not dogpile the first frigate's tanker.
+		const frigateA = entity({
+			id: 1,
+			type: "frigate",
+			faction: "us",
+			behavior: "escort",
+			bot: botState(),
+			x: 0,
+			y: 0,
+			size: 120,
+		});
+		const frigateB = entity({
+			id: 2,
+			type: "frigate",
+			faction: "us",
+			behavior: "escort",
+			bot: botState(),
+			x: 100000,
+			y: 60000,
+			size: 120,
+		});
+		const tanker1 = entity({ id: 10, x: 3000, y: 0 });
+		const tanker2 = entity({ id: 11, x: 97000, y: 60000 });
+		const { controls } = host.compute(
+			[frigateA, frigateB, tanker1, tanker2],
+			0.05,
+			0,
+		);
+		// First frigate claims one tanker; second must pick the other
+		expect(controls[0].target).not.toBe(0);
+		expect(controls[1].target).not.toBe(0);
+		expect(controls[0].target).not.toBe(controls[1].target);
+	});
+
+	it("patrols toward a lane anchor when no tankers exist", () => {
+		const host = createHost();
+		const frigate = entity({
+			id: 1,
+			type: "frigate",
+			faction: "us",
+			behavior: "escort",
+			bot: botState(),
+			x: 85500,
+			y: 40500,
+			heading: 0,
+			size: 120,
+		});
+		const { controls, errors } = host.compute([frigate], 0.05, 0);
+		expect(errors).toEqual([]);
+		expect(controls[0].throttle).toBeCloseTo(0.7);
+	});
+});
+
+describe("swarm_attack behavior", () => {
+	it("flees from a nearby frigate regardless of targets", () => {
+		const host = createHost();
+		const speedboat = entity({
+			id: 1,
+			type: "speedboat",
+			faction: "iran",
+			behavior: "swarm_attack",
+			bot: botState(),
+			x: 0,
+			y: 0,
+			heading: 0,
+			size: 20,
+		});
+		const frigate = entity({
+			id: 3,
+			type: "frigate",
+			faction: "us",
+			x: 500,
+			y: 100,
+			size: 120,
+		});
+		const tanker = entity({ id: 2, x: 0, y: 1000 });
+		const { controls } = host.compute([speedboat, frigate, tanker], 0.05, 0);
+		// Frigate ahead to starboard; evasion must steer to port (negative)
+		expect(controls[0].throttle).toBe(1);
+		expect(controls[0].rudder).toBeLessThan(0);
+	});
+
+	it("retreats home when stamina is depleted", () => {
+		const host = createHost();
+		const speedboat = entity({
+			id: 1,
+			type: "speedboat",
+			faction: "iran",
+			behavior: "swarm_attack",
+			bot: botState({ stamina: 0.1 }),
+			x: 60000,
+			y: 45000,
+			heading: Math.PI / 2,
+			size: 20,
+		});
+		const { controls } = host.compute([speedboat], 0.05, 0);
+		// Heading south, homes are north-east — rudder should turn left (negative)
+		expect(controls[0].rudder).toBeLessThan(0);
+		expect(controls[0].throttle).toBe(1);
+	});
+});
+
+describe("danger scent", () => {
+	it("attracts frigates toward emitted scents", () => {
+		const host = createHost();
+		host.addScent(5000, 0);
+		const frigate = entity({
+			id: 1,
+			type: "frigate",
+			faction: "us",
+			behavior: "escort",
+			bot: botState(),
+			x: 0,
+			y: 0,
+			heading: 0,
+			size: 120,
+		});
+		const { controls } = host.compute([frigate], 0.05, 0);
+		// Scent is dead ahead; patrol anchor pull aside, rudder should be ~0 (straight to scent)
+		// and throttle full (danger response)
+		expect(controls[0].throttle).toBe(1);
+	});
+
+	it("error in one behavior does not kill other entities", () => {
+		const host = createHost();
+		const broken = entity({
+			id: 1,
+			behavior: "does_not_exist",
+			bot: botState(),
+		});
+		const tanker = entity({
+			id: 2,
+			behavior: "tanker_transit",
+			bot: botState(),
+			x: 76227,
+			y: 52473,
+		});
+		const { controls, errors } = host.compute([broken, tanker], 0.05, 0);
+		expect(errors).toHaveLength(1);
+		expect(errors[0]).toContain("unknown behavior");
+		expect(controls).toHaveLength(2);
+		expect(controls[1].throttle).toBe(1);
+	});
+});
+
+describe("determinism", () => {
+	it("identical worlds produce identical outputs", () => {
+		const world = [
+			entity({
+				id: 1,
+				behavior: "tanker_transit",
+				bot: botState(),
+				x: 76227,
+				y: 52473,
+				heading: 0.5,
+			}),
+			entity({
+				id: 2,
+				type: "frigate",
+				faction: "us",
+				behavior: "escort",
+				bot: botState(),
+				x: 80000,
+				y: 40000,
+				size: 120,
+			}),
+			entity({
+				id: 3,
+				type: "shahed",
+				faction: "iran",
+				behavior: "shahed_intercept",
+				bot: botState(),
+				x: 82000,
+				y: 39000,
+				airborne: true,
+				size: 12,
+			}),
+		];
+		const a = createHost().compute(structuredClone(world), 0.05, 0);
+		const b = createHost().compute(structuredClone(world), 0.05, 0);
+		expect(a).toEqual(b);
+	});
+});

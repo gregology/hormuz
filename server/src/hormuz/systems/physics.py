@@ -15,7 +15,7 @@ from hormuz.components import (
     VehiclePhysics,
 )
 from hormuz.generated.vehicles import BREACHES_TO_SINK
-from hormuz.systems.bot_ai import run_tanker_ai
+from hormuz.systems.ai_bridge import get_bridge
 
 # Re-export for combat.py import
 __all__ = ["PhysicsProcessor", "BREACH_CLAMP_COUNT", "BREACH_RATE"]
@@ -94,7 +94,9 @@ class PhysicsProcessor(esper.Processor):
                 tf = esper.component_for_entity(ent, Transform)
                 cargo = esper.try_component(ent, CargoState)
                 destination = cargo.destination if cargo else "oman"
-                _, rudder, pc.waypoint_index = run_tanker_ai(tf, pc.waypoint_index, destination)
+                rudder, pc.waypoint_index = get_bridge().waypoint_follow(
+                    tf.x, tf.y, tf.heading, pc.waypoint_index, destination
+                )
                 return pc.throttle, rudder
             return pc.throttle, pc.rudder
         bc = esper.try_component(ent, BotControl)

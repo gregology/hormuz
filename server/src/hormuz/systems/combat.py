@@ -36,8 +36,8 @@ from hormuz.generated.vehicles import (
     QUADCOPTER_TANKER_BREACHES,
     VEHICLES,
 )
+from hormuz.systems.ai_bridge import get_bridge
 from hormuz.systems.collision import _sat_collision, _transform_polygon
-from hormuz.systems.danger_scent import emit_danger_scent
 
 # Derived squared constants for distance checks
 JAM_RADIUS_SQ = JAM_RADIUS * JAM_RADIUS
@@ -351,7 +351,7 @@ class CombatProcessor(esper.Processor):
 
                 breach_side = self._breach_side(t_tf, contact_x, contact_y)
                 self._breach_hull(t_tf, breach_side, breach_count)
-                emit_danger_scent(contact_x, contact_y)
+                get_bridge().emit_scent(contact_x, contact_y)
 
                 self.events.append(
                     {
@@ -421,7 +421,7 @@ class CombatProcessor(esper.Processor):
                 if breach_count > 0:
                     breach_side = self._breach_side(t_tf, contact_x, contact_y)
                     self._breach_hull(t_tf, breach_side, breach_count)
-                emit_danger_scent(contact_x, contact_y)
+                get_bridge().emit_scent(contact_x, contact_y)
 
                 self.events.append(
                     {
@@ -498,7 +498,7 @@ class CombatProcessor(esper.Processor):
             if state.bow_gun_cooldown <= 0 and best_in_forward_arc:
                 state.bow_gun_cooldown = BOW_GUN_COOLDOWN
                 t_health.hp = max(0, t_health.hp - BOW_GUN_DAMAGE)
-                emit_danger_scent(best_tf.x, best_tf.y)
+                get_bridge().emit_scent(best_tf.x, best_tf.y)
                 if t_health.hp <= 0:
                     self._kill(best_ent)
                     self.kills.append(
@@ -516,7 +516,7 @@ class CombatProcessor(esper.Processor):
             ):
                 state.rpg_cooldown = RPG_COOLDOWN
                 t_health.hp = max(0, t_health.hp - RPG_DAMAGE)
-                emit_danger_scent(best_tf.x, best_tf.y)
+                get_bridge().emit_scent(best_tf.x, best_tf.y)
                 # RPG causes hull breaches on tankers
                 if best_phys.vehicle_type == "oil_tanker" and RPG_TANKER_BREACHES > 0:
                     side = self._breach_side(best_tf, sb_tf.x, sb_tf.y)
