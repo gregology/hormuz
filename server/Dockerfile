@@ -27,6 +27,10 @@ COPY server/pyproject.toml .
 COPY server/src/ src/
 COPY --from=codegen /build/server/src/hormuz/generated/ src/hormuz/generated/
 
+# Runtime AI scripts: ai_bridge.py resolves _REPO_ROOT to "/" in this image,
+# so the Lua module path expects /shared/ai/...
+COPY shared/ /shared/
+
 RUN uv sync --no-dev
 
 EXPOSE 8000
