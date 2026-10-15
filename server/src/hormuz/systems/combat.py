@@ -483,9 +483,7 @@ class CombatProcessor(esper.Processor):
                     best_phys = t_phys
                     dist = math.sqrt(d_sq)
                     if dist > 0:
-                        best_in_forward_arc = (
-                            (cos_h * dx + sin_h * dy) / dist > BOW_GUN_ARC_COS
-                        )
+                        best_in_forward_arc = (cos_h * dx + sin_h * dy) / dist > BOW_GUN_ARC_COS
                     else:
                         best_in_forward_arc = True
 
@@ -501,19 +499,11 @@ class CombatProcessor(esper.Processor):
                 get_bridge().emit_scent(best_tf.x, best_tf.y)
                 if t_health.hp <= 0:
                     self._kill(best_ent)
-                    self.kills.append(
-                        {"victim_type": best_phys.vehicle_type, "cause": "speedboat"}
-                    )
-                self.events.append(
-                    {"type": "explosion", "x": best_tf.x, "y": best_tf.y}
-                )
+                    self.kills.append({"victim_type": best_phys.vehicle_type, "cause": "speedboat"})
+                self.events.append({"type": "explosion", "x": best_tf.x, "y": best_tf.y})
 
             # RPG: all arcs, longer cooldown, heavy damage + breach
-            if (
-                state.rpg_cooldown <= 0
-                and best_dist_sq <= RPG_RANGE_SQ
-                and t_health.hp > 0
-            ):
+            if state.rpg_cooldown <= 0 and best_dist_sq <= RPG_RANGE_SQ and t_health.hp > 0:
                 state.rpg_cooldown = RPG_COOLDOWN
                 t_health.hp = max(0, t_health.hp - RPG_DAMAGE)
                 get_bridge().emit_scent(best_tf.x, best_tf.y)
@@ -523,12 +513,8 @@ class CombatProcessor(esper.Processor):
                     self._breach_hull(best_tf, side, RPG_TANKER_BREACHES)
                 if t_health.hp <= 0:
                     self._kill(best_ent)
-                    self.kills.append(
-                        {"victim_type": best_phys.vehicle_type, "cause": "speedboat"}
-                    )
-                self.events.append(
-                    {"type": "explosion", "x": best_tf.x, "y": best_tf.y}
-                )
+                    self.kills.append({"victim_type": best_phys.vehicle_type, "cause": "speedboat"})
+                self.events.append({"type": "explosion", "x": best_tf.x, "y": best_tf.y})
 
     # ------------------------------------------------------------------
     # Helpers

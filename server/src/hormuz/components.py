@@ -145,7 +145,12 @@ class BotControl:
     """AI-controlled entity. Removed when a human takes over."""
 
     __slots__ = (
-        "behavior", "throttle", "rudder", "waypoint_index", "target_entity", "stamina",
+        "behavior",
+        "throttle",
+        "rudder",
+        "waypoint_index",
+        "target_entity",
+        "stamina",
     )
 
     def __init__(
