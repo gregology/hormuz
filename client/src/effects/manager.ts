@@ -156,6 +156,7 @@ export class ThreeEffectManager {
 				e.heading,
 				e.speed,
 				physics.size,
+				physics.maxSpeed,
 				dt,
 			);
 

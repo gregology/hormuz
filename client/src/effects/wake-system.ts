@@ -1,5 +1,5 @@
 /**
- * Global wake system — single-draw-call ring buffer for all ship wake trails.
+ * Global wake system — single-draw-call ring buffer for all ship wakes.
  *
  * All entities write wake points into a shared ring buffer. Points are
  * completely independent of the entity that created them — when an entity
@@ -8,19 +8,38 @@
  * with a single GPU draw call.
  *
  * Each point stores a `prevIdx` linking it to the previous point in the
- * same entity's trail, forming chains that become ribbon segments during
- * the per-frame geometry rebuild. Three ribbons are built per segment:
- * center foam + left/right Kelvin V-spread.
+ * same entity's trail. Every link becomes one quad spanning the whole
+ * Kelvin wedge at that distance behind the ship, and the fragment shader
+ * draws the wake procedurally in wake-space coordinates (distance behind
+ * the ship, distance from the track):
+ *   - a turbulent, foamy core about a beam wide that ages into a smooth,
+ *     glassy slick,
+ *   - Kelvin arms at 19.5°: a band of choppy water that breaks into
+ *     whitecaps near the bow and dies out a few dozen lengths astern,
+ * with wavelengths that grow with speed (λ ∝ v²) and a lit, glossy
+ * surface so crests catch the sun and sky like the sea around them.
  */
 
 import {
 	attribute,
+	cameraViewMatrix,
+	clamp,
+	dFdx,
+	dFdy,
+	exp,
 	float,
+	fwidth,
+	max,
+	mix,
 	mx_noise_float,
+	normalize,
 	positionWorld,
+	select,
 	smoothstep,
 	time,
+	vec2,
 	vec3,
+	vec4,
 } from "three/tsl";
 import * as THREE from "three/webgpu";
 
@@ -45,13 +64,19 @@ const SQRT6 = Math.sqrt(6);
  *  (catches teleports and respawns). */
 const MAX_SEGMENT_DIST = 500;
 
-// 3 ribbons per segment, 6 vertices (2 triangles) per ribbon segment
-const MAX_VERTICES = 3 * MAX_WAKE_POINTS * 6;
+/** One quad (2 triangles) per link between consecutive points. */
+const MAX_VERTICES = MAX_WAKE_POINTS * 6;
 
-/** Kelvin wake: arms spread at tan(19.5°) of the distance travelled. */
-const KELVIN_SPREAD = 0.35;
-/** Kelvin arms vanish over the first (1 - ARM_FADE) of a wake point's life. */
-const ARM_FADE = 0.75;
+/** Kelvin wedge half-angle: tan(19.47°). */
+const KELVIN_TAN = 0.3536;
+/** The wedge starts at the bow, about this fraction of a length ahead of the stern point. */
+const BOW_TO_STERN = 0.9;
+/** Geometry extends past the arm line so the arms can fade out on both sides. */
+const ARM_MARGIN = 1.2;
+/** Turbulent core half-width as a fraction of ship size (≈ half the beam). */
+const CORE_HALF_WIDTH = 0.06;
+/** Kelvin arms die out within this many ship lengths astern (wedge geometry stops growing there). */
+const ARM_REACH = 18;
 
 export class WakeSystem {
 	readonly root: THREE.Mesh;
@@ -62,6 +87,7 @@ export class WakeSystem {
 	private readonly pHeading = new Float32Array(MAX_WAKE_POINTS);
 	private readonly pSpeed = new Float32Array(MAX_WAKE_POINTS);
 	private readonly pSize = new Float32Array(MAX_WAKE_POINTS);
+	private readonly pStrength = new Float32Array(MAX_WAKE_POINTS);
 	private readonly pBirth = new Float32Array(MAX_WAKE_POINTS);
 	private readonly pPrev = new Int32Array(MAX_WAKE_POINTS).fill(-1);
 
@@ -75,45 +101,50 @@ export class WakeSystem {
 	/** Per-entity: time accumulator since last emission. */
 	private entityEmitTimer = new Map<number, number>();
 
-	private geometry: THREE.BufferGeometry;
+	private readonly geometry: THREE.BufferGeometry;
+	private readonly positions: THREE.BufferAttribute;
+	/** along (world units behind the ship), side (-1..1), half-width, age (s) */
+	private readonly wake: THREE.BufferAttribute;
+	/** core half-width, strength (0..1), wavelength, ship size */
+	private readonly ship: THREE.BufferAttribute;
+	/** Unit direction of travel when the point was laid. */
+	private readonly track: THREE.BufferAttribute;
 
 	constructor() {
-		const positions = new Float32Array(MAX_VERTICES * 3);
-		const alphas = new Float32Array(MAX_VERTICES);
-
-		this.geometry = new THREE.BufferGeometry();
-		this.geometry.setAttribute(
-			"position",
-			new THREE.BufferAttribute(positions, 3),
+		this.positions = new THREE.BufferAttribute(
+			new Float32Array(MAX_VERTICES * 3),
+			3,
 		);
-		this.geometry.setAttribute("aAlpha", new THREE.BufferAttribute(alphas, 1));
-		// Which edge of its ribbon each vertex is on (fixed vertex order in buildSegment).
-		const edges = new Float32Array(MAX_VERTICES);
-		for (let i = 0; i < MAX_VERTICES; i++) edges[i] = i % 2 === 0 ? 1 : -1;
-		this.geometry.setAttribute("aEdge", new THREE.BufferAttribute(edges, 1));
+		this.wake = new THREE.BufferAttribute(
+			new Float32Array(MAX_VERTICES * 4),
+			4,
+		);
+		this.ship = new THREE.BufferAttribute(
+			new Float32Array(MAX_VERTICES * 4),
+			4,
+		);
+		this.track = new THREE.BufferAttribute(
+			new Float32Array(MAX_VERTICES * 2),
+			2,
+		);
+		for (const attribute of [
+			this.positions,
+			this.wake,
+			this.ship,
+			this.track,
+		]) {
+			attribute.setUsage(THREE.DynamicDrawUsage);
+		}
+		this.geometry = new THREE.BufferGeometry();
+		this.geometry.setAttribute("position", this.positions);
+		this.geometry.setAttribute("aWake", this.wake);
+		this.geometry.setAttribute("aShip", this.ship);
+		this.geometry.setAttribute("aTrack", this.track);
 		this.geometry.setDrawRange(0, 0);
 
-		// Lit foam, broken up by drifting noise so trails don't read as solid ribbons.
-		const breakup = smoothstep(
-			-0.35,
-			0.45,
-			mx_noise_float(vec3(positionWorld.xz.div(22), time.mul(0.15))),
-		);
-		const material = new THREE.MeshStandardNodeMaterial({
-			transparent: true,
-			depthWrite: false,
-			side: THREE.DoubleSide,
-		});
-		material.colorNode = vec3(0.86, 0.89, 0.9);
-		material.roughnessNode = float(0.85);
-		const edge = attribute<"float">("aEdge", "float");
-		const feather = float(1).sub(edge.mul(edge));
-		material.opacityNode = attribute<"float">("aAlpha", "float")
-			.mul(breakup.mul(0.65).add(0.35))
-			.mul(feather);
-
-		this.root = new THREE.Mesh(this.geometry, material);
+		this.root = new THREE.Mesh(this.geometry, createWakeMaterial());
 		this.root.frustumCulled = false;
+		this.root.renderOrder = 2;
 	}
 
 	/**
@@ -128,6 +159,7 @@ export class WakeSystem {
 		heading: number,
 		speed: number,
 		size: number,
+		maxSpeed: number,
 		dt: number,
 	): void {
 		const timer = (this.entityEmitTimer.get(entityId) ?? 0) + dt;
@@ -148,6 +180,7 @@ export class WakeSystem {
 		this.pHeading[slot] = heading;
 		this.pSpeed[slot] = Math.abs(speed);
 		this.pSize[slot] = size;
+		this.pStrength[slot] = Math.min(Math.abs(speed) / maxSpeed, 1);
 		this.pBirth[slot] = this.globalTime;
 
 		// Chain to previous point for this entity
@@ -184,12 +217,8 @@ export class WakeSystem {
 	update(dt: number, zoom: number): void {
 		this.globalTime += dt;
 
-		const posAttr = this.geometry.attributes.position as THREE.BufferAttribute;
-		const alphaAttr = this.geometry.attributes.aAlpha as THREE.BufferAttribute;
-		const positions = posAttr.array as Float32Array;
-		const alphas = alphaAttr.array as Float32Array;
-
-		const pixelsToWorld = 2 / (zoom * SQRT6);
+		// Keep the turbulent core at least a couple of pixels wide when zoomed out.
+		const minCoreHalfWidth = 2.5 / (zoom * SQRT6);
 		let vi = 0;
 
 		const count = Math.min(this.writeIdx, MAX_WAKE_POINTS);
@@ -212,161 +241,72 @@ export class WakeSystem {
 			const dz = this.pz[i] - this.pz[pi];
 			if (dx * dx + dz * dz > MAX_SEGMENT_DIST * MAX_SEGMENT_DIST) continue;
 
-			const life = 1 - age / MAX_AGE;
-			const prevLife = 1 - prevAge / MAX_AGE;
-
-			// Turbulent centre wake: about a beam wide, spreading as it ages
-			const beam = this.pSize[i] * 0.07;
-			const spreadRate = this.pSize[i] * 0.004;
-			vi = this.buildSegment(
-				positions,
-				alphas,
-				vi,
-				i,
-				pi,
-				life,
-				prevLife,
-				age,
-				prevAge,
-				0,
-				(l) =>
-					Math.max(
-						(1.5 + l * 2.0) * pixelsToWorld,
-						beam + (1 - l) * MAX_AGE * spreadRate,
-					),
-				(l) => l ** 1.5 * 0.42,
-				0.003,
-			);
-
-			// Kelvin arms: faint, and gone well before the centre trail
-			const armLife = (l: number) =>
-				Math.max(0, (l - ARM_FADE) / (1 - ARM_FADE));
-			for (const side of [-1, 1]) {
-				vi = this.buildSegment(
-					positions,
-					alphas,
-					vi,
-					i,
-					pi,
-					life,
-					prevLife,
-					age,
-					prevAge,
-					side,
-					(l) => Math.max((0.8 + l * 1.2) * pixelsToWorld, beam * 0.25),
-					(l) => armLife(l) ** 2 * 0.14,
-					0.002,
-				);
-			}
+			vi = this.writeQuad(vi, pi, prevAge, i, age, minCoreHalfWidth);
 		}
 
 		this.geometry.setDrawRange(0, vi);
 		this.root.visible = vi > 0;
-		posAttr.needsUpdate = true;
-		alphaAttr.needsUpdate = true;
+		for (const attribute of [
+			this.positions,
+			this.wake,
+			this.ship,
+			this.track,
+		]) {
+			attribute.clearUpdateRanges();
+			attribute.addUpdateRange(0, vi * attribute.itemSize);
+			attribute.needsUpdate = true;
+		}
 	}
 
-	/**
-	 * Build one ribbon segment (2 triangles) between point `idx` and its
-	 * predecessor `prevIdx`.
-	 *
-	 * @param side  0 = center, -1 = left V-spread, 1 = right V-spread
-	 * @returns next vertex index
-	 */
-	private buildSegment(
-		positions: Float32Array,
-		alphas: Float32Array,
+	/** Write the quad linking point `a` (older) to point `b` (newer). */
+	private writeQuad(
 		startVi: number,
-		idx: number,
-		prevIdx: number,
-		life: number,
-		prevLife: number,
-		age: number,
-		prevAge: number,
-		side: number,
-		halfWidthFn: (life: number) => number,
-		alphaFn: (life: number) => number,
-		alphaThreshold: number,
+		a: number,
+		ageA: number,
+		b: number,
+		ageB: number,
+		minCoreHalfWidth: number,
 	): number {
-		const alpha = alphaFn(life);
-		const prevAlpha = alphaFn(prevLife);
-		if (alpha < alphaThreshold && prevAlpha < alphaThreshold) return startVi;
+		const corners: [number, number, number][] = [
+			[a, ageA, -1],
+			[a, ageA, 1],
+			[b, ageB, -1],
+			[b, ageB, 1],
+		];
+		const order = [0, 1, 2, 1, 3, 2];
 		let vi = startVi;
+		for (const corner of order) {
+			const [point, age, side] = corners[corner];
+			const size = this.pSize[point];
+			const along = age * this.pSpeed[point];
+			const coreHalfWidth = Math.max(size * CORE_HALF_WIDTH, minCoreHalfWidth);
+			const armAlong = Math.min(along, size * ARM_REACH);
+			const armLine =
+				coreHalfWidth + (armAlong + size * BOW_TO_STERN) * KELVIN_TAN;
+			const halfWidth = Math.max(armLine * ARM_MARGIN, coreHalfWidth * 3);
+			// The wedge spreads perpendicular to the ship's heading when the point was laid.
+			const dirX = Math.cos(this.pHeading[point]);
+			const dirZ = Math.sin(this.pHeading[point]);
+			const nx = -dirZ;
+			const nz = dirX;
+			const strength = this.pStrength[point];
 
-		let cx = this.px[idx];
-		let cz = this.pz[idx];
-		let px = this.px[prevIdx];
-		let pz = this.pz[prevIdx];
-
-		// Apply lateral V-spread offset
-		if (side !== 0) {
-			const spread = age * this.pSpeed[idx] * KELVIN_SPREAD;
-			const prevSpread = prevAge * this.pSpeed[prevIdx] * KELVIN_SPREAD;
-			const cos = Math.cos(this.pHeading[idx]);
-			const sin = Math.sin(this.pHeading[idx]);
-			const prevCos = Math.cos(this.pHeading[prevIdx]);
-			const prevSin = Math.sin(this.pHeading[prevIdx]);
-			cx += -sin * side * spread;
-			cz += cos * side * spread;
-			px += -prevSin * side * prevSpread;
-			pz += prevCos * side * prevSpread;
+			this.positions.setXYZ(
+				vi,
+				this.px[point] + nx * halfWidth * side,
+				WATER_Y,
+				this.pz[point] + nz * halfWidth * side,
+			);
+			this.wake.setXYZW(vi, along, side, halfWidth, age);
+			this.ship.setXYZW(
+				vi,
+				coreHalfWidth,
+				strength,
+				wavelength(size, strength),
+				size,
+			);
+			vi++;
 		}
-
-		// Direction from prev to current
-		let dx = cx - px;
-		let dz = cz - pz;
-		const len = Math.sqrt(dx * dx + dz * dz);
-		if (len < 0.001) return vi;
-		dx /= len;
-		dz /= len;
-
-		// Perpendicular in XZ plane
-		const nx = -dz;
-		const nz = dx;
-
-		const hw = halfWidthFn(life);
-		const prevHw = halfWidthFn(prevLife);
-
-		// Triangle 1: prev-left, prev-right, curr-left
-		const b1 = vi * 3;
-		positions[b1] = px + nx * prevHw;
-		positions[b1 + 1] = WATER_Y;
-		positions[b1 + 2] = pz + nz * prevHw;
-		alphas[vi] = prevAlpha;
-		vi++;
-
-		positions[b1 + 3] = px - nx * prevHw;
-		positions[b1 + 4] = WATER_Y;
-		positions[b1 + 5] = pz - nz * prevHw;
-		alphas[vi] = prevAlpha;
-		vi++;
-
-		positions[b1 + 6] = cx + nx * hw;
-		positions[b1 + 7] = WATER_Y;
-		positions[b1 + 8] = cz + nz * hw;
-		alphas[vi] = alpha;
-		vi++;
-
-		// Triangle 2: prev-right, curr-left, curr-right
-		const b2 = vi * 3;
-		positions[b2] = px - nx * prevHw;
-		positions[b2 + 1] = WATER_Y;
-		positions[b2 + 2] = pz - nz * prevHw;
-		alphas[vi] = prevAlpha;
-		vi++;
-
-		positions[b2 + 3] = cx + nx * hw;
-		positions[b2 + 4] = WATER_Y;
-		positions[b2 + 5] = cz + nz * hw;
-		alphas[vi] = alpha;
-		vi++;
-
-		positions[b2 + 6] = cx - nx * hw;
-		positions[b2 + 7] = WATER_Y;
-		positions[b2 + 8] = cz - nz * hw;
-		alphas[vi] = alpha;
-		vi++;
-
 		return vi;
 	}
 
@@ -374,4 +314,143 @@ export class WakeSystem {
 		this.geometry.dispose();
 		(this.root.material as THREE.Material).dispose();
 	}
+}
+
+/** Kelvin wavelength grows with the square of speed; scaled to hull size for the game's compressed scale. */
+function wavelength(size: number, strength: number): number {
+	return size * (0.05 + 0.13 * strength * strength);
+}
+
+function createWakeMaterial(): THREE.MeshStandardNodeMaterial {
+	const wake = attribute<"vec4">("aWake", "vec4");
+	const ship = attribute<"vec4">("aShip", "vec4");
+	const track = attribute<"vec2">("aTrack", "vec2");
+	const along = wake.x;
+	const signedLateral = wake.y.mul(wake.z);
+	const lateral = signedLateral.abs();
+	const armLine = wake.z.div(ARM_MARGIN);
+	const age = wake.w;
+	const coreHalfWidth = ship.x;
+	const strength = ship.y;
+	const lambda = ship.z;
+	const size = ship.w;
+
+	const xz = positionWorld.xz;
+	const footprint = max(fwidth(xz.x), fwidth(xz.y));
+	// Wave detail fades out before it would alias.
+	const waveDetail = smoothstep(2, 6, lambda.div(footprint));
+
+	// --- Turbulent core ---
+	// Foam stays where the propellers left it, so its texture uses world
+	// coordinates aligned with the track: long streaks, finer froth.
+	const u = xz.dot(track);
+	const v = xz.dot(vec2(track.y.negate(), track.x));
+	const coreWidth = coreHalfWidth.mul(along.div(size.mul(5)).add(1));
+	const core = float(1).sub(smoothstep(coreWidth.mul(0.3), coreWidth, lateral));
+	const streaks = mx_noise_float(
+		vec3(
+			u.div(coreHalfWidth.mul(6)),
+			v.div(coreHalfWidth.mul(0.55)),
+			time.mul(0.04),
+		),
+	);
+	const froth = mx_noise_float(
+		vec3(xz.div(coreHalfWidth.mul(0.5)), time.mul(0.25)),
+	);
+	const foamLife = size.mul(0.12).add(8);
+	const fresh = exp(age.div(foamLife).negate()).mul(strength.mul(0.7).add(0.3));
+	const foam = core
+		.mul(
+			smoothstep(
+				0.05,
+				0.55,
+				streaks.mul(0.55).add(froth.mul(0.35)).add(fresh.mul(1.1)).sub(0.35),
+			),
+		)
+		.mul(fresh);
+	// Behind the foam: a long trail of paler, bubbly water.
+	const aerated = core
+		.mul(exp(age.div(foamLife.mul(4)).negate()))
+		.mul(strength.mul(0.6).add(0.4));
+
+	// --- Kelvin arms: a narrow band of choppy water travelling with the ship ---
+	const armBand = exp(lateral.sub(armLine).abs().div(lambda.mul(-0.9))).mul(
+		smoothstep(coreWidth, coreWidth.mul(2.5), lateral),
+	);
+	const armFade = exp(along.div(size.mul(-ARM_REACH * 0.3)))
+		.mul(strength)
+		.mul(waveDetail);
+	const chop = mx_noise_float(
+		vec3(
+			along.div(lambda.mul(2.4)),
+			signedLateral.div(lambda.mul(0.45)),
+			time.mul(0.5),
+		),
+	);
+	const height = chop.mul(1.8).mul(armBand).mul(armFade);
+	const bright = smoothstep(0.1, 0.55, height);
+	const dark = smoothstep(0.1, 0.55, height.negate());
+	// Close to the bow the arms break into whitecaps.
+	const whitecaps = smoothstep(0.45, 0.8, chop)
+		.mul(armBand)
+		.mul(exp(along.div(size.mul(-1.2))))
+		.mul(strength)
+		.mul(waveDetail);
+
+	// Bump normal from the wave height, via screen-space derivatives, so
+	// crests catch the sun and sky like the sea around them.
+	const dpdx = dFdx(xz);
+	const dpdy = dFdy(xz);
+	// (TSL's derivative typings only take vectors.)
+	const dhdx = dFdx(vec2(height, 0)).x;
+	const dhdy = dFdy(vec2(height, 0)).x;
+	const det = dpdx.x.mul(dpdy.y).sub(dpdx.y.mul(dpdy.x));
+	const safeDet = select(det.abs().lessThan(1e-9), float(1e-9), det);
+	const gradX = dhdx.mul(dpdy.y).sub(dhdy.mul(dpdx.y)).div(safeDet);
+	const gradZ = dpdx.x.mul(dhdy).sub(dpdy.x.mul(dhdx)).div(safeDet);
+	const slope = lambda.mul(0.05);
+	const normal = normalize(
+		vec3(gradX.mul(slope).negate(), 1, gradZ.mul(slope).negate()),
+	);
+
+	const foamColor = vec3(0.88, 0.91, 0.92);
+	const aeratedColor = vec3(0.32, 0.52, 0.55);
+	const crestColor = vec3(0.6, 0.72, 0.76);
+	const troughColor = vec3(0.01, 0.04, 0.055);
+	let color = mix(
+		troughColor,
+		crestColor,
+		bright.div(bright.add(dark).add(1e-4)),
+	);
+	color = mix(color, aeratedColor, clamp(aerated.mul(1.5), 0, 1));
+	color = mix(color, foamColor, clamp(foam.add(whitecaps).mul(1.4), 0, 1));
+
+	const fadeOut = float(1).sub(smoothstep(MAX_AGE * 0.75, MAX_AGE, age));
+	const opacity = clamp(
+		foam
+			.add(whitecaps)
+			.mul(0.92)
+			.add(aerated.mul(0.32))
+			.add(bright.mul(0.32))
+			.add(dark.mul(0.22)),
+		0,
+		1,
+	).mul(fadeOut);
+
+	const material = new THREE.MeshStandardNodeMaterial({
+		transparent: true,
+		depthWrite: false,
+		side: THREE.DoubleSide,
+	});
+	material.colorNode = color;
+	// Foam is matte; disturbed water is glossier than the open sea, so it glints.
+	material.roughnessNode = mix(
+		float(0.05),
+		float(0.85),
+		clamp(foam.mul(1.5), 0, 1),
+	);
+	material.metalnessNode = float(0);
+	material.normalNode = normalize(cameraViewMatrix.mul(vec4(normal, 0)).xyz);
+	material.opacityNode = opacity;
+	return material;
 }

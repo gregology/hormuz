@@ -16,6 +16,7 @@ import {
 	TANKER_SPAWNS,
 	US_SPAWNS,
 } from "../../client/src/generated/map_data";
+import { MouseLook } from "../../client/src/input/mouse-look";
 import { LANE_ALT_OUTBOUND, MAP } from "../../client/src/map/data";
 import { getElevation } from "../../client/src/map/heightmap";
 import { isLand } from "../../client/src/map/terrain";
@@ -25,6 +26,7 @@ import {
 	screenToWorld,
 	worldToScreen,
 } from "../../client/src/render/camera";
+import { ChaseCamera } from "../../client/src/render/chase-camera";
 import { CiwsController } from "../../client/src/render/ciws-controller";
 import { COLORS } from "../../client/src/render/colors";
 import {
@@ -38,6 +40,7 @@ import {
 	formatStraitTime,
 	straitSolarPosition,
 } from "../../client/src/render/solar";
+import { terrainSurfaceHeight } from "../../client/src/render/terrain-surface";
 import { ThreeVehicleRenderer } from "../../client/src/render/vehicle-renderer";
 import {
 	COLLISION_POLYGONS,
@@ -440,17 +443,11 @@ async function init() {
 		cameraMode: "isometric" as CameraMode,
 	};
 	let prevCameraMode: CameraMode = "isometric";
-	const _tPos = new THREE.Vector3();
-	const _tLook = new THREE.Vector3();
+	let prevCameraVehicle = -1;
 
-	// ---- Perspective camera settings (tunable via GUI) ----
-	const perspSettings = {
-		tpDistance: 3,
-		tpHeight: 1.5,
-		fpHeight: 0.5,
-		fpForward: 0.3,
-		smoothing: 8,
-	};
+	// ---- Perspective camera: mouse/touch look-around, keyboard steers (tunable via GUI) ----
+	const chaseCamera = new ChaseCamera();
+	const mouseLook = new MouseLook(threeScene.renderer.domElement);
 
 	// ---- Simulation settings ----
 	const simSettings = {
@@ -613,11 +610,28 @@ async function init() {
 		.name("FOV")
 		.step(1)
 		.onChange(() => perspCamera.updateProjectionMatrix());
-	perspFolder.add(perspSettings, "tpDistance", 1, 10).name("TP Distance");
-	perspFolder.add(perspSettings, "tpHeight", 0.5, 5).name("TP Height");
-	perspFolder.add(perspSettings, "fpHeight", 0.1, 1.5).name("FP Height");
-	perspFolder.add(perspSettings, "fpForward", -0.5, 0.5).name("FP Forward");
-	perspFolder.add(perspSettings, "smoothing", 1, 20).name("Smoothing");
+	const chase = chaseCamera.settings;
+	perspFolder.add(chase, "distance", 1, 10).name("TP Distance");
+	perspFolder
+		.add(chaseCamera, "zoom", 0.3, 5)
+		.name("TP Zoom (scroll)")
+		.listen();
+	perspFolder.add(chase, "followHeading").name("TP turns with vehicle");
+	perspFolder.add(chase, "sensitivity", 0.0005, 0.01).name("Look sensitivity");
+	perspFolder.add(chase, "eyeHeight", 0.1, 1.5).name("FP Height");
+	perspFolder.add(chase, "eyeForward", -0.5, 0.5).name("FP Forward");
+	perspFolder.add(chase, "smoothing", 1, 20).name("Smoothing");
+	perspFolder.add(
+		{
+			"Reset view": () => {
+				const active = activePv();
+				if (active && mode.cameraMode !== "isometric") {
+					chaseCamera.reset(mode.cameraMode, active.vehicle.heading);
+				}
+			},
+		},
+		"Reset view",
+	);
 
 	// Simulation folder
 	const simFolder = gui.addFolder("Simulation");
@@ -1034,7 +1048,10 @@ async function init() {
 	canvas.addEventListener("mouseup", (e: MouseEvent) => {
 		if (isDragging) {
 			const moved = Math.hypot(e.clientX - mouseDownX, e.clientY - mouseDownY);
-			if (moved < 6) handleClick(e.clientX, e.clientY);
+			// In perspective views a click captures the mouse for looking around instead.
+			if (moved < 6 && mode.cameraMode === "isometric") {
+				handleClick(e.clientX, e.clientY);
+			}
 		}
 		isDragging = false;
 	});
@@ -1336,41 +1353,35 @@ async function init() {
 		}
 
 		// -- Update perspective camera for first/third-person modes --
+		mouseLook.enabled = mode.cameraMode !== "isometric";
+		const look = mouseLook.consume();
 		if (mode.cameraMode !== "isometric" && pv) {
 			const v = pv.vehicle;
-			const sz = v.size;
-			const elev = v.airborne
-				? getElevation(v.x, v.y) + 30
-				: getElevation(v.x, v.y);
-			const fwdX = Math.cos(v.heading);
-			const fwdZ = Math.sin(v.heading);
-
-			if (mode.cameraMode === "third-person") {
-				const dist = sz * perspSettings.tpDistance;
-				const height = sz * perspSettings.tpHeight;
-				_tPos.set(v.x - fwdX * dist, elev + height, v.y - fwdZ * dist);
-				_tLook.set(v.x, elev + sz * 0.2, v.y);
-			} else {
-				const fwd = sz * perspSettings.fpForward;
-				const height = sz * perspSettings.fpHeight;
-				_tPos.set(v.x + fwdX * fwd, elev + height, v.y + fwdZ * fwd);
-				_tLook.set(
-					v.x + fwdX * (fwd + sz * 2),
-					elev + height * 0.8,
-					v.y + fwdZ * (fwd + sz * 2),
-				);
-			}
-
-			// Snap on mode switch, smooth-lerp otherwise
-			if (prevCameraMode !== mode.cameraMode) {
-				perspCamera.position.copy(_tPos);
-			} else {
-				const t = 1 - Math.exp(-perspSettings.smoothing * rawDt);
-				perspCamera.position.lerp(_tPos, t);
-			}
-			perspCamera.lookAt(_tLook);
+			const switched =
+				prevCameraMode !== mode.cameraMode || prevCameraVehicle !== pv.id;
+			if (switched) chaseCamera.reset(mode.cameraMode, v.heading);
+			chaseCamera.look(mode.cameraMode, look.dx, look.dy);
+			if (look.wheel !== 0) chaseCamera.zoomBy(look.wheel);
+			chaseCamera.apply(
+				perspCamera,
+				mode.cameraMode,
+				{
+					x: v.x,
+					y: v.y,
+					heading: v.heading,
+					baseHeight: v.airborne
+						? getElevation(v.x, v.y) + 30
+						: v.vehicleType === "truck"
+							? terrainSurfaceHeight(v.x, v.y)
+							: 0,
+					size: v.size,
+				},
+				rawDt,
+				switched,
+			);
 		}
 		prevCameraMode = mode.cameraMode;
+		prevCameraVehicle = pv?.id ?? -1;
 
 		// -- Build entity states for Three.js renderers --
 		const entityStates: EntityState[] = [];
@@ -1404,7 +1415,8 @@ async function init() {
 		// vehicle at the same size, so pixel-sized effects and IFF rings match.
 		let effectZoom = cam.zoom;
 		if (mode.cameraMode !== "isometric" && pv) {
-			const distance = pv.vehicle.size * perspSettings.tpDistance;
+			const distance =
+				pv.vehicle.size * chaseCamera.settings.distance * chaseCamera.zoom;
 			const halfFov = (perspCamera.fov * Math.PI) / 360;
 			effectZoom =
 				cam.screenWidth / (Math.sqrt(6) * 2 * distance * Math.tan(halfFov));
@@ -1480,7 +1492,7 @@ async function init() {
 		const world = screenToWorld(cam, mouseScreenX, mouseScreenY);
 		const camLabel =
 			mode.cameraMode !== "isometric"
-				? `[${mode.cameraMode.toUpperCase()}]`
+				? `[${mode.cameraMode.toUpperCase()}] ${mouseLook.captured ? "mouse looks, Esc frees cursor" : "click to look around"}, scroll zoom`
 				: mode.freeCamera
 					? "[FREE CAM]"
 					: "[FOLLOW]";

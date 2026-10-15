@@ -4,16 +4,17 @@
  * Single Three.js canvas with a DOM HUD overlay.
  */
 
-import * as THREE from "three/webgpu";
 import { ThreeEffectManager } from "./effects/manager";
 import { EntityStore } from "./game/entities";
 import { SnapshotInterpolator } from "./game/interpolation";
 import { InputManager } from "./input/input-manager";
 import type { CameraMode } from "./input/keyboard";
+import { MouseLook } from "./input/mouse-look";
 import { MAP } from "./map/data";
 import { getElevation } from "./map/heightmap";
 import { GameConnection } from "./net/connection";
 import { type Camera, createCamera } from "./render/camera";
+import { ChaseCamera } from "./render/chase-camera";
 import { CiwsController } from "./render/ciws-controller";
 import { COLORS } from "./render/colors";
 import type { GameStats, VehicleInstruments } from "./render/hud";
@@ -125,15 +126,10 @@ async function init() {
 	let pendingAssign: { entityId: number; vehicleType: string } | null = null;
 	const SPECTATOR_ZOOM = { min: 0.005, max: 10 };
 
-	// Perspective camera state (third-person / first-person)
+	// Perspective camera (third-person): mouse/touch look-around, keyboard steers
 	let prevCameraMode: CameraMode = "isometric";
-	const _tPos = new THREE.Vector3();
-	const _tLook = new THREE.Vector3();
-	const PERSP = {
-		tpDistance: 3,
-		tpHeight: 1.5,
-		smoothing: 8,
-	};
+	const chaseCamera = new ChaseCamera();
+	const mouseLook = new MouseLook(threeScene.renderer.domElement);
 
 	// --- Connection handlers ---
 	conn.onSnapshot((snapshot) => {
@@ -324,34 +320,32 @@ async function init() {
 			}
 		}
 
-		// Update perspective camera for third-person / first-person modes
+		// Update the perspective camera for third-person mode
+		mouseLook.enabled = cameraMode !== "isometric";
+		const look = mouseLook.consume();
 		if (cameraMode !== "isometric" && assignedEntityId !== null) {
 			const target = entities.find((e) => e.id === assignedEntityId);
 			if (target) {
 				const defaults = VEHICLE_DEFAULTS[target.vehicleType];
-				const sz = defaults?.size ?? 50;
-				const elev = defaults?.airborne
-					? getElevation(target.x, target.y) + 30
-					: getElevation(target.x, target.y);
-				const fwdX = Math.cos(target.heading);
-				const fwdZ = Math.sin(target.heading);
-
-				const dist = sz * PERSP.tpDistance;
-				const height = sz * PERSP.tpHeight;
-				_tPos.set(
-					target.x - fwdX * dist,
-					elev + height,
-					target.y - fwdZ * dist,
+				const switched = prevCameraMode !== cameraMode;
+				if (switched) chaseCamera.reset(cameraMode, target.heading);
+				chaseCamera.look(cameraMode, look.dx, look.dy);
+				if (look.wheel !== 0) chaseCamera.zoomBy(look.wheel);
+				chaseCamera.apply(
+					threeScene.perspCamera,
+					cameraMode,
+					{
+						x: target.x,
+						y: target.y,
+						heading: target.heading,
+						baseHeight: defaults?.airborne
+							? getElevation(target.x, target.y) + 30
+							: 0,
+						size: defaults?.size ?? 50,
+					},
+					dt,
+					switched,
 				);
-				_tLook.set(target.x, elev + sz * 0.2, target.y);
-
-				if (prevCameraMode !== cameraMode) {
-					threeScene.perspCamera.position.copy(_tPos);
-				} else {
-					const t = 1 - Math.exp(-PERSP.smoothing * dt);
-					threeScene.perspCamera.position.lerp(_tPos, t);
-				}
-				threeScene.perspCamera.lookAt(_tLook);
 			}
 		}
 		prevCameraMode = cameraMode;
@@ -365,7 +359,7 @@ async function init() {
 			effectZoom = cam.zoom;
 		} else {
 			const sz = VEHICLE_DEFAULTS[assignedVehicleType ?? ""]?.size ?? 50;
-			const dist = sz * PERSP.tpDistance;
+			const dist = sz * chaseCamera.settings.distance * chaseCamera.zoom;
 			const halfFov = (threeScene.perspCamera.fov * Math.PI) / 360;
 			effectZoom = cam.screenWidth / (SQRT6 * 2 * dist * Math.tan(halfFov));
 		}
@@ -402,7 +396,16 @@ async function init() {
 		}
 
 		// HUD
-		hud.updateVehicle(spectating, pendingAssign !== null, assignedVehicleType);
+		hud.updateVehicle(
+			spectating,
+			pendingAssign !== null,
+			assignedVehicleType,
+			cameraMode === "isometric"
+				? "none"
+				: mouseLook.captured
+					? "active"
+					: "available",
+		);
 		input.updateSpectating(spectating, pendingAssign !== null);
 		hud.updateStats(warCost);
 		hud.updateClock(formatStraitTime(wallClock));

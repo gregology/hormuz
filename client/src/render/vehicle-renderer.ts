@@ -300,10 +300,8 @@ export class ThreeVehicleRenderer {
 				isPlayer ? 0xffffff : (factionColors[e.faction] ?? 0xcccccc),
 			);
 			// Once the vehicle itself is readable on screen the ring gets out of the way.
-			const fade = THREE.MathUtils.smoothstep(screenLength, 24, 120);
-			ring.userData.ringOpacity = isPlayer
-				? 0.95 - fade * 0.65
-				: 0.85 * (1 - fade);
+			const fade = THREE.MathUtils.smoothstep(screenLength, 20, 90);
+			ring.userData.ringOpacity = (isPlayer ? 0.95 : 0.85) * (1 - fade);
 			ring.visible = ring.userData.ringOpacity > 0.01;
 			ring.scale.setScalar(Math.max(info.size * 0.6, IFF_MIN_RADIUS_PX / zoom));
 			ring.position.set(
