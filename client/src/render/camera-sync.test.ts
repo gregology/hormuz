@@ -109,7 +109,13 @@ describe("Three.js camera projection matches worldToScreen", () => {
 	});
 
 	it("handles the exact current game camera defaults", () => {
-		const { threeCamera, cam } = createTestCamera(85500, 40500, 0.04, 1920, 1080);
+		const { threeCamera, cam } = createTestCamera(
+			85500,
+			40500,
+			0.04,
+			1920,
+			1080,
+		);
 
 		// Tanker at typical position
 		const expected1 = worldToScreen(cam, 75500, 43000);

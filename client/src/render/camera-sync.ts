@@ -60,12 +60,6 @@ export function threeToScreen(
  * Convert a game-world position (with optional height) to a Three.js
  * Vector3. Three.js axes: X = east, Y = up, Z = south.
  */
-export function gameToThree(
-	wx: number,
-	wy: number,
-	height = 0,
-): THREE.Vector3 {
+export function gameToThree(wx: number, wy: number, height = 0): THREE.Vector3 {
 	return new THREE.Vector3(wx, height, wy);
 }
-
-

@@ -68,5 +68,4 @@ export class GameConnection {
 			this.ws.send(encodeInput(keys, 0, 0, 0, throttleFloat, autopilot));
 		}
 	}
-
 }
