@@ -14,6 +14,7 @@
 if (typeof window !== "undefined" && typeof document !== "undefined") {
 	const g = globalThis as { process?: unknown };
 	try {
+		// biome-ignore lint/performance/noDelete: runs once at startup, not a hot path
 		delete g.process;
 	} catch {
 		g.process = undefined;
