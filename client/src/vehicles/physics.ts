@@ -147,7 +147,8 @@ export function updateFlooding(v: NavalVehicle, dt: number): void {
 
 	// List toward damaged side, proportional to flood level
 	const targetList = v.breachSide * FLOOD.maxList * v.floodLevel;
-	v.listAngle += (targetList - v.listAngle) * (1 - Math.exp(-FLOOD.lerpRate * dt));
+	v.listAngle +=
+		(targetList - v.listAngle) * (1 - Math.exp(-FLOOD.lerpRate * dt));
 
 	// Flooding increases drag (ship slows as it rides lower)
 	const floodDrag =
@@ -250,15 +251,9 @@ export function updateVehicle(
 					? 0
 					: speedRatio;
 		const steerSign = v.speed < 0 ? -1 : 1;
-		v.heading +=
-			input.rudder * v.turnRate * rudderEffect * steerSign * dt;
+		v.heading += input.rudder * v.turnRate * rudderEffect * steerSign * dt;
 		v.drift +=
-			input.rudder *
-			v.turnRate *
-			rudderEffect *
-			v.speed *
-			v.driftFactor *
-			dt;
+			input.rudder * v.turnRate * rudderEffect * v.speed * v.driftFactor * dt;
 	}
 
 	// Normalize heading
