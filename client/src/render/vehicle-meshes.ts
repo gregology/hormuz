@@ -1,309 +1,144 @@
 /**
- * Three.js mesh factory for vehicle models.
+ * Builds the Three.js object for one vehicle from its model data.
  *
- * Converts VehicleModel block definitions into ExtrudeGeometry groups with
- * normal-based isometric shading via ShaderMaterial. Each block gets a
- * separate material so faction color can be updated per-entity.
+ * Geometry is cached per shape and every vehicle shares one material, so
+ * a vehicle costs one draw call plus any animated parts (CIWS turret,
+ * rotors). The group's scale is set to the vehicle's size by the
+ * renderer; model coordinates are fractions of size.
  *
- * Coordinate convention (Three.js local space):
- *   X = forward, Y = height (up), Z = starboard
- *
- * The group's scale is set to the vehicle's size by the renderer,
- * so all coordinates here are in "fraction of size" units.
+ * Local axes: X = forward, Y = up, Z = starboard.
  */
 
-import * as THREE from "three";
+import * as THREE from "three/webgpu";
 import type { VehicleType } from "../vehicles/physics";
-import type { Block, FlatDetail, LP } from "./vehicle-models";
-import { getModel } from "./vehicle-models";
+import { buildModelGeometry } from "./vehicle-geometry";
+import {
+	type PaletteColors,
+	paletteColors,
+	vehicleMaterial,
+} from "./vehicle-material";
+import {
+	CIWS_MUZZLE_OFFSET,
+	CIWS_TURRET_POS,
+	type Lamp,
+	type VehicleModel,
+	ciwsTurretModel,
+	vehicleAppearance,
+} from "./vehicle-models";
 
-// ---------------------------------------------------------------------------
-// Block shaders — normal-based isometric shading
-// ---------------------------------------------------------------------------
+export { CIWS_MUZZLE_OFFSET, CIWS_TURRET_POS };
 
-const BLOCK_VERT = `
-#include <common>
-#include <logdepthbuf_pars_vertex>
-out vec3 vWorldNormal;
-void main() {
-    vWorldNormal = normalize(normalMatrix * normal);
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-    #include <logdepthbuf_vertex>
-}
-`;
+const geometryCache = new Map<string, THREE.BufferGeometry>();
 
-const BLOCK_FRAG = `
-#include <logdepthbuf_pars_fragment>
-uniform vec3 uFactionColor;
-uniform vec3 uTopColor;
-uniform float uTopAlpha;
-uniform float uSideAlpha;
-in vec3 vWorldNormal;
-out vec4 fragColor;
-
-void main() {
-    vec3 n = normalize(vWorldNormal);
-    if (n.y > 0.5) {
-        fragColor = vec4(uTopColor, uTopAlpha);
-    } else if (n.z > abs(n.x)) {
-        fragColor = vec4(uFactionColor * 0.45, uSideAlpha);
-    } else {
-        fragColor = vec4(uFactionColor * 0.65, uSideAlpha);
-    }
-    #include <logdepthbuf_fragment>
-}
-`;
-
-// ---------------------------------------------------------------------------
-// Geometry creation
-// ---------------------------------------------------------------------------
-
-/**
- * Create extruded block geometry from an outline polygon.
- *
- * Uses THREE.ExtrudeGeometry with a coordinate transform:
- * Shape XY (forward, starboard) → Three.js XYZ (forward, height, starboard).
- */
-function createBlockGeometry(
-	outline: LP[],
-	baseHeight: number,
-	topHeight: number,
+function cachedGeometry(
+	key: string,
+	build: () => VehicleModel,
 ): THREE.BufferGeometry {
-	const shape = new THREE.Shape();
-	shape.moveTo(outline[0][0], outline[0][1]);
-	for (let i = 1; i < outline.length; i++) {
-		shape.lineTo(outline[i][0], outline[i][1]);
+	let geometry = geometryCache.get(key);
+	if (!geometry) {
+		geometry = buildModelGeometry(build());
+		geometryCache.set(key, geometry);
 	}
+	return geometry;
+}
 
-	const geo = new THREE.ExtrudeGeometry(shape, {
-		depth: topHeight - baseHeight,
-		bevelEnabled: false,
-	});
+let rotorParts: {
+	blade: THREE.BufferGeometry;
+	disc: THREE.BufferGeometry;
+	discMaterial: THREE.Material;
+} | null = null;
 
-	// ExtrudeGeometry produces geometry in XY with extrusion along +Z.
-	// We need X=forward, Y=height, Z=starboard → swap Y↔Z, offset Y by baseHeight.
-	const pos = geo.attributes.position as THREE.BufferAttribute;
-	const norm = geo.attributes.normal as THREE.BufferAttribute;
-	for (let i = 0; i < pos.count; i++) {
-		const y = pos.getY(i);
-		const z = pos.getZ(i);
-		pos.setY(i, z + baseHeight);
-		pos.setZ(i, y);
-
-		const ny = norm.getY(i);
-		const nz = norm.getZ(i);
-		norm.setY(i, nz);
-		norm.setZ(i, ny);
+/** A spinning blade pair plus a faint motion-blur disc, radius 1 about +Y. */
+function createRotor(blades: number): THREE.Group {
+	if (!rotorParts) {
+		const disc = new THREE.CircleGeometry(1, 24);
+		disc.rotateX(-Math.PI / 2);
+		rotorParts = {
+			blade: cachedGeometry("rotor-blade", () => ({
+				parts: [
+					{
+						kind: "box",
+						center: [0, 0, 0],
+						size: [2, 0.02, 0.09],
+						paint: { color: 0x1a1a1a, roughness: 0.5, metalness: 0.3 },
+					},
+				],
+			})),
+			disc,
+			discMaterial: new THREE.MeshBasicNodeMaterial({
+				color: 0x202224,
+				transparent: true,
+				opacity: 0.22,
+				depthWrite: false,
+				side: THREE.DoubleSide,
+			}),
+		};
 	}
-
-	pos.needsUpdate = true;
-	norm.needsUpdate = true;
-	geo.computeBoundingSphere();
-	geo.computeBoundingBox();
-
-	return geo;
+	const rotor = new THREE.Group();
+	const spinner = new THREE.Group();
+	for (let i = 0; i < blades / 2; i++) {
+		const blade = new THREE.Mesh(rotorParts.blade, vehicleMaterial());
+		blade.rotation.y = (i * Math.PI * 2) / blades;
+		spinner.add(blade);
+	}
+	rotor.add(spinner, new THREE.Mesh(rotorParts.disc, rotorParts.discMaterial));
+	rotor.userData.spinner = spinner;
+	return rotor;
 }
 
-// ---------------------------------------------------------------------------
-// Material creation
-// ---------------------------------------------------------------------------
-
-function createBlockMaterial(block: Block): THREE.ShaderMaterial {
-	const hasTopOverride = block.topColor !== undefined;
-	const topColor = hasTopOverride
-		? new THREE.Color(block.topColor)
-		: new THREE.Color(0xffffff);
-
-	return new THREE.ShaderMaterial({
-		glslVersion: THREE.GLSL3,
-		uniforms: {
-			uFactionColor: { value: new THREE.Color(0xffffff) },
-			uTopColor: { value: topColor },
-			uTopAlpha: { value: block.topAlpha ?? 1 },
-			uSideAlpha: { value: block.sideAlpha ?? 1 },
-		},
-		vertexShader: BLOCK_VERT,
-		fragmentShader: BLOCK_FRAG,
-		transparent: true,
-		side: THREE.DoubleSide,
-		depthWrite: true,
-	});
+export interface VehicleObject {
+	group: THREE.Group;
+	/** Rotating CIWS turret (frigates only). */
+	ciwsTurret: THREE.Group | null;
+	/** Rotor/propeller spinners to animate. */
+	spinners: THREE.Object3D[];
+	/** Navigation lights etc. in model space. */
+	lamps: readonly Lamp[];
 }
 
-// ---------------------------------------------------------------------------
-// Detail objects (lines and circles)
-// ---------------------------------------------------------------------------
-
-function createLineDetail(detail: FlatDetail): THREE.Line {
-	const points = [
-		new THREE.Vector3(detail.x1 ?? 0, detail.height, detail.y1 ?? 0),
-		new THREE.Vector3(detail.x2 ?? 0, detail.height, detail.y2 ?? 0),
-	];
-	const geo = new THREE.BufferGeometry().setFromPoints(points);
-	const mat = new THREE.LineBasicMaterial({
-		color: detail.color,
-		transparent: true,
-		opacity: detail.alpha,
-	});
-	return new THREE.Line(geo, mat);
-}
-
-function createCircleDetail(detail: FlatDetail): THREE.Mesh {
-	const geo = new THREE.CircleGeometry(detail.r ?? 0, 16);
-	// CircleGeometry is in XY plane — rotate to XZ (lay flat)
-	geo.rotateX(-Math.PI / 2);
-	const mat = new THREE.MeshBasicMaterial({
-		color: detail.color,
-		transparent: true,
-		opacity: detail.alpha,
-		side: THREE.DoubleSide,
-	});
-	const mesh = new THREE.Mesh(geo, mat);
-	mesh.position.set(detail.cx ?? 0, detail.height, detail.cy ?? 0);
-	return mesh;
-}
-
-// ---------------------------------------------------------------------------
-// Top edge outline
-// ---------------------------------------------------------------------------
-
-function createTopOutline(outline: LP[], topHeight: number): THREE.LineLoop {
-	// Tiny Y offset to prevent z-fighting with the top face
-	const points = outline.map(
-		([lx, ly]) => new THREE.Vector3(lx, topHeight + 0.001, ly),
-	);
-	const geo = new THREE.BufferGeometry().setFromPoints(points);
-	const mat = new THREE.LineBasicMaterial({
-		color: 0x000000,
-		transparent: true,
-		opacity: 0.25,
-	});
-	return new THREE.LineLoop(geo, mat);
-}
-
-// ---------------------------------------------------------------------------
-// CIWS turret (Phalanx-style) — rotatable child group for frigates
-// ---------------------------------------------------------------------------
-
-const CIWS_GUN_METAL = 0x445566;
-const CIWS_DARK_METAL = 0x334455;
-const CIWS_DOME_WHITE = 0xdddddd;
-
-/** Position of the CIWS turret center on the frigate deck (model-space fractions). */
-export const CIWS_TURRET_POS = { x: 0.05, y: 0.14, z: 0 };
-
-/** Muzzle tip offset from the turret group origin (turret-local space). */
-export const CIWS_MUZZLE_OFFSET = { x: 0.05, y: 0.015, z: 0 };
-
-function createCiwsTurret(): THREE.Group {
-	const turret = new THREE.Group();
-
-	// Gun mount housing
-	const housingGeo = new THREE.BoxGeometry(0.025, 0.04, 0.022);
-	const housingMat = new THREE.MeshBasicMaterial({ color: CIWS_GUN_METAL });
-	const housing = new THREE.Mesh(housingGeo, housingMat);
-	housing.position.set(0, 0.02, 0);
-	turret.add(housing);
-
-	// Radome (tapered white cylinder — the distinctive Phalanx dome)
-	const domeGeo = new THREE.CylinderGeometry(0.008, 0.011, 0.05, 8);
-	const domeMat = new THREE.MeshBasicMaterial({ color: CIWS_DOME_WHITE });
-	const dome = new THREE.Mesh(domeGeo, domeMat);
-	dome.position.set(-0.002, 0.065, 0);
-	turret.add(dome);
-
-	// Barrel assembly
-	const barrelGeo = new THREE.BoxGeometry(0.04, 0.005, 0.005);
-	const barrelMat = new THREE.MeshBasicMaterial({ color: CIWS_DARK_METAL });
-	const barrel = new THREE.Mesh(barrelGeo, barrelMat);
-	barrel.position.set(0.03, 0.015, 0);
-	turret.add(barrel);
-
-	return turret;
-}
-
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
-/**
- * Create a Three.js Group containing all block meshes, details, and outlines
- * for a vehicle type. The group's coordinates are in "fraction of size" units;
- * set group.scale to the vehicle's size to get world units.
- */
-export function createVehicleMesh(vehicleType: VehicleType): THREE.Group {
-	const model = getModel(vehicleType);
+/** Create the visual object for a vehicle. Tanker liveries vary with `entityId`. */
+export function createVehicleObject(
+	vehicleType: VehicleType,
+	entityId: number,
+): VehicleObject {
+	const appearance = vehicleAppearance(vehicleType, entityId);
+	const model = appearance.build();
+	const palette: PaletteColors = paletteColors(appearance.palette);
 	const group = new THREE.Group();
-	const blockMaterials: THREE.ShaderMaterial[] = [];
-	const topColorOverrides: boolean[] = [];
 
-	for (const block of model.blocks) {
-		const geo = createBlockGeometry(
-			block.outline,
-			block.baseHeight,
-			block.topHeight,
+	const hull = new THREE.Mesh(
+		cachedGeometry(appearance.shapeKey, appearance.build),
+		vehicleMaterial(),
+	);
+	hull.castShadow = true;
+	hull.receiveShadow = true;
+	hull.userData.palette = palette;
+	group.add(hull);
+
+	let ciwsTurret: THREE.Group | null = null;
+	if (model.ciws) {
+		ciwsTurret = new THREE.Group();
+		const turret = new THREE.Mesh(
+			cachedGeometry("ciws", ciwsTurretModel),
+			vehicleMaterial(),
 		);
-		const mat = createBlockMaterial(block);
-		const mesh = new THREE.Mesh(geo, mat);
-		group.add(mesh);
-		blockMaterials.push(mat);
-		topColorOverrides.push(block.topColor !== undefined);
-
-		group.add(createTopOutline(block.outline, block.topHeight));
-	}
-
-	for (const detail of model.details) {
-		if (detail.kind === "line") {
-			const line = createLineDetail(detail);
-			if (detail.tag) group.userData[detail.tag] = line;
-			group.add(line);
-		} else {
-			const mesh = createCircleDetail(detail);
-			if (detail.tag) group.userData[detail.tag] = mesh;
-			group.add(mesh);
-		}
-	}
-
-	// Frigate: add rotatable CIWS turret just fore of superstructure
-	if (vehicleType === "frigate") {
-		const ciwsTurret = createCiwsTurret();
-		ciwsTurret.position.set(
-			CIWS_TURRET_POS.x,
-			CIWS_TURRET_POS.y,
-			CIWS_TURRET_POS.z,
-		);
+		turret.castShadow = true;
+		turret.userData.palette = palette;
+		ciwsTurret.add(turret);
+		ciwsTurret.position.set(...model.ciws);
 		group.add(ciwsTurret);
-		group.userData.ciwsTurret = ciwsTurret;
 	}
 
-	// Store references for color updates
-	group.userData.blockMaterials = blockMaterials;
-	group.userData.topColorOverrides = topColorOverrides;
-
-	return group;
-}
-
-/** Update the faction color on all block materials in a vehicle group. */
-export function setVehicleColor(group: THREE.Group, color: number): void {
-	const colorVec = new THREE.Color(color);
-	const mats = group.userData.blockMaterials as THREE.ShaderMaterial[];
-	const overrides = group.userData.topColorOverrides as boolean[];
-	for (let i = 0; i < mats.length; i++) {
-		mats[i].uniforms.uFactionColor.value.copy(colorVec);
-		if (!overrides[i]) {
-			mats[i].uniforms.uTopColor.value.copy(colorVec);
-		}
+	const spinners: THREE.Object3D[] = [];
+	for (const spec of model.rotors ?? []) {
+		const rotor = createRotor(spec.blades);
+		rotor.position.set(...spec.center);
+		rotor.scale.setScalar(spec.radius);
+		if (spec.axis === "forward") rotor.rotation.z = Math.PI / 2;
+		for (const child of rotor.children) child.userData.palette = palette;
+		group.add(rotor);
+		spinners.push(rotor.userData.spinner as THREE.Object3D);
 	}
-}
 
-/** Dispose all GPU resources owned by a vehicle mesh group. */
-export function disposeVehicleMesh(group: THREE.Group): void {
-	group.traverse((obj) => {
-		if (obj instanceof THREE.Mesh || obj instanceof THREE.Line) {
-			obj.geometry.dispose();
-			if (obj.material instanceof THREE.Material) {
-				obj.material.dispose();
-			}
-		}
-	});
+	return { group, ciwsTurret, spinners, lamps: model.lamps ?? [] };
 }

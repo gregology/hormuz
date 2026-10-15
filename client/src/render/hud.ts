@@ -337,6 +337,7 @@ export class HUD {
 		this.sitrepPanel.appendChild(sitrepTitle);
 
 		const statKeys = [
+			"straitTime",
 			"tankersTransited",
 			"tankersSunk",
 			"frigatesSunk",
@@ -355,10 +356,15 @@ export class HUD {
 		parent.appendChild(this.sitrepPanel);
 	}
 
+	/**
+	 * @param look Third-person look-around state: "available" before the
+	 *   mouse is captured, "active" while it is.
+	 */
 	updateVehicle(
 		spectating: boolean,
 		hasPendingAssign: boolean,
 		vehicleType: string,
+		look: "none" | "available" | "active" = "none",
 	): void {
 		const typeLabel =
 			vehicleType === "oil_tanker"
@@ -384,7 +390,8 @@ export class HUD {
 		} else {
 			if (this.isMobile) {
 				this.vehicleEl.textContent = `You: ${typeLabel}`;
-				this.controlsEl.textContent = "";
+				this.controlsEl.textContent =
+					look === "none" ? "" : "drag to look around";
 			} else {
 				const controlHint =
 					vehicleType === "oil_tanker"
@@ -393,7 +400,12 @@ export class HUD {
 							? "arrows to steer/throttle"
 							: "arrows to move";
 				this.vehicleEl.textContent = `You: ${typeLabel}  |  ${controlHint}`;
-				this.controlsEl.textContent = "V camera  |  scroll zoom";
+				this.controlsEl.textContent =
+					look === "available"
+						? "V camera  |  click to look around  |  scroll zoom"
+						: look === "active"
+							? "V camera  |  mouse to look  |  Esc frees the cursor  |  scroll zoom"
+							: "V camera  |  scroll zoom";
 			}
 
 			const TIPS: Partial<Record<string, string>> = {
@@ -485,6 +497,11 @@ export class HUD {
 		this.sitrepLines.warCost.textContent = `War Cost     ${costStr}`;
 
 		this.sitrepLines.playersOnline.textContent = `Players Online     ${fmt(stats.playersOnline)}`;
+	}
+
+	/** Local time in the strait (the game's lighting follows it). */
+	updateClock(straitTime: string): void {
+		this.sitrepLines.straitTime.textContent = `Strait Time   ${straitTime} GST`;
 	}
 
 	updateThrottle(throttleLevel: number, visible: boolean): void {

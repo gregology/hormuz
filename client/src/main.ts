@@ -4,16 +4,17 @@
  * Single Three.js canvas with a DOM HUD overlay.
  */
 
-import * as THREE from "three";
 import { ThreeEffectManager } from "./effects/manager";
 import { EntityStore } from "./game/entities";
 import { SnapshotInterpolator } from "./game/interpolation";
 import { InputManager } from "./input/input-manager";
 import type { CameraMode } from "./input/keyboard";
+import { MouseLook } from "./input/mouse-look";
 import { MAP } from "./map/data";
 import { getElevation } from "./map/heightmap";
 import { GameConnection } from "./net/connection";
 import { type Camera, createCamera } from "./render/camera";
+import { ChaseCamera } from "./render/chase-camera";
 import { CiwsController } from "./render/ciws-controller";
 import { COLORS } from "./render/colors";
 import type { GameStats, VehicleInstruments } from "./render/hud";
@@ -24,6 +25,7 @@ import {
 	ThreeMapRenderer,
 } from "./render/map-renderer";
 import { ThreeScene } from "./render/scene";
+import { formatStraitTime } from "./render/solar";
 import { ThreeVehicleRenderer } from "./render/vehicle-renderer";
 
 // Faction -> render color
@@ -45,14 +47,14 @@ const VEHICLE_DEFAULTS: Record<
 	quadcopter: { size: 2, airborne: true, equilibriumSpeed: 22 },
 };
 
-function init() {
+async function init() {
 	// biome-ignore lint/style/noNonNullAssertion: element defined in index.html
 	const container = document.getElementById("game-container")!;
 	const screenW = window.innerWidth;
 	const screenH = window.innerHeight;
 
-	// --- Three.js canvas ---
-	const threeScene = new ThreeScene();
+	// --- Three.js canvas (WebGPU, falling back to WebGL2) ---
+	const threeScene = await ThreeScene.create();
 	threeScene.setSize(screenW, screenH);
 	container.appendChild(threeScene.renderer.domElement);
 
@@ -67,7 +69,10 @@ function init() {
 
 	// --- Map layers (Three.js) ---
 	const layers: MapLayers = { ...DEFAULT_LAYERS };
-	const threeMap = new ThreeMapRenderer(layers);
+	const threeMap = new ThreeMapRenderer(
+		layers,
+		threeScene.environment.reflections,
+	);
 	threeScene.scene.add(threeMap.root);
 
 	// --- Three.js vehicles ---
@@ -100,7 +105,6 @@ function init() {
 		speedboatsSunk: 0,
 		playersOnline: 0,
 	};
-	let elapsedTime = 0;
 	let autopilotOn = true;
 
 	// Zoom limits per vehicle type (scaled roughly by inverse vehicle size)
@@ -122,15 +126,10 @@ function init() {
 	let pendingAssign: { entityId: number; vehicleType: string } | null = null;
 	const SPECTATOR_ZOOM = { min: 0.005, max: 10 };
 
-	// Perspective camera state (third-person / first-person)
+	// Perspective camera (third-person): mouse/touch look-around, keyboard steers
 	let prevCameraMode: CameraMode = "isometric";
-	const _tPos = new THREE.Vector3();
-	const _tLook = new THREE.Vector3();
-	const PERSP = {
-		tpDistance: 3,
-		tpHeight: 1.5,
-		smoothing: 8,
-	};
+	const chaseCamera = new ChaseCamera();
+	const mouseLook = new MouseLook(threeScene.renderer.domElement);
 
 	// --- Connection handlers ---
 	conn.onSnapshot((snapshot) => {
@@ -250,7 +249,6 @@ function init() {
 
 		const dt = (now - lastTime) / 1000;
 		lastTime = now;
-		elapsedTime += dt;
 		const renderTime = now / 1000;
 
 		// --- Autopilot logic (tankers only) ---
@@ -322,34 +320,32 @@ function init() {
 			}
 		}
 
-		// Update perspective camera for third-person / first-person modes
+		// Update the perspective camera for third-person mode
+		mouseLook.enabled = cameraMode !== "isometric";
+		const look = mouseLook.consume();
 		if (cameraMode !== "isometric" && assignedEntityId !== null) {
 			const target = entities.find((e) => e.id === assignedEntityId);
 			if (target) {
 				const defaults = VEHICLE_DEFAULTS[target.vehicleType];
-				const sz = defaults?.size ?? 50;
-				const elev = defaults?.airborne
-					? getElevation(target.x, target.y) + 30
-					: getElevation(target.x, target.y);
-				const fwdX = Math.cos(target.heading);
-				const fwdZ = Math.sin(target.heading);
-
-				const dist = sz * PERSP.tpDistance;
-				const height = sz * PERSP.tpHeight;
-				_tPos.set(
-					target.x - fwdX * dist,
-					elev + height,
-					target.y - fwdZ * dist,
+				const switched = prevCameraMode !== cameraMode;
+				if (switched) chaseCamera.reset(cameraMode, target.heading);
+				chaseCamera.look(cameraMode, look.dx, look.dy);
+				if (look.wheel !== 0) chaseCamera.zoomBy(look.wheel);
+				chaseCamera.apply(
+					threeScene.perspCamera,
+					cameraMode,
+					{
+						x: target.x,
+						y: target.y,
+						heading: target.heading,
+						baseHeight: defaults?.airborne
+							? getElevation(target.x, target.y) + 30
+							: 0,
+						size: defaults?.size ?? 50,
+					},
+					dt,
+					switched,
 				);
-				_tLook.set(target.x, elev + sz * 0.2, target.y);
-
-				if (prevCameraMode !== cameraMode) {
-					threeScene.perspCamera.position.copy(_tPos);
-				} else {
-					const t = 1 - Math.exp(-PERSP.smoothing * dt);
-					threeScene.perspCamera.position.lerp(_tPos, t);
-				}
-				threeScene.perspCamera.lookAt(_tLook);
 			}
 		}
 		prevCameraMode = cameraMode;
@@ -363,16 +359,19 @@ function init() {
 			effectZoom = cam.zoom;
 		} else {
 			const sz = VEHICLE_DEFAULTS[assignedVehicleType ?? ""]?.size ?? 50;
-			const dist = sz * PERSP.tpDistance;
+			const dist = sz * chaseCamera.settings.distance * chaseCamera.zoom;
 			const halfFov = (threeScene.perspCamera.fov * Math.PI) / 360;
 			effectZoom = cam.screenWidth / (SQRT6 * 2 * dist * Math.tan(halfFov));
 		}
-		threeMap.update(elapsedTime, effectZoom);
+		// Lighting follows the real time of day in the strait.
+		const wallClock = new Date();
+		threeScene.environment.setTime(wallClock);
 		threeVehicles.update(
 			entities,
 			assignedEntityId,
 			assignedVehicleType,
 			FACTION_COLORS,
+			effectZoom,
 		);
 		ciwsController.update(
 			entities,
@@ -397,9 +396,19 @@ function init() {
 		}
 
 		// HUD
-		hud.updateVehicle(spectating, pendingAssign !== null, assignedVehicleType);
+		hud.updateVehicle(
+			spectating,
+			pendingAssign !== null,
+			assignedVehicleType,
+			cameraMode === "isometric"
+				? "none"
+				: mouseLook.captured
+					? "active"
+					: "available",
+		);
 		input.updateSpectating(spectating, pendingAssign !== null);
 		hud.updateStats(warCost);
+		hud.updateClock(formatStraitTime(wallClock));
 
 		// Vehicle instruments — speed, heading, HP, flood
 		if (!spectating && assignedEntityId !== null) {

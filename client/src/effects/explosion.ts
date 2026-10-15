@@ -1,306 +1,260 @@
 /**
- * Explosion effect (Three.js) — expanding fireball with shockwave ring
- * and debris particles.
+ * Explosion effect — a turbulent HDR fireball that cools into smoke, a
+ * shockwave ring across the surface, hot fragments, a column of spray
+ * when it happens on water, and a smoke cloud that drifts downwind.
  *
- * Uses a billboarded plane with a custom shader for the core flash,
- * shockwave ring, and smoke cloud. Debris is a separate Points object.
+ * The fireball is a camera-facing sprite (works for every camera mode);
+ * fragments, spray and smoke go into the shared particle batches.
  */
 
-import * as THREE from "three";
-import type { ThreeEffect } from "./types";
+import {
+	float,
+	mix,
+	mx_noise_float,
+	pow,
+	smoothstep,
+	uniform,
+	uv,
+	vec3,
+} from "three/tsl";
+import * as THREE from "three/webgpu";
+import { isLand } from "../map/terrain";
+import { particleDiameterPixels } from "../render/particles";
+import { terrainSurfaceHeight } from "../render/terrain-surface";
+import { type EffectParticles, type ThreeEffect, WIND } from "./types";
 
-interface Debris {
+const FIREBALL_DURATION = 1.4;
+const SHOCKWAVE_DURATION = 1.2;
+
+interface Particle {
 	x: number;
 	y: number;
+	z: number;
 	vx: number;
 	vy: number;
+	vz: number;
 	radius: number;
-	/** Packed RGB as 0xRRGGBB */
-	color: number;
+	age: number;
+	life: number;
 }
-
-const DURATION = 1.5;
-const CORE_DURATION = 0.3;
-const SQRT6 = Math.sqrt(6);
-const MAX_DEBRIS = 24;
-
-// Billboard quaternion: orient plane to face the isometric camera.
-// Camera looks along (1,1,1). Plane default normal is +Z.
-// Rotate +Z to face camera direction (-1,-1,-1).
-const BILLBOARD_QUAT = new THREE.Quaternion().setFromUnitVectors(
-	new THREE.Vector3(0, 0, 1),
-	new THREE.Vector3(-1, -1, -1).normalize(),
-);
-
-const EXPLOSION_VERT = `
-#include <common>
-#include <logdepthbuf_pars_vertex>
-out vec2 vUv;
-void main() {
-    vUv = uv;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-    #include <logdepthbuf_vertex>
-}
-`;
-
-const EXPLOSION_FRAG = `
-#include <logdepthbuf_pars_fragment>
-uniform float uTime;
-uniform float uAge;
-uniform float uCoreDuration;
-uniform float uMaxRadius;
-uniform float uPixelsToWorld;
-in vec2 vUv;
-out vec4 fragColor;
-
-void main() {
-    float dist = length(vUv - 0.5) * 2.0;
-    // World distance from center (plane half-extent = maxRadius * 1.5)
-    float worldDist = dist * uMaxRadius * 1.5;
-
-    vec4 col = vec4(0.0);
-
-    // Smoke cloud (expands slowly, persists longer)
-    if (uAge > 0.1) {
-        float smokeR = uMaxRadius * (0.2 + uTime * 0.6);
-        float smokeAlpha = (1.0 - uTime) * 0.15;
-        if (worldDist < smokeR && smokeAlpha > 0.005) {
-            col = vec4(0.2, 0.2, 0.2, smokeAlpha);
-        }
-    }
-
-    // Shockwave ring
-    float ringR = uMaxRadius * uTime * 1.5;
-    float ringPixelWidth = 2.0 + (1.0 - uTime) * 3.0;
-    float ringHalfWidth = ringPixelWidth * uPixelsToWorld * 0.5;
-    float ringAlpha = (1.0 - uTime) * 0.4;
-    float ringDist = abs(worldDist - ringR);
-    if (ringDist < ringHalfWidth && ringAlpha > 0.01 && ringR > 0.1) {
-        float ringFade = 1.0 - ringDist / ringHalfWidth;
-        col = mix(col, vec4(1.0, 0.533, 0.0, ringAlpha), ringFade);
-    }
-
-    // Core flash (bright yellow-white)
-    if (uAge < uCoreDuration) {
-        float coreT = uAge / uCoreDuration;
-        float coreR = uMaxRadius * (0.3 + coreT * 0.4);
-        float coreAlpha = 1.0 - coreT * 0.7;
-        if (worldDist < coreR) {
-            col = vec4(1.0, 0.8, 0.0, coreAlpha);
-        }
-        // Inner white hot core
-        if (worldDist < coreR * 0.4) {
-            col = vec4(1.0, 1.0, 1.0, coreAlpha * 0.8);
-        }
-    }
-
-    if (col.a < 0.003) discard;
-    fragColor = col;
-    #include <logdepthbuf_fragment>
-}
-`;
-
-const DEBRIS_VERT = `
-#include <common>
-#include <logdepthbuf_pars_vertex>
-in float aAlpha;
-in float aSize;
-in vec3 aColor;
-out float vAlpha;
-out vec3 vColor;
-void main() {
-    vAlpha = aAlpha;
-    vColor = aColor;
-    gl_PointSize = aSize;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-    #include <logdepthbuf_vertex>
-}
-`;
-
-const DEBRIS_FRAG = `
-#include <logdepthbuf_pars_fragment>
-in float vAlpha;
-in vec3 vColor;
-out vec4 fragColor;
-void main() {
-    vec2 c = gl_PointCoord - 0.5;
-    if (dot(c, c) > 0.25) discard;
-    fragColor = vec4(vColor, vAlpha);
-    #include <logdepthbuf_fragment>
-}
-`;
 
 export class Explosion implements ThreeEffect {
 	alive = true;
 	readonly root: THREE.Group;
 
 	private age = 0;
-	private debris: Debris[] = [];
-
-	private planeMat: THREE.ShaderMaterial;
-	private debrisGeo: THREE.BufferGeometry;
+	private readonly surface: number;
+	private readonly radius: number;
+	private readonly progress = uniform(0);
+	private readonly fireballMaterial: THREE.SpriteNodeMaterial;
+	private readonly shockwave: THREE.Mesh;
+	private readonly shockwaveMaterial: THREE.MeshBasicNodeMaterial;
+	private readonly shockwaveOpacity = uniform(0);
+	private readonly fragments: Particle[] = [];
+	private readonly spray: Particle[] = [];
+	private readonly smoke: Particle[] = [];
 
 	constructor(x: number, y: number, radius = 60) {
 		this.root = new THREE.Group();
+		this.radius = radius;
+		const onLand = isLand(x, y);
+		this.surface = onLand ? terrainSurfaceHeight(x, y) : 0;
 
-		// Billboard plane for core/ring/smoke
-		const planeSize = radius * 3; // diameter covers ring at max expansion
-		const planeGeo = new THREE.PlaneGeometry(planeSize, planeSize);
-		this.planeMat = new THREE.ShaderMaterial({
-			vertexShader: EXPLOSION_VERT,
-			fragmentShader: EXPLOSION_FRAG,
-			uniforms: {
-				uTime: { value: 0 },
-				uAge: { value: 0 },
-				uCoreDuration: { value: CORE_DURATION },
-				uMaxRadius: { value: radius },
-				uPixelsToWorld: { value: 1 },
-			},
+		// --- Fireball: turbulent, white-hot core cooling to dark smoke ---
+		const t = this.progress;
+		const centre = uv().sub(0.5);
+		const distance = centre.length().mul(2);
+		const turbulence = mx_noise_float(vec3(centre.mul(5.5), t.mul(2.5)));
+		const extent = mix(float(0.35), float(1), pow(t, 0.4));
+		const body = float(1).sub(
+			smoothstep(extent.mul(0.55), extent, distance.add(turbulence.mul(0.2))),
+		);
+		const heat = float(1)
+			.sub(smoothstep(0, extent.mul(0.75), distance.add(turbulence.mul(0.12))))
+			.mul(float(1).sub(t));
+		const flame = mix(vec3(0.85, 0.2, 0.03), vec3(1, 0.85, 0.5), heat);
+		const intensity = pow(float(1).sub(t), 2).mul(6).add(0.8);
+		const smoky = smoothstep(0.3, 0.85, t);
+		this.fireballMaterial = new THREE.SpriteNodeMaterial({
 			transparent: true,
 			depthWrite: false,
-			side: THREE.DoubleSide,
-			glslVersion: THREE.GLSL3,
 		});
-		const planeMesh = new THREE.Mesh(planeGeo, this.planeMat);
-		planeMesh.position.set(x, 0.5, y);
-		planeMesh.quaternion.copy(BILLBOARD_QUAT);
-		this.root.add(planeMesh);
+		this.fireballMaterial.colorNode = mix(
+			flame.mul(intensity),
+			vec3(0.05, 0.045, 0.04),
+			smoky,
+		);
+		this.fireballMaterial.opacityNode = body.mul(
+			float(1).sub(smoothstep(0.75, 1, t)),
+		);
+		const fireball = new THREE.Sprite(this.fireballMaterial);
+		fireball.scale.setScalar(radius * 2.6);
+		// Lifted so the sea surface doesn't slice off the bottom of the sprite.
+		fireball.position.set(x, this.surface + radius * 1.2, y);
+		fireball.renderOrder = 9;
+		this.root.add(fireball);
 
-		// Debris particles
-		const count = 12 + Math.floor(Math.random() * 8);
-		for (let i = 0; i < count && i < MAX_DEBRIS; i++) {
+		// --- Shockwave across the water / ground ---
+		const ring = new THREE.RingGeometry(0.9, 1, 64);
+		ring.rotateX(-Math.PI / 2);
+		this.shockwaveMaterial = new THREE.MeshBasicNodeMaterial({
+			color: onLand ? 0xc9b48a : 0xe8f0f0,
+			transparent: true,
+			depthWrite: false,
+		});
+		// Feathered on both edges, broken up like a ring of spray.
+		const across = uv().sub(0.5).length().mul(2).sub(0.95).abs().mul(20);
+		const ragged = mx_noise_float(vec3(uv().mul(14), t.mul(3)))
+			.mul(0.5)
+			.add(0.5);
+		this.shockwaveMaterial.opacityNode = float(1)
+			.sub(across.clamp(0, 1))
+			.mul(ragged)
+			.mul(this.shockwaveOpacity);
+		this.shockwave = new THREE.Mesh(ring, this.shockwaveMaterial);
+		this.shockwave.position.set(x, this.surface + 0.4, y);
+		this.root.add(this.shockwave);
+
+		// --- Hot fragments ---
+		const fragmentCount = 14 + Math.floor(Math.random() * 10);
+		for (let i = 0; i < fragmentCount; i++) {
 			const angle = Math.random() * Math.PI * 2;
-			const speed = 20 + Math.random() * 80;
-			this.debris.push({
+			const outward = radius * (0.8 + Math.random() * 2.2);
+			this.fragments.push({
 				x,
-				y,
-				vx: Math.cos(angle) * speed,
-				vy: Math.sin(angle) * speed,
-				radius: 1 + Math.random() * 3,
-				color:
-					Math.random() > 0.5
-						? 0xff6600
-						: Math.random() > 0.5
-							? 0xff3300
-							: 0x444444,
+				y: this.surface + radius * 0.3,
+				z: y,
+				vx: Math.cos(angle) * outward,
+				vy: radius * (1 + Math.random() * 2.5),
+				vz: Math.sin(angle) * outward,
+				radius: radius * (0.015 + Math.random() * 0.03),
+				age: 0,
+				life: 0.8 + Math.random() * 1.2,
 			});
 		}
 
-		const positions = new Float32Array(MAX_DEBRIS * 3);
-		const debrisAlphas = new Float32Array(MAX_DEBRIS);
-		const debrisSizes = new Float32Array(MAX_DEBRIS);
-		const debrisColors = new Float32Array(MAX_DEBRIS * 3);
-
-		this.debrisGeo = new THREE.BufferGeometry();
-		this.debrisGeo.setAttribute(
-			"position",
-			new THREE.BufferAttribute(positions, 3),
-		);
-		this.debrisGeo.setAttribute(
-			"aAlpha",
-			new THREE.BufferAttribute(debrisAlphas, 1),
-		);
-		this.debrisGeo.setAttribute(
-			"aSize",
-			new THREE.BufferAttribute(debrisSizes, 1),
-		);
-		this.debrisGeo.setAttribute(
-			"aColor",
-			new THREE.BufferAttribute(debrisColors, 3),
-		);
-		this.debrisGeo.setDrawRange(0, 0);
-
-		const debrisMat = new THREE.ShaderMaterial({
-			vertexShader: DEBRIS_VERT,
-			fragmentShader: DEBRIS_FRAG,
-			transparent: true,
-			depthWrite: false,
-			glslVersion: THREE.GLSL3,
-		});
-
-		const debrisPoints = new THREE.Points(this.debrisGeo, debrisMat);
-		debrisPoints.frustumCulled = false;
-		this.root.add(debrisPoints);
-
-		// Pre-fill debris colors (don't change over lifetime)
-		for (let i = 0; i < this.debris.length; i++) {
-			const c = this.debris[i].color;
-			debrisColors[i * 3] = ((c >> 16) & 0xff) / 255;
-			debrisColors[i * 3 + 1] = ((c >> 8) & 0xff) / 255;
-			debrisColors[i * 3 + 2] = (c & 0xff) / 255;
+		// --- Spray column on water ---
+		if (!onLand) {
+			for (let i = 0; i < 40; i++) {
+				const angle = Math.random() * Math.PI * 2;
+				const out = radius * Math.random() * 0.8;
+				this.spray.push({
+					x: x + Math.cos(angle) * radius * 0.2,
+					y: 0,
+					z: y + Math.sin(angle) * radius * 0.2,
+					vx: Math.cos(angle) * out,
+					vy: radius * (2 + Math.random() * 2.5),
+					vz: Math.sin(angle) * out,
+					radius: radius * (0.08 + Math.random() * 0.12),
+					age: 0,
+					life: 1.2 + Math.random() * 0.8,
+				});
+			}
 		}
-		(
-			this.debrisGeo.attributes.aColor as THREE.BufferAttribute
-		).needsUpdate = true;
+
+		// --- Smoke cloud ---
+		for (let i = 0; i < 18; i++) {
+			const angle = Math.random() * Math.PI * 2;
+			const out = radius * Math.random() * 0.6;
+			this.smoke.push({
+				x: x + Math.cos(angle) * radius * 0.2,
+				y: this.surface + radius * (0.3 + Math.random() * 0.6),
+				z: y + Math.sin(angle) * radius * 0.2,
+				vx: Math.cos(angle) * out + WIND.x,
+				vy: radius * (0.25 + Math.random() * 0.4),
+				vz: Math.sin(angle) * out + WIND.z,
+				radius: radius * (0.25 + Math.random() * 0.25),
+				age: -Math.random() * 0.5,
+				life: 4 + Math.random() * 3,
+			});
+		}
 	}
 
-	update(dt: number, zoom: number): void {
+	update(dt: number, _zoom: number): void {
 		this.age += dt;
-		if (this.age >= DURATION) {
-			this.alive = false;
-			return;
+		this.progress.value = Math.min(this.age / FIREBALL_DURATION, 1);
+
+		const wave = Math.min(this.age / SHOCKWAVE_DURATION, 1);
+		this.shockwave.scale.setScalar(this.radius * (0.4 + 3.2 * wave ** 0.6));
+		this.shockwaveOpacity.value = (1 - wave) * 0.5;
+		this.shockwave.visible = wave < 1;
+
+		const gravity = this.radius * 3;
+		for (const p of [...this.fragments, ...this.spray]) {
+			p.age += dt;
+			p.vy -= gravity * dt;
+			p.x += p.vx * dt;
+			p.y += p.vy * dt;
+			p.z += p.vz * dt;
+			p.vx *= 0.97;
+			p.vz *= 0.97;
+		}
+		for (const p of this.smoke) {
+			p.age += dt;
+			if (p.age < 0) continue;
+			p.x += p.vx * dt;
+			p.y += p.vy * dt;
+			p.z += p.vz * dt;
+			p.vx = p.vx * 0.96 + WIND.x * 0.04;
+			p.vz = p.vz * 0.96 + WIND.z * 0.04;
+			p.vy *= 0.985;
+			p.radius += this.radius * 0.25 * dt;
 		}
 
-		const t = this.age / DURATION;
-		const pixelsToWorld = 2 / (zoom * SQRT6);
+		this.alive =
+			this.smoke.some((p) => p.age < p.life) || this.age < FIREBALL_DURATION;
+	}
 
-		// Update plane shader uniforms
-		this.planeMat.uniforms.uTime.value = t;
-		this.planeMat.uniforms.uAge.value = this.age;
-		this.planeMat.uniforms.uPixelsToWorld.value = pixelsToWorld;
-
-		// Move debris
-		const drag = 0.95;
-		for (const d of this.debris) {
-			d.x += d.vx * dt;
-			d.y += d.vy * dt;
-			d.vx *= drag;
-			d.vy *= drag;
+	drawParticles(particles: EffectParticles, zoom: number): void {
+		for (const p of this.fragments) {
+			if (p.age > p.life || p.y < this.surface) continue;
+			const cool = p.age / p.life;
+			particles.glow.push(
+				p.x,
+				p.y,
+				p.z,
+				Math.max(1.5, particleDiameterPixels(p.radius, zoom)),
+				6 * (1 - cool * 0.5),
+				2.2 * (1 - cool),
+				0.4 * (1 - cool),
+				1 - cool,
+			);
 		}
-
-		// Update debris buffers
-		const posAttr = this.debrisGeo.attributes
-			.position as THREE.BufferAttribute;
-		const alphaAttr = this.debrisGeo.attributes
-			.aAlpha as THREE.BufferAttribute;
-		const sizeAttr = this.debrisGeo.attributes
-			.aSize as THREE.BufferAttribute;
-		const positions = posAttr.array as Float32Array;
-		const alphas = alphaAttr.array as Float32Array;
-		const sizes = sizeAttr.array as Float32Array;
-
-		const pixelScale = zoom * SQRT6;
-		let count = 0;
-
-		for (const d of this.debris) {
-			const alpha = (1 - t) * 0.6;
-			if (alpha < 0.01) continue;
-			const r = d.radius * pixelScale;
-			if (r < 0.3) continue;
-
-			const i3 = count * 3;
-			positions[i3] = d.x;
-			positions[i3 + 1] = 0.3;
-			positions[i3 + 2] = d.y;
-			alphas[count] = alpha;
-			sizes[count] = r * 2;
-			count++;
+		for (const p of this.spray) {
+			if (p.age > p.life || p.y < -1) continue;
+			const fade = 1 - p.age / p.life;
+			particles.spray.push(
+				p.x,
+				p.y,
+				p.z,
+				particleDiameterPixels(p.radius, zoom),
+				0.9,
+				0.93,
+				0.95,
+				fade * 0.7,
+			);
 		}
-
-		this.debrisGeo.setDrawRange(0, count);
-		posAttr.needsUpdate = true;
-		alphaAttr.needsUpdate = true;
-		sizeAttr.needsUpdate = true;
+		for (const p of this.smoke) {
+			if (p.age < 0 || p.age > p.life) continue;
+			const life = p.age / p.life;
+			const alpha = Math.min(1, p.age * 3) * (1 - life) * 0.6;
+			const shade = 0.06 + life * 0.1;
+			particles.smoke.push(
+				p.x,
+				p.y,
+				p.z,
+				particleDiameterPixels(p.radius, zoom),
+				shade,
+				shade * 0.95,
+				shade * 0.9,
+				alpha,
+			);
+		}
 	}
 
 	dispose(): void {
-		this.root.traverse((obj) => {
-			if (obj instanceof THREE.Mesh || obj instanceof THREE.Points) {
-				obj.geometry.dispose();
-				if (obj.material instanceof THREE.Material) {
-					obj.material.dispose();
-				}
-			}
-		});
+		this.fireballMaterial.dispose();
+		this.shockwaveMaterial.dispose();
+		this.shockwave.geometry.dispose();
 	}
 }

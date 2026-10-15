@@ -1,40 +1,40 @@
 /**
- * Three.js map renderer — water, terrain, coastlines, overlays.
+ * Three.js map renderer — sea, terrain, rocks and gameplay overlays.
  *
- * All geometry is in game world coordinates (X = east, Z = south in Three.js).
- * The isometric camera handles projection — no per-frame geometry updates needed.
+ * The sea is one large lit plane (water-material.ts); land is a single
+ * displaced terrain mesh following the gameplay heightmap, clipped to the
+ * coastline polygons per pixel (terrain-material.ts). Both are built once
+ * in world coordinates (X = east, Y = up, Z = south); the camera handles
+ * projection.
  */
 
-import * as THREE from "three";
-import { ARABIAN_COAST_POLYS, IRAN_COAST_POLYS } from "../map/coastlines";
+import * as THREE from "three/webgpu";
+import { getCoastField } from "../map/coast-field";
 import {
 	DEEP_WATER_ROUTE,
 	EXCLUSION_ZONES,
 	IRAN_SPAWNS,
-	ISLAND_POLYGONS,
 	LANE_INBOUND,
 	LANE_OUTBOUND,
 	MAP,
 	ROCKS,
-	SHALLOW_WATERS,
 	SHOALS,
 	TANKER_SPAWNS,
 	US_BASES,
 	US_SPAWNS,
-	VERY_SHALLOW_WATERS,
 } from "../map/data";
-import {
-	HEIGHTMAP_CELL_SIZE,
-	HEIGHTMAP_HEIGHT,
-	HEIGHTMAP_WIDTH,
-	createHeightmapPixels,
-} from "../map/heightmap";
+import { HEIGHTMAP_CELL_SIZE } from "../map/heightmap";
 import { HEIGHTMAP_MAX_ELEVATION } from "../map/heightmap-data";
 import { COLORS } from "./colors";
-
-import mapVert from "./shaders/map.vert?raw";
-import terrainFrag from "./shaders/terrain.frag?raw";
-import waterFrag from "./shaders/water.frag?raw";
+import {
+	createBathymetryTexture,
+	createCoastTexture,
+	createWaveTexture,
+} from "./map-textures";
+import { createTerrainMaterial } from "./terrain-material";
+import { terrainSurfaceHeight } from "./terrain-surface";
+import { createWaterMaterial } from "./water-material";
+import { mulberry32 } from "./water-textures";
 
 // ---------------------------------------------------------------------------
 // Map layer visibility configuration
@@ -63,67 +63,27 @@ export const DEFAULT_LAYERS: MapLayers = {
 };
 
 // ---------------------------------------------------------------------------
-// Y-layer offsets (higher = closer to isometric camera = draws on top)
+// Geometry constants
 // ---------------------------------------------------------------------------
 
-const Y_WATER = 0;
-const Y_DEPTH_ZONES = 0.05;
-const Y_LAND = 0.1;
-const Y_STENCIL = 0.15;
-const Y_TERRAIN = 0.2;
+/** Overlays float just above the sea; terrain occludes them on land. */
 const Y_OVERLAYS = 0.3;
 const Y_MARKERS = 0.35;
+
+/** How far sea and land extend past the playable map (for perspective views). */
+const WORLD_MARGIN = 60000;
+const MARGIN_STEP = 2000;
+/** Terrain vertex spacing inside the map: two per heightmap cell. */
+const TERRAIN_STEP = HEIGHTMAP_CELL_SIZE / 2;
+/**
+ * Relief is gameplay-scaled (≤300 units over a 113 km map), which would
+ * read as flat; shading normals exaggerate slopes like the old hillshade did.
+ */
+const NORMAL_EXAGGERATION = 5;
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function polygonToShape(poly: readonly [number, number][]): THREE.Shape {
-	const shape = new THREE.Shape();
-	shape.moveTo(poly[0][0], poly[0][1]);
-	for (let i = 1; i < poly.length; i++) {
-		shape.lineTo(poly[i][0], poly[i][1]);
-	}
-	return shape;
-}
-
-/** Remap ShapeGeometry from XY plane to XZ: (gx, gy, 0) → (gx, 0, gy). */
-function shapeGeoToXZ(geo: THREE.BufferGeometry): void {
-	const pos = geo.getAttribute("position") as THREE.BufferAttribute;
-	for (let i = 0; i < pos.count; i++) {
-		const y = pos.getY(i);
-		pos.setY(i, 0);
-		pos.setZ(i, y);
-	}
-	pos.needsUpdate = true;
-}
-
-/** Quad BufferGeometry in XZ covering the full heightmap extent. */
-function createMapPlaneGeo(): THREE.BufferGeometry {
-	const w = HEIGHTMAP_WIDTH * HEIGHTMAP_CELL_SIZE;
-	const h = HEIGHTMAP_HEIGHT * HEIGHTMAP_CELL_SIZE;
-	const geo = new THREE.BufferGeometry();
-	geo.setAttribute(
-		"position",
-		new THREE.Float32BufferAttribute([0, 0, 0, w, 0, 0, w, 0, h, 0, 0, h], 3),
-	);
-	geo.setAttribute(
-		"uv",
-		new THREE.Float32BufferAttribute([0, 0, 1, 0, 1, 1, 0, 1], 2),
-	);
-	// CCW winding for upward-facing normals
-	geo.setIndex([0, 3, 1, 1, 3, 2]);
-	return geo;
-}
-
-function createHeightmapTexture(): THREE.DataTexture {
-	const { data, width, height } = createHeightmapPixels();
-	const tex = new THREE.DataTexture(data, width, height, THREE.RGBAFormat);
-	tex.magFilter = THREE.LinearFilter;
-	tex.minFilter = THREE.LinearFilter;
-	tex.needsUpdate = true;
-	return tex;
-}
 
 /** Collect line-segment vertex pairs for a closed polygon border. */
 function polygonBorderSegments(
@@ -140,36 +100,130 @@ function polygonBorderSegments(
 	return pts;
 }
 
-/** Configure a material to only render where there is no land (stencil ≠ 1). */
-function applyWaterOnlyStencil(mat: THREE.Material): void {
-	mat.stencilWrite = true;
-	mat.stencilFunc = THREE.NotEqualStencilFunc;
-	mat.stencilRef = 1;
-	mat.stencilFail = THREE.KeepStencilOp;
-	mat.stencilZFail = THREE.KeepStencilOp;
-	mat.stencilZPass = THREE.KeepStencilOp;
+/** Remap ShapeGeometry from XY plane to XZ: (gx, gy, 0) → (gx, 0, gy). */
+function shapeGeoToXZ(geo: THREE.BufferGeometry): void {
+	const pos = geo.getAttribute("position") as THREE.BufferAttribute;
+	for (let i = 0; i < pos.count; i++) {
+		const y = pos.getY(i);
+		pos.setY(i, 0);
+		pos.setZ(i, y);
+	}
+	pos.needsUpdate = true;
 }
 
-function createFilledShapes(
-	polys: readonly (readonly [number, number][])[],
-	color: number,
-	alpha: number,
-	y: number,
-	depthWrite: boolean,
-): { mesh: THREE.Mesh; geo: THREE.BufferGeometry; mat: THREE.Material } {
-	const shapes = polys.filter((p) => p.length >= 3).map(polygonToShape);
-	const geo = new THREE.ShapeGeometry(shapes);
-	shapeGeoToXZ(geo);
-	const mat = new THREE.MeshBasicMaterial({
-		color,
-		transparent: alpha < 1,
-		opacity: alpha,
-		side: THREE.DoubleSide,
-		depthWrite,
-	});
-	const mesh = new THREE.Mesh(geo, mat);
-	mesh.position.y = y;
-	return { mesh, geo, mat };
+function polygonToShape(poly: readonly [number, number][]): THREE.Shape {
+	const shape = new THREE.Shape();
+	shape.moveTo(poly[0][0], poly[0][1]);
+	for (let i = 1; i < poly.length; i++) {
+		shape.lineTo(poly[i][0], poly[i][1]);
+	}
+	return shape;
+}
+
+/** Vertex coordinates along one axis: fine inside the map, coarse in the margin. */
+function axisTicks(length: number): number[] {
+	const ticks: number[] = [];
+	for (let v = -WORLD_MARGIN; v < 0; v += MARGIN_STEP) ticks.push(v);
+	for (let v = 0; v < length; v += TERRAIN_STEP) ticks.push(v);
+	ticks.push(length);
+	for (
+		let v = length + MARGIN_STEP;
+		v <= length + WORLD_MARGIN;
+		v += MARGIN_STEP
+	)
+		ticks.push(v);
+	return ticks;
+}
+
+function createTerrainGeometry(): THREE.BufferGeometry {
+	const xs = axisTicks(MAP.width);
+	const zs = axisTicks(MAP.height);
+	const cols = xs.length;
+	const rows = zs.length;
+
+	const heights = new Float32Array(cols * rows);
+	for (let r = 0; r < rows; r++) {
+		const z = Math.max(0, Math.min(MAP.height, zs[r]));
+		for (let c = 0; c < cols; c++) {
+			const x = Math.max(0, Math.min(MAP.width, xs[c]));
+			heights[r * cols + c] = terrainSurfaceHeight(x, z);
+		}
+	}
+
+	const positions = new Float32Array(cols * rows * 3);
+	const normals = new Float32Array(cols * rows * 3);
+	for (let r = 0; r < rows; r++) {
+		for (let c = 0; c < cols; c++) {
+			const i = r * cols + c;
+			positions[i * 3] = xs[c];
+			positions[i * 3 + 1] = heights[i];
+			positions[i * 3 + 2] = zs[r];
+
+			const c0 = Math.max(0, c - 1);
+			const c1 = Math.min(cols - 1, c + 1);
+			const r0 = Math.max(0, r - 1);
+			const r1 = Math.min(rows - 1, r + 1);
+			const dhdx =
+				(heights[r * cols + c1] - heights[r * cols + c0]) / (xs[c1] - xs[c0]);
+			const dhdz =
+				(heights[r1 * cols + c] - heights[r0 * cols + c]) / (zs[r1] - zs[r0]);
+			const nx = -dhdx * NORMAL_EXAGGERATION;
+			const nz = -dhdz * NORMAL_EXAGGERATION;
+			const length = Math.hypot(nx, 1, nz);
+			normals[i * 3] = nx / length;
+			normals[i * 3 + 1] = 1 / length;
+			normals[i * 3 + 2] = nz / length;
+		}
+	}
+
+	const indices = new Uint32Array((cols - 1) * (rows - 1) * 6);
+	let k = 0;
+	for (let r = 0; r < rows - 1; r++) {
+		for (let c = 0; c < cols - 1; c++) {
+			const a = r * cols + c;
+			const b = a + 1;
+			const d = a + cols;
+			const e = d + 1;
+			// Counter-clockwise seen from above (+Y), so faces point up.
+			indices.set([a, d, b, b, d, e], k);
+			k += 6;
+		}
+	}
+
+	const geometry = new THREE.BufferGeometry();
+	geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+	geometry.setAttribute("normal", new THREE.BufferAttribute(normals, 3));
+	geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+	geometry.computeBoundingSphere();
+	return geometry;
+}
+
+/** A lumpy, half-submerged boulder cluster. */
+function createRockGeometry(
+	radius: number,
+	seed: number,
+): THREE.BufferGeometry {
+	const random = mulberry32(seed);
+	const geometry = new THREE.IcosahedronGeometry(radius, 2);
+	const pos = geometry.getAttribute("position") as THREE.BufferAttribute;
+	const offsets = new Map<string, number>();
+	for (let i = 0; i < pos.count; i++) {
+		// Shared corners must move together or the surface tears.
+		const key = `${pos.getX(i).toFixed(3)},${pos.getY(i).toFixed(3)},${pos.getZ(i).toFixed(3)}`;
+		let scale = offsets.get(key);
+		if (scale === undefined) {
+			scale = 0.7 + random() * 0.5;
+			offsets.set(key, scale);
+		}
+		pos.setXYZ(
+			i,
+			pos.getX(i) * scale,
+			pos.getY(i) * scale * 0.4 + radius * 0.05,
+			pos.getZ(i) * scale,
+		);
+	}
+	geometry.computeVertexNormals();
+	return geometry;
 }
 
 // ---------------------------------------------------------------------------
@@ -180,13 +234,8 @@ export class ThreeMapRenderer {
 	/** Add this group to the Three.js scene. */
 	readonly root = new THREE.Group();
 
-	private waterUniforms = {
-		uTime: { value: 0 },
-		uZoom: { value: 1 },
-	};
-
-	private depthZoneGroup!: THREE.Group;
-	private terrainMesh!: THREE.Mesh;
+	private readonly depthZones: { value: number };
+	private readonly relief: { value: number };
 	private hazardGroup!: THREE.Group;
 	private laneGroup!: THREE.Group;
 	private gridGroup!: THREE.Group;
@@ -199,13 +248,42 @@ export class ThreeMapRenderer {
 	private laneGeometries: THREE.BufferGeometry[] = [];
 	private laneMaterials: THREE.Material[] = [];
 
-	constructor(layers: MapLayers = DEFAULT_LAYERS) {
-		this.buildWater();
-		this.buildLandStencil();
-		this.depthZoneGroup = this.buildDepthZones();
-		this.buildLandFills();
-		this.terrainMesh = this.buildTerrain();
-		this.buildBorders();
+	/**
+	 * @param reflections Pre-filtered sky (Environment.reflections) for the
+	 *   sea; without it the sea uses the scene's dimmer diffuse environment.
+	 */
+	constructor(layers: MapLayers = DEFAULT_LAYERS, reflections?: THREE.Texture) {
+		const field = getCoastField();
+		const mapSize = new THREE.Vector2(
+			field.grid.width * field.grid.cellSize,
+			field.grid.height * field.grid.cellSize,
+		);
+		const coastTexture = this.tex(createCoastTexture(field));
+		const waveTexture = this.tex(createWaveTexture());
+
+		const water = createWaterMaterial({
+			coastTexture,
+			bathymetryTexture: this.tex(createBathymetryTexture()),
+			waveTexture,
+			mapSize,
+		});
+		this.depthZones = water.depthZones;
+		if (reflections) {
+			water.material.envMap = reflections;
+			water.material.envMapIntensity = 0.85;
+		}
+		this.buildWater(water.material);
+
+		const terrain = createTerrainMaterial({
+			coastTexture,
+			noiseTexture: waveTexture,
+			mapSize,
+			maxElevation: HEIGHTMAP_MAX_ELEVATION,
+		});
+		this.relief = terrain.relief;
+		this.buildTerrain(terrain.material);
+		this.buildRocks();
+
 		this.hazardGroup = this.buildHazards();
 		this.laneGroup = this.buildLanes();
 		this.gridGroup = this.buildGrid(layers.gridSize);
@@ -214,11 +292,6 @@ export class ThreeMapRenderer {
 		this.exclusionZoneGroup = this.buildExclusionZones();
 
 		this.setLayers(layers);
-	}
-
-	update(time: number, zoom: number): void {
-		this.waterUniforms.uTime.value = time;
-		this.waterUniforms.uZoom.value = zoom;
 	}
 
 	/** Rebuild lane geometry from external (editor) data. */
@@ -239,8 +312,8 @@ export class ThreeMapRenderer {
 	}
 
 	setLayers(layers: MapLayers): void {
-		this.depthZoneGroup.visible = layers.showDepthZones;
-		this.terrainMesh.visible = layers.showTerrain;
+		this.depthZones.value = layers.showDepthZones ? 1 : 0;
+		this.relief.value = layers.showTerrain ? 1 : 0;
 		this.hazardGroup.visible = layers.showHazards;
 		this.laneGroup.visible = layers.showShippingLanes;
 		this.gridGroup.visible = layers.showGrid;
@@ -272,266 +345,74 @@ export class ThreeMapRenderer {
 
 	// --- Layer builders ---
 
-	private buildWater(): void {
-		const g = this.geo(createMapPlaneGeo());
-		const m = this.mat(
-			new THREE.ShaderMaterial({
-				glslVersion: THREE.GLSL3,
-				vertexShader: mapVert,
-				fragmentShader: waterFrag,
-				uniforms: this.waterUniforms,
-				side: THREE.DoubleSide,
-			}),
+	private buildWater(material: THREE.Material): void {
+		const g = this.geo(
+			new THREE.PlaneGeometry(
+				MAP.width + WORLD_MARGIN * 2,
+				MAP.height + WORLD_MARGIN * 2,
+			),
 		);
-		const mesh = new THREE.Mesh(g, m);
-		mesh.position.y = Y_WATER;
-		mesh.renderOrder = 0;
+		g.rotateX(-Math.PI / 2);
+		const mesh = new THREE.Mesh(g, this.mat(material));
+		mesh.position.set(MAP.width / 2, 0, MAP.height / 2);
+		mesh.receiveShadow = true;
 		this.root.add(mesh);
 	}
 
-	/** Stencil-write land polygons so depth zones can be clipped to water only. */
-	private buildLandStencil(): void {
-		const allLandPolys = [
-			...IRAN_COAST_POLYS,
-			...ARABIAN_COAST_POLYS,
-			...ISLAND_POLYGONS.map((i) => i.polygon),
-		];
-		const shapes = allLandPolys
-			.filter((p) => p.length >= 3)
-			.map(polygonToShape);
-		if (shapes.length === 0) return;
-
-		const geo = this.geo(new THREE.ShapeGeometry(shapes));
-		shapeGeoToXZ(geo);
-		const mat = this.mat(
-			new THREE.MeshBasicMaterial({
-				colorWrite: false,
-				depthWrite: false,
-				stencilWrite: true,
-				stencilRef: 1,
-				stencilFunc: THREE.AlwaysStencilFunc,
-				stencilFail: THREE.KeepStencilOp,
-				stencilZFail: THREE.KeepStencilOp,
-				stencilZPass: THREE.ReplaceStencilOp,
-				side: THREE.DoubleSide,
-			}),
+	private buildTerrain(material: THREE.Material): void {
+		const mesh = new THREE.Mesh(
+			this.geo(createTerrainGeometry()),
+			this.mat(material),
 		);
-		const mesh = new THREE.Mesh(geo, mat);
-		mesh.position.y = Y_DEPTH_ZONES;
-		mesh.renderOrder = 0;
+		mesh.castShadow = true;
+		mesh.receiveShadow = true;
 		this.root.add(mesh);
 	}
 
-	private buildDepthZones(): THREE.Group {
-		const group = new THREE.Group();
-		group.renderOrder = 1;
-
-		if (SHALLOW_WATERS.length > 0) {
-			const { mesh, geo, mat } = createFilledShapes(
-				SHALLOW_WATERS,
-				COLORS.shallowWater,
-				0.4,
-				Y_DEPTH_ZONES,
-				false,
-			);
-			this.geo(geo);
-			this.mat(mat);
-			applyWaterOnlyStencil(mat);
-			mesh.renderOrder = 1;
-			group.add(mesh);
-		}
-
-		if (VERY_SHALLOW_WATERS.length > 0) {
-			const { mesh, geo, mat } = createFilledShapes(
-				VERY_SHALLOW_WATERS,
-				COLORS.veryShallowWater,
-				0.5,
-				Y_DEPTH_ZONES + 0.01,
-				false,
-			);
-			this.geo(geo);
-			this.mat(mat);
-			applyWaterOnlyStencil(mat);
-			mesh.renderOrder = 1;
-			group.add(mesh);
-		}
-
-		this.root.add(group);
-		return group;
-	}
-
-	private buildLandFills(): void {
-		const coastPolys = [...IRAN_COAST_POLYS, ...ARABIAN_COAST_POLYS];
-		if (coastPolys.length > 0) {
-			const { mesh, geo, mat } = createFilledShapes(
-				coastPolys,
-				COLORS.land,
-				1,
-				Y_LAND,
-				true,
-			);
-			this.geo(geo);
-			this.mat(mat);
-			mesh.renderOrder = 2;
-			this.root.add(mesh);
-		}
-
-		const islandPolys = ISLAND_POLYGONS.map((i) => i.polygon);
-		if (islandPolys.length > 0) {
-			const { mesh, geo, mat } = createFilledShapes(
-				islandPolys,
-				COLORS.island,
-				1,
-				Y_LAND + 0.01,
-				true,
-			);
-			this.geo(geo);
-			this.mat(mat);
-			mesh.renderOrder = 2;
-			this.root.add(mesh);
-		}
-	}
-
-	private buildTerrain(): THREE.Mesh {
-		// Stencil write: mark coastline pixels so terrain only renders on land
-		const allLandPolys = [
-			...IRAN_COAST_POLYS,
-			...ARABIAN_COAST_POLYS,
-			...ISLAND_POLYGONS.map((i) => i.polygon),
-		];
-		const stencilShapes = allLandPolys
-			.filter((p) => p.length >= 3)
-			.map(polygonToShape);
-		const stencilGeo = this.geo(new THREE.ShapeGeometry(stencilShapes));
-		shapeGeoToXZ(stencilGeo);
-		const stencilMat = this.mat(
-			new THREE.MeshBasicMaterial({
-				colorWrite: false,
-				depthWrite: false,
-				stencilWrite: true,
-				stencilRef: 1,
-				stencilFunc: THREE.AlwaysStencilFunc,
-				stencilFail: THREE.KeepStencilOp,
-				stencilZFail: THREE.KeepStencilOp,
-				stencilZPass: THREE.ReplaceStencilOp,
-				side: THREE.DoubleSide,
-			}),
+	private buildRocks(): void {
+		const material = this.mat(
+			new THREE.MeshStandardNodeMaterial({ color: 0x3a3430, roughness: 0.92 }),
 		);
-		const stencilMesh = new THREE.Mesh(stencilGeo, stencilMat);
-		stencilMesh.position.y = Y_STENCIL;
-		stencilMesh.renderOrder = 3;
-		this.root.add(stencilMesh);
-
-		// Terrain quad — heightmap shader, stencil-tested to coastlines
-		const heightmapTex = this.tex(createHeightmapTexture());
-		const terrainGeo = this.geo(createMapPlaneGeo());
-		const terrainMat = this.mat(
-			new THREE.ShaderMaterial({
-				glslVersion: THREE.GLSL3,
-				vertexShader: mapVert,
-				fragmentShader: terrainFrag,
-				uniforms: {
-					uTexture: { value: heightmapTex },
-					uGradientScale: { value: 3.0 },
-					uMaxElevation: { value: HEIGHTMAP_MAX_ELEVATION },
-				},
-				transparent: true,
-				side: THREE.DoubleSide,
-				depthWrite: false,
-				stencilWrite: true,
-				stencilFunc: THREE.EqualStencilFunc,
-				stencilRef: 1,
-				stencilFail: THREE.KeepStencilOp,
-				stencilZFail: THREE.KeepStencilOp,
-				stencilZPass: THREE.KeepStencilOp,
-			}),
-		);
-		const terrainMesh = new THREE.Mesh(terrainGeo, terrainMat);
-		terrainMesh.position.y = Y_TERRAIN;
-		terrainMesh.renderOrder = 4;
-		this.root.add(terrainMesh);
-
-		return terrainMesh;
+		ROCKS.forEach((rock, i) => {
+			const mesh = new THREE.Mesh(
+				this.geo(createRockGeometry(rock.radius * 0.8, 0x70c4 + i)),
+				material,
+			);
+			mesh.position.set(rock.position[0], 0, rock.position[1]);
+			mesh.castShadow = true;
+			mesh.receiveShadow = true;
+			this.root.add(mesh);
+		});
 	}
 
-	private buildBorders(): void {
-		const coastPts: THREE.Vector3[] = [];
-		for (const poly of IRAN_COAST_POLYS) {
-			coastPts.push(...polygonBorderSegments(poly, Y_OVERLAYS));
-		}
-		for (const poly of ARABIAN_COAST_POLYS) {
-			coastPts.push(...polygonBorderSegments(poly, Y_OVERLAYS));
-		}
-		if (coastPts.length > 0) {
-			const g = this.geo(new THREE.BufferGeometry().setFromPoints(coastPts));
-			const m = this.mat(
-				new THREE.LineBasicMaterial({ color: COLORS.landBorder }),
-			);
-			const lines = new THREE.LineSegments(g, m);
-			lines.renderOrder = 5;
-			this.root.add(lines);
-		}
-
-		const islandPts: THREE.Vector3[] = [];
-		for (const island of ISLAND_POLYGONS) {
-			islandPts.push(...polygonBorderSegments(island.polygon, Y_OVERLAYS));
-		}
-		if (islandPts.length > 0) {
-			const g = this.geo(new THREE.BufferGeometry().setFromPoints(islandPts));
-			const m = this.mat(
-				new THREE.LineBasicMaterial({ color: COLORS.islandBorder }),
-			);
-			const lines = new THREE.LineSegments(g, m);
-			lines.renderOrder = 5;
-			this.root.add(lines);
-		}
-	}
-
+	/** Chart outlines of shoals and rocks (the sea surface shows them regardless). */
 	private buildHazards(): THREE.Group {
 		const group = new THREE.Group();
-		group.renderOrder = 5;
-
-		if (SHOALS.length > 0) {
-			const { mesh, geo, mat } = createFilledShapes(
-				SHOALS,
-				COLORS.shoal,
-				0.6,
-				Y_OVERLAYS,
-				false,
-			);
-			this.geo(geo);
-			this.mat(mat);
-			applyWaterOnlyStencil(mat);
-			group.add(mesh);
-
-			const borderPts: THREE.Vector3[] = [];
-			for (const shoal of SHOALS) {
-				borderPts.push(...polygonBorderSegments(shoal, Y_OVERLAYS + 0.01));
-			}
-			const bg = this.geo(new THREE.BufferGeometry().setFromPoints(borderPts));
-			const bm = this.mat(
-				new THREE.LineBasicMaterial({ color: COLORS.shoalBorder }),
-			);
-			applyWaterOnlyStencil(bm);
-			group.add(new THREE.LineSegments(bg, bm));
-		}
-
-		const rockMat = this.mat(
-			new THREE.MeshBasicMaterial({
-				color: COLORS.rock,
-				side: THREE.DoubleSide,
+		const material = this.mat(
+			new THREE.LineBasicMaterial({
+				color: COLORS.shoalBorder,
 				transparent: true,
-				opacity: 0.8,
-				depthWrite: false,
+				opacity: 0.55,
 			}),
 		);
-		applyWaterOnlyStencil(rockMat);
+
+		const borderPts: THREE.Vector3[] = [];
+		for (const shoal of SHOALS) {
+			borderPts.push(...polygonBorderSegments(shoal, Y_OVERLAYS));
+		}
 		for (const rock of ROCKS) {
-			const g = this.geo(new THREE.CircleGeometry(rock.radius, 24));
-			shapeGeoToXZ(g);
-			const mesh = new THREE.Mesh(g, rockMat);
-			mesh.position.set(rock.position[0], Y_OVERLAYS, rock.position[1]);
-			group.add(mesh);
+			const ring: [number, number][] = Array.from({ length: 24 }, (_, i) => {
+				const angle = (i / 24) * Math.PI * 2;
+				return [
+					rock.position[0] + Math.cos(angle) * rock.radius * 1.6,
+					rock.position[1] + Math.sin(angle) * rock.radius * 1.6,
+				];
+			});
+			borderPts.push(...polygonBorderSegments(ring, Y_OVERLAYS));
+		}
+		if (borderPts.length > 0) {
+			const g = this.geo(new THREE.BufferGeometry().setFromPoints(borderPts));
+			group.add(new THREE.LineSegments(g, material));
 		}
 
 		this.root.add(group);
@@ -548,7 +429,6 @@ export class ThreeMapRenderer {
 		deepWaterRoute: readonly [number, number][],
 	): THREE.Group {
 		const group = new THREE.Group();
-		group.renderOrder = 5;
 
 		const addLane = (
 			line: readonly [number, number][],
@@ -565,7 +445,7 @@ export class ThreeMapRenderer {
 				dashSize,
 				gapSize,
 				transparent: true,
-				opacity: 0.6,
+				opacity: 0.9,
 			});
 			this.laneMaterials.push(m);
 			const line3 = new THREE.Line(g, m);
@@ -590,7 +470,6 @@ export class ThreeMapRenderer {
 
 	private buildGrid(gridSize: number): THREE.Group {
 		const group = new THREE.Group();
-		group.renderOrder = 5;
 
 		const points: THREE.Vector3[] = [];
 		for (let wx = 0; wx <= MAP.width; wx += gridSize) {
@@ -633,7 +512,11 @@ export class ThreeMapRenderer {
 			const g = this.geo(new THREE.PlaneGeometry(400, 400));
 			shapeGeoToXZ(g);
 			const mesh = new THREE.Mesh(g, m);
-			mesh.position.set(base.position[0], Y_MARKERS, base.position[1]);
+			mesh.position.set(
+				base.position[0],
+				terrainSurfaceHeight(base.position[0], base.position[1]) + Y_MARKERS,
+				base.position[1],
+			);
 			mesh.renderOrder = 6;
 			group.add(mesh);
 		}
@@ -641,17 +524,19 @@ export class ThreeMapRenderer {
 
 	private buildSpawns(): THREE.Group {
 		const group = new THREE.Group();
-		group.renderOrder = 6;
 
-		const iranMat = this.mat(
-			new THREE.MeshBasicMaterial({
-				color: COLORS.spawnIran,
-				side: THREE.DoubleSide,
-				transparent: true,
-				opacity: 0.7,
-				depthWrite: false,
-			}),
-		);
+		const markerMaterial = (color: number) =>
+			this.mat(
+				new THREE.MeshBasicMaterial({
+					color,
+					side: THREE.DoubleSide,
+					transparent: true,
+					opacity: 0.7,
+					depthWrite: false,
+				}),
+			);
+
+		const iranMat = markerMaterial(COLORS.spawnIran);
 		for (const sp of IRAN_SPAWNS) {
 			const g = this.geo(new THREE.CircleGeometry(300, 24));
 			shapeGeoToXZ(g);
@@ -660,15 +545,7 @@ export class ThreeMapRenderer {
 			group.add(mesh);
 		}
 
-		const usMat = this.mat(
-			new THREE.MeshBasicMaterial({
-				color: COLORS.spawnUS,
-				side: THREE.DoubleSide,
-				transparent: true,
-				opacity: 0.7,
-				depthWrite: false,
-			}),
-		);
+		const usMat = markerMaterial(COLORS.spawnUS);
 		for (const sp of US_SPAWNS) {
 			const g = this.geo(new THREE.PlaneGeometry(300, 300));
 			shapeGeoToXZ(g);
@@ -677,15 +554,7 @@ export class ThreeMapRenderer {
 			group.add(mesh);
 		}
 
-		const tankerMat = this.mat(
-			new THREE.MeshBasicMaterial({
-				color: COLORS.spawnTanker,
-				side: THREE.DoubleSide,
-				transparent: true,
-				opacity: 0.7,
-				depthWrite: false,
-			}),
-		);
+		const tankerMat = markerMaterial(COLORS.spawnTanker);
 		for (const sp of TANKER_SPAWNS) {
 			const size = 300;
 			const shape = new THREE.Shape();
@@ -706,7 +575,6 @@ export class ThreeMapRenderer {
 
 	private buildExclusionZones(): THREE.Group {
 		const group = new THREE.Group();
-		group.renderOrder = 5;
 
 		const borderMat = this.mat(
 			new THREE.LineBasicMaterial({
@@ -715,30 +583,30 @@ export class ThreeMapRenderer {
 				opacity: 0.6,
 			}),
 		);
+		const fillMat = this.mat(
+			new THREE.MeshBasicMaterial({
+				color: 0xff2200,
+				transparent: true,
+				opacity: 0.15,
+				side: THREE.DoubleSide,
+				depthWrite: false,
+			}),
+		);
 
 		for (const zone of EXCLUSION_ZONES) {
-			// Polygon fill
 			const poly = zone.polygon.map((p) => [p[0], p[1]] as [number, number]);
-			const { mesh, geo, mat } = createFilledShapes(
-				[poly],
-				0xff2200,
-				0.15,
-				Y_OVERLAYS,
-				false,
-			);
-			this.geo(geo);
-			this.mat(mat);
-			mesh.renderOrder = 5;
-			group.add(mesh);
+			const g = this.geo(new THREE.ShapeGeometry(polygonToShape(poly)));
+			shapeGeoToXZ(g);
+			const fill = new THREE.Mesh(g, fillMat);
+			fill.position.y = Y_OVERLAYS;
+			group.add(fill);
 
-			// Border outline
 			const pts = zone.polygon.map(
 				(p) => new THREE.Vector3(p[0], Y_OVERLAYS, p[1]),
 			);
-			pts.push(pts[0].clone()); // close the loop
+			pts.push(pts[0].clone());
 			const lineGeo = this.geo(new THREE.BufferGeometry().setFromPoints(pts));
-			const line = new THREE.Line(lineGeo, borderMat);
-			group.add(line);
+			group.add(new THREE.Line(lineGeo, borderMat));
 		}
 
 		this.root.add(group);

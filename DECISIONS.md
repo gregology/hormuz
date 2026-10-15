@@ -113,3 +113,40 @@ Write the AI once in **Lua**, embedded in both hosts:
 - **Runtime hardening is the project's job.** Every behavior call is wrapped in `pcall`; errors are isolated per entity and surfaced (playground AI panel, server logs) without killing the tick.
 - **lupa quirks discovered during integration:** `table_from(recursive=True)` breaks on objects referenced twice in one structure (lanes/routes each get their own copies), and Lua 5.5's preload searcher rejects non-Lua callables (gamedata loader is wrapped in a Lua function).
 - **fengari assumes Node:** its CJS entry reads `process.env.FENGARICONF` at module load and its io/os libraries touch `process.stdin`/`fs`/`tmp`. The Vite configs shim `process.env`/`process.versions.node` via `define`, and the hosts open only the libraries the sandbox needs (base, package, table, string, math) instead of `luaL_openlibs` — the lupa side removes the same globals for parity.
+
+---
+
+## 004: WebGPU renderer with TSL node materials, real-time lighting, and data-driven ship models
+
+**Date:** 2026-10-15
+**Status:** Complete
+
+### Context
+
+The game looked like a diagram: every surface was a hand-picked flat colour (vehicle blocks used three fixed shades), with no lights, shadows, sky or reflections. The sea was sine-wave stripes and the land a flat polygon with a painted hillshade, even though land vehicles were placed at their 3D elevation (so any real shadow would have landed far from them). Custom `ShaderMaterial`s skipped colour management and tone mapping, and `logarithmicDepthBuffer` ruled out three's depth-based effects. The README already called for time of day to follow the real strait.
+
+Three approaches were proposed: (A) add real lighting within `WebGLRenderer`, splicing three's lighting chunks into every custom GLSL shader; (B) keep all-custom GLSL with a shared hand-written lighting include and faked shadows; (C) move to three's `WebGPURenderer` with TSL node materials. C was chosen as the most extensible.
+
+### Decision
+
+- **Renderer:** `WebGPURenderer` (automatic WebGL2 fallback, `?webgl` to force). Every custom shader is now a TSL node graph; built-in materials are converted automatically. `THREE.RenderPipeline` does bloom, ACES tone mapping and a vignette. `logarithmicDepthBuffer` is kept (it works on both backends; reversed depth would silently break on WebGL2 without `EXT_clip_control`). Quality tiers scale shadows/bloom/MSAA/pixel ratio.
+- **Time of day:** sun position from UTC at the strait (`solar.ts`, NOAA approximation), mapped to an art-directed palette (`daylight.ts`). `Environment` drives sun, moon, hemisphere ambient, a physical sky (clamped: its sun disc overflows half-float buffers into NaNs) for the perspective background and pre-filtered sea reflections, view-fitted texel-snapped shadows, and horizon fog. Ship windows and navigation lights glow after dusk.
+- **Sea:** one lit plane coloured by real bathymetry (new `BATHYMETRY_DATA` from the heightmap generator, rendering only), a coast signed distance field (`map/coast-field.ts`), scrolling procedural wave normals, surf on every shore/rock/shoal, and footprint-dependent roughness so sub-pixel waves become glitter rather than aliasing.
+- **Land:** a displaced terrain mesh (reverses 001's hillshade sprite), clipped per pixel at the coastline polygons via the coast field, eased to sea level near the coast so the shoreline stays put. Shading uses exaggerated normals plus NW–SE fold ridges in the mountains.
+- **Vehicles:** models are pure data — lofted hulls plus parts — merged into one geometry per shape, with paint in vertex attributes and palette slots as per-object uniforms, so every vehicle shares one material and costs one draw call. Tankers get deterministic designs per entity id (four classes, varied liveries). Faction moved from hull paint to IFF rings with a minimum screen size.
+- **Effects:** sized particles are instanced sprites (`ParticleBatch`; WebGPU has no point size) in three shared batches. New: damage smoke and fire, bow waves, explosion fireballs/shockwaves/spray, sinking wrecks that use the real model and go under the opaque sea.
+
+### Rationale
+
+- **Lighting is free for custom materials.** A TSL material only describes its surface; lights, shadows, fog, environment and log depth apply automatically. Under A, every new effect would have repeated the chunk-splicing.
+- **Composable shading.** Node graphs are type-checked TypeScript and reusable (e.g. the shared vehicle material, per-object palette uniforms).
+- **Headroom.** Compute, SSR/GTAO/TRAA nodes are available when wanted; three's development is centred here.
+- **Gameplay stays readable.** IFF rings keep factions legible when zoomed out, and night is moonlit rather than black.
+
+### Costs accepted
+
+- **A rewrite before any visual gain.** All ~12 GLSL shaders were ported; `ShaderMaterial` can no longer be used.
+- **TSL churn.** The API still moves between releases (`PostProcessing` became `RenderPipeline` in r183); three upgrades may need shader fixes.
+- **Async startup.** `ThreeScene.create()` must be awaited; long first frames (shader compilation) made the playground's camera follow diverge, so its frame delta is now clamped.
+- **Bigger bundle.** The client bundle is ~1.2 MB (330 KB gzip) with three's WebGPU build.
+- **Visual-only height mismatch near coasts.** Within 300 units of the coast the rendered terrain sits slightly below the gameplay heightmap; physics is unchanged.

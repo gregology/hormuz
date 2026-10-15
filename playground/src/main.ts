@@ -1,5 +1,5 @@
 import GUI, { type Controller } from "lil-gui";
-import * as THREE from "three";
+import * as THREE from "three/webgpu";
 import { buildClientGameData } from "../../client/src/ai/game-data";
 import {
 	type AIBotState,
@@ -16,6 +16,7 @@ import {
 	TANKER_SPAWNS,
 	US_SPAWNS,
 } from "../../client/src/generated/map_data";
+import { MouseLook } from "../../client/src/input/mouse-look";
 import { LANE_ALT_OUTBOUND, MAP } from "../../client/src/map/data";
 import { getElevation } from "../../client/src/map/heightmap";
 import { isLand } from "../../client/src/map/terrain";
@@ -25,6 +26,7 @@ import {
 	screenToWorld,
 	worldToScreen,
 } from "../../client/src/render/camera";
+import { ChaseCamera } from "../../client/src/render/chase-camera";
 import { CiwsController } from "../../client/src/render/ciws-controller";
 import { COLORS } from "../../client/src/render/colors";
 import {
@@ -33,6 +35,12 @@ import {
 	ThreeMapRenderer,
 } from "../../client/src/render/map-renderer";
 import { ThreeScene } from "../../client/src/render/scene";
+import {
+	atStraitHour,
+	formatStraitTime,
+	straitSolarPosition,
+} from "../../client/src/render/solar";
+import { terrainSurfaceHeight } from "../../client/src/render/terrain-surface";
 import { ThreeVehicleRenderer } from "../../client/src/render/vehicle-renderer";
 import {
 	COLLISION_POLYGONS,
@@ -138,12 +146,12 @@ function headingBetween(
 	return Math.atan2(b[1] - a[1], b[0] - a[0]);
 }
 
-function init() {
+async function init() {
 	const screenW = window.innerWidth;
 	const screenH = window.innerHeight;
 
-	// ---- Three.js scene ----
-	const threeScene = new ThreeScene();
+	// ---- Three.js scene (WebGPU, falling back to WebGL2) ----
+	const threeScene = await ThreeScene.create();
 	threeScene.setSize(screenW, screenH);
 	document.body.appendChild(threeScene.renderer.domElement);
 
@@ -153,7 +161,10 @@ function init() {
 
 	// ---- Map (Three.js) ----
 	const layers: MapLayers = { ...DEFAULT_LAYERS };
-	const threeMap = new ThreeMapRenderer(layers);
+	const threeMap = new ThreeMapRenderer(
+		layers,
+		threeScene.environment.reflections,
+	);
 	threeScene.scene.add(threeMap.root);
 
 	// ---- Vehicles (Three.js) ----
@@ -169,13 +180,7 @@ function init() {
 	threeScene.scene.add(ciwsController.root);
 
 	// ---- Perspective camera (for first/third-person views) ----
-	const perspCamera = new THREE.PerspectiveCamera(
-		60,
-		screenW / screenH,
-		1,
-		100000,
-	);
-	threeScene.scene.add(perspCamera);
+	const perspCamera = threeScene.perspCamera;
 
 	// ---- Collision debug wireframes ----
 	const MAX_COLLISION_VERTS = 4096;
@@ -418,7 +423,6 @@ function init() {
 	let lastMouseY = 0;
 	let mouseScreenX = 0;
 	let mouseScreenY = 0;
-	let elapsedTime = 0;
 
 	// Stepped throttle for ships (-10 to +10)
 	let throttleLevel = 0;
@@ -439,23 +443,25 @@ function init() {
 		cameraMode: "isometric" as CameraMode,
 	};
 	let prevCameraMode: CameraMode = "isometric";
-	const _tPos = new THREE.Vector3();
-	const _tLook = new THREE.Vector3();
+	let prevCameraVehicle = -1;
 
-	// ---- Perspective camera settings (tunable via GUI) ----
-	const perspSettings = {
-		tpDistance: 3,
-		tpHeight: 1.5,
-		fpHeight: 0.5,
-		fpForward: 0.3,
-		smoothing: 8,
-	};
+	// ---- Perspective camera: mouse/touch look-around, keyboard steers (tunable via GUI) ----
+	const chaseCamera = new ChaseCamera();
+	const mouseLook = new MouseLook(threeScene.renderer.domElement);
 
 	// ---- Simulation settings ----
 	const simSettings = {
 		timeScale: 1.0,
 		paused: false,
 		showCollisionPolygons: true,
+	};
+
+	const timeOfDay = {
+		followRealTime: true,
+		/** Strait local hour (GST) used when not following real time. */
+		hour: 16.5,
+		clock: "",
+		sunElevation: 0,
 	};
 
 	// ---- Dev panel ----
@@ -604,11 +610,28 @@ function init() {
 		.name("FOV")
 		.step(1)
 		.onChange(() => perspCamera.updateProjectionMatrix());
-	perspFolder.add(perspSettings, "tpDistance", 1, 10).name("TP Distance");
-	perspFolder.add(perspSettings, "tpHeight", 0.5, 5).name("TP Height");
-	perspFolder.add(perspSettings, "fpHeight", 0.1, 1.5).name("FP Height");
-	perspFolder.add(perspSettings, "fpForward", -0.5, 0.5).name("FP Forward");
-	perspFolder.add(perspSettings, "smoothing", 1, 20).name("Smoothing");
+	const chase = chaseCamera.settings;
+	perspFolder.add(chase, "distance", 1, 10).name("TP Distance");
+	perspFolder
+		.add(chaseCamera, "zoom", 0.3, 5)
+		.name("TP Zoom (scroll)")
+		.listen();
+	perspFolder.add(chase, "followHeading").name("TP turns with vehicle");
+	perspFolder.add(chase, "sensitivity", 0.0005, 0.01).name("Look sensitivity");
+	perspFolder.add(chase, "eyeHeight", 0.1, 1.5).name("FP Height");
+	perspFolder.add(chase, "eyeForward", -0.5, 0.5).name("FP Forward");
+	perspFolder.add(chase, "smoothing", 1, 20).name("Smoothing");
+	perspFolder.add(
+		{
+			"Reset view": () => {
+				const active = activePv();
+				if (active && mode.cameraMode !== "isometric") {
+					chaseCamera.reset(mode.cameraMode, active.vehicle.heading);
+				}
+			},
+		},
+		"Reset view",
+	);
 
 	// Simulation folder
 	const simFolder = gui.addFolder("Simulation");
@@ -928,6 +951,23 @@ function init() {
 	presetsFolder.add(presets, "Strait");
 	presetsFolder.add(presets, "Follow Vehicle");
 
+	// Time of day (lighting follows the strait's local time unless overridden)
+	const timeFolder = gui.addFolder("Time of Day");
+	timeFolder.add(timeOfDay, "followRealTime").name("Real strait time");
+	timeFolder
+		.add(timeOfDay, "hour", 0, 24, 0.05)
+		.name("Hour (GST)")
+		.onChange(() => {
+			timeOfDay.followRealTime = false;
+		})
+		.listen();
+	timeFolder.add(timeOfDay, "clock").name("Clock").listen().disable();
+	timeFolder
+		.add(timeOfDay, "sunElevation")
+		.name("Sun elevation°")
+		.listen()
+		.disable();
+
 	// Layers
 	const layersFolder = gui.addFolder("Layers");
 	const onLayerChange = () => threeMap.setLayers(layers);
@@ -1008,7 +1048,10 @@ function init() {
 	canvas.addEventListener("mouseup", (e: MouseEvent) => {
 		if (isDragging) {
 			const moved = Math.hypot(e.clientX - mouseDownX, e.clientY - mouseDownY);
-			if (moved < 6) handleClick(e.clientX, e.clientY);
+			// In perspective views a click captures the mouse for looking around instead.
+			if (moved < 6 && mode.cameraMode === "isometric") {
+				handleClick(e.clientX, e.clientY);
+			}
 		}
 		isDragging = false;
 	});
@@ -1146,8 +1189,6 @@ function init() {
 		cam.screenWidth = w;
 		cam.screenHeight = h;
 		threeScene.setSize(w, h);
-		perspCamera.aspect = w / h;
-		perspCamera.updateProjectionMatrix();
 	});
 
 	// ---- Render loop ----
@@ -1156,7 +1197,9 @@ function init() {
 	function frame(now: number) {
 		requestAnimationFrame(frame);
 
-		const rawDt = (now - lastTime) / 1000;
+		// Clamp so a long frame (e.g. a shader-compile hitch) can't destabilise the
+		// camera follow (gain × dt > 2 diverges) or tunnel vehicles through land.
+		const rawDt = Math.min((now - lastTime) / 1000, 0.1);
 		lastTime = now;
 		const dt = simSettings.paused ? 0 : rawDt * simSettings.timeScale;
 
@@ -1310,41 +1353,35 @@ function init() {
 		}
 
 		// -- Update perspective camera for first/third-person modes --
+		mouseLook.enabled = mode.cameraMode !== "isometric";
+		const look = mouseLook.consume();
 		if (mode.cameraMode !== "isometric" && pv) {
 			const v = pv.vehicle;
-			const sz = v.size;
-			const elev = v.airborne
-				? getElevation(v.x, v.y) + 30
-				: getElevation(v.x, v.y);
-			const fwdX = Math.cos(v.heading);
-			const fwdZ = Math.sin(v.heading);
-
-			if (mode.cameraMode === "third-person") {
-				const dist = sz * perspSettings.tpDistance;
-				const height = sz * perspSettings.tpHeight;
-				_tPos.set(v.x - fwdX * dist, elev + height, v.y - fwdZ * dist);
-				_tLook.set(v.x, elev + sz * 0.2, v.y);
-			} else {
-				const fwd = sz * perspSettings.fpForward;
-				const height = sz * perspSettings.fpHeight;
-				_tPos.set(v.x + fwdX * fwd, elev + height, v.y + fwdZ * fwd);
-				_tLook.set(
-					v.x + fwdX * (fwd + sz * 2),
-					elev + height * 0.8,
-					v.y + fwdZ * (fwd + sz * 2),
-				);
-			}
-
-			// Snap on mode switch, smooth-lerp otherwise
-			if (prevCameraMode !== mode.cameraMode) {
-				perspCamera.position.copy(_tPos);
-			} else {
-				const t = 1 - Math.exp(-perspSettings.smoothing * rawDt);
-				perspCamera.position.lerp(_tPos, t);
-			}
-			perspCamera.lookAt(_tLook);
+			const switched =
+				prevCameraMode !== mode.cameraMode || prevCameraVehicle !== pv.id;
+			if (switched) chaseCamera.reset(mode.cameraMode, v.heading);
+			chaseCamera.look(mode.cameraMode, look.dx, look.dy);
+			if (look.wheel !== 0) chaseCamera.zoomBy(look.wheel);
+			chaseCamera.apply(
+				perspCamera,
+				mode.cameraMode,
+				{
+					x: v.x,
+					y: v.y,
+					heading: v.heading,
+					baseHeight: v.airborne
+						? getElevation(v.x, v.y) + 30
+						: v.vehicleType === "truck"
+							? terrainSurfaceHeight(v.x, v.y)
+							: 0,
+					size: v.size,
+				},
+				rawDt,
+				switched,
+			);
 		}
 		prevCameraMode = mode.cameraMode;
+		prevCameraVehicle = pv?.id ?? -1;
 
 		// -- Build entity states for Three.js renderers --
 		const entityStates: EntityState[] = [];
@@ -1366,21 +1403,38 @@ function init() {
 		}
 
 		// -- Update Three.js renderers --
-		elapsedTime += rawDt;
-		threeMap.update(elapsedTime, cam.zoom);
+		const lightingTime = timeOfDay.followRealTime
+			? new Date()
+			: atStraitHour(new Date(), timeOfDay.hour);
+		threeScene.environment.setTime(lightingTime);
+		timeOfDay.clock = formatStraitTime(lightingTime);
+		timeOfDay.sunElevation = Math.round(
+			straitSolarPosition(lightingTime).elevation,
+		);
+		// In perspective modes, use the ortho zoom that shows the followed
+		// vehicle at the same size, so pixel-sized effects and IFF rings match.
+		let effectZoom = cam.zoom;
+		if (mode.cameraMode !== "isometric" && pv) {
+			const distance =
+				pv.vehicle.size * chaseCamera.settings.distance * chaseCamera.zoom;
+			const halfFov = (perspCamera.fov * Math.PI) / 360;
+			effectZoom =
+				cam.screenWidth / (Math.sqrt(6) * 2 * distance * Math.tan(halfFov));
+		}
 		threeVehicles.update(
 			entityStates,
 			activeId === -1 ? null : activeId,
 			pv?.vehicle.vehicleType ?? "",
 			FACTION_COLORS,
+			effectZoom,
 		);
 		ciwsController.update(
 			entityStates,
 			(id) => threeVehicles.getCiwsTurret(id),
 			dt,
-			cam.zoom,
+			effectZoom,
 		);
-		threeEffects.update(entityStates, dt, cam.zoom);
+		threeEffects.update(entityStates, dt, effectZoom);
 
 		// -- Collision debug wireframes --
 		let vertexCount = 0;
@@ -1430,7 +1484,7 @@ function init() {
 			);
 			threeScene.render();
 		} else {
-			threeScene.renderer.render(threeScene.scene, perspCamera);
+			threeScene.renderPerspective();
 		}
 
 		// -- HUD --
@@ -1438,7 +1492,7 @@ function init() {
 		const world = screenToWorld(cam, mouseScreenX, mouseScreenY);
 		const camLabel =
 			mode.cameraMode !== "isometric"
-				? `[${mode.cameraMode.toUpperCase()}]`
+				? `[${mode.cameraMode.toUpperCase()}] ${mouseLook.captured ? "mouse looks, Esc frees cursor" : "click to look around"}, scroll zoom`
 				: mode.freeCamera
 					? "[FREE CAM]"
 					: "[FOLLOW]";
@@ -1513,4 +1567,4 @@ function init() {
 	);
 }
 
-init();
+void init();

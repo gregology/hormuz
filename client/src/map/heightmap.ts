@@ -13,9 +13,6 @@ import {
 	HEIGHTMAP_WIDTH,
 } from "./heightmap-data";
 
-// Pre-computed hillshade for the entire grid (computed once at load time)
-let hillshadeCache: Float32Array | null = null;
-
 // ---------------------------------------------------------------------------
 // Elevation query
 // ---------------------------------------------------------------------------
@@ -83,98 +80,6 @@ export function getSlopeAlongHeading(
 ): number {
 	const grad = getTerrainGradient(x, y);
 	return grad.dx * Math.cos(heading) + grad.dy * Math.sin(heading);
-}
-
-// ---------------------------------------------------------------------------
-// Hillshade (pre-computed)
-// ---------------------------------------------------------------------------
-
-// NW light direction at ~35° altitude (light from upper-left in isometric view)
-// In world space: X = east, Y = south. NW = (-X, -Y).
-const LIGHT_DX = -0.5773; // -1/√3
-const LIGHT_DY = -0.5773; // -1/√3
-const LIGHT_DZ = 0.5773; //  1/√3
-
-/**
- * Get the pre-computed hillshade value for a grid cell.
- * Returns the raw light dot product: 0 = full shadow, ~0.577 = flat,
- * up to ~1.0 = fully lit slope. Returns -1 for ocean cells.
- */
-export function getHillshade(col: number, row: number): number {
-	if (!hillshadeCache) {
-		hillshadeCache = computeHillshade();
-	}
-	if (col < 0 || col >= HEIGHTMAP_WIDTH || row < 0 || row >= HEIGHTMAP_HEIGHT)
-		return -1;
-	return hillshadeCache[row * HEIGHTMAP_WIDTH + col];
-}
-
-function computeHillshade(): Float32Array {
-	const shade = new Float32Array(HEIGHTMAP_WIDTH * HEIGHTMAP_HEIGHT);
-	// Exaggerate gradients to make hills more visible at our coarse grid
-	const GRADIENT_SCALE = 3.0;
-
-	for (let row = 0; row < HEIGHTMAP_HEIGHT; row++) {
-		for (let col = 0; col < HEIGHTMAP_WIDTH; col++) {
-			const idx = row * HEIGHTMAP_WIDTH + col;
-			const elev = HEIGHTMAP_DATA[idx];
-			if (elev === 0) {
-				shade[idx] = -1; // ocean marker
-				continue;
-			}
-
-			// Finite differences for surface gradient
-			const left = sample(col - 1, row);
-			const right = sample(col + 1, row);
-			const up = sample(col, row - 1);
-			const down = sample(col, row + 1);
-
-			const dzdx =
-				((right - left) / (2 * HEIGHTMAP_CELL_SIZE)) * GRADIENT_SCALE;
-			const dzdy = ((down - up) / (2 * HEIGHTMAP_CELL_SIZE)) * GRADIENT_SCALE;
-
-			// Surface normal: (-dzdx, -dzdy, 1) normalized
-			const mag = Math.sqrt(dzdx * dzdx + dzdy * dzdy + 1);
-			const nx = -dzdx / mag;
-			const ny = -dzdy / mag;
-			const nz = 1 / mag;
-
-			// Dot product with light direction — raw value, not remapped
-			const dot = nx * LIGHT_DX + ny * LIGHT_DY + nz * LIGHT_DZ;
-			shade[idx] = Math.max(0, Math.min(1, dot));
-		}
-	}
-
-	return shade;
-}
-
-// ---------------------------------------------------------------------------
-// Heightmap texture (for GPU shader consumption)
-// ---------------------------------------------------------------------------
-
-/**
- * Create RGBA pixel data encoding elevation in RG channels (16-bit).
- * R = low byte, G = high byte. Bilinear interpolation of both channels
- * independently produces correct linear interpolation of elevation values.
- */
-export function createHeightmapPixels(): {
-	data: Uint8Array;
-	width: number;
-	height: number;
-} {
-	const w = HEIGHTMAP_WIDTH;
-	const h = HEIGHTMAP_HEIGHT;
-	const pixels = new Uint8Array(w * h * 4);
-
-	for (let i = 0; i < w * h; i++) {
-		const v = HEIGHTMAP_DATA[i];
-		pixels[i * 4] = v & 0xff;
-		pixels[i * 4 + 1] = (v >> 8) & 0xff;
-		pixels[i * 4 + 2] = 0;
-		pixels[i * 4 + 3] = 255;
-	}
-
-	return { data: pixels, width: w, height: h };
 }
 
 // ---------------------------------------------------------------------------

@@ -223,20 +223,16 @@ def get_elevation_data() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 # ---------------------------------------------------------------------------
 
 
-def build_heightmap(z: np.ndarray, lat: np.ndarray, lon: np.ndarray) -> np.ndarray:
-    """Sample DEM data onto our game grid and apply gameplay scaling."""
+def sample_on_game_grid(values: np.ndarray, lat: np.ndarray, lon: np.ndarray) -> np.ndarray:
+    """Bilinearly sample a lat/lon raster at every game grid cell centre."""
 
     # Ensure lat is ascending for RegularGridInterpolator
     if lat[0] > lat[-1]:
         lat = lat[::-1]
-        z = z[::-1, :]
+        values = values[::-1, :]
 
-    # Replace NODATA / ocean with 0
-    z = np.where(z < 0, 0, z).astype(np.float64)
-
-    # Build interpolator
     interp = RegularGridInterpolator(
-        (lat, lon), z, method="linear", bounds_error=False, fill_value=0
+        (lat, lon), values, method="linear", bounds_error=False, fill_value=0
     )
 
     # Game grid cell centers → geo coordinates
@@ -251,8 +247,16 @@ def build_heightmap(z: np.ndarray, lat: np.ndarray, lon: np.ndarray) -> np.ndarr
     query_lats, query_lons = np.meshgrid(cell_lats, cell_lons, indexing="ij")
     points = np.column_stack([query_lats.ravel(), query_lons.ravel()])
 
-    # Sample elevation
-    grid = interp(points).reshape(GRID_H, GRID_W)
+    return interp(points).reshape(GRID_H, GRID_W)
+
+
+def build_heightmap(z: np.ndarray, lat: np.ndarray, lon: np.ndarray) -> np.ndarray:
+    """Sample DEM data onto our game grid and apply gameplay scaling."""
+
+    # Replace NODATA / ocean with 0
+    z = np.where(z < 0, 0, z).astype(np.float64)
+
+    grid = sample_on_game_grid(z, lat, lon)
     grid = np.maximum(grid, 0)
 
     # Create land mask before any processing
@@ -281,12 +285,20 @@ def build_heightmap(z: np.ndarray, lat: np.ndarray, lon: np.ndarray) -> np.ndarr
     return np.round(grid).astype(np.uint16)
 
 
+def build_bathymetry(z: np.ndarray, lat: np.ndarray, lon: np.ndarray) -> np.ndarray:
+    """Real water depth in metres (0 on land), unscaled — only drives water colour."""
+    depth = np.where(z < 0, -z, 0).astype(np.float64)
+    grid = sample_on_game_grid(depth, lat, lon)
+    print(f"  Water depth range: 0 – {np.max(grid):.0f} m")
+    return np.round(np.clip(grid, 0, 65535)).astype(np.uint16)
+
+
 # ---------------------------------------------------------------------------
 # Output generation
 # ---------------------------------------------------------------------------
 
 
-def write_typescript(grid: np.ndarray) -> None:
+def write_typescript(grid: np.ndarray, bathymetry: np.ndarray) -> None:
     """Write the heightmap as a TypeScript module."""
     OUTPUT_TS.parent.mkdir(parents=True, exist_ok=True)
 
@@ -306,6 +318,16 @@ def write_typescript(grid: np.ndarray) -> None:
     for row in range(GRID_H):
         row_data = grid[row, :]
         values = ",".join(str(v) for v in row_data)
+        lines.append(f"  {values},")
+
+    lines.append("]);")
+    lines.append("")
+    lines.append("// Row-major water depth grid (real metres, 0 = land) — rendering only")
+    lines.append("// prettier-ignore")
+    lines.append("export const BATHYMETRY_DATA = new Uint16Array([")
+
+    for row in range(GRID_H):
+        values = ",".join(str(v) for v in bathymetry[row, :])
         lines.append(f"  {values},")
 
     lines.append("]);")
@@ -359,10 +381,11 @@ def main() -> None:
 
     z, lat, lon = get_elevation_data()
     grid = build_heightmap(z, lat, lon)
+    bathymetry = build_bathymetry(z, lat, lon)
 
     print()
     print("Writing output files...")
-    write_typescript(grid)
+    write_typescript(grid, bathymetry)
     write_python(grid)
     print()
     print("Done.")

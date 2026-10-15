@@ -1,27 +1,38 @@
 /**
- * Sinking effect (Three.js) — a destroyed ship tilts and sinks below
- * the waterline.
- *
- * Captures the vehicle's last position, heading, and appearance.
- * Over its lifetime: the hull tilts (bow rises), sinks (Y decreases),
- * fades in opacity, and emits bubble particles.
+ * Sinking effect — the destroyed vehicle's own model settles by the bow
+ * or stern, lists and slips beneath the opaque sea surface (which hides
+ * whatever is underwater), burning and venting bubbles as it goes.
+ * Drones drop out of the sky into the sea first.
  */
 
-import * as THREE from "three";
-import type { ThreeEffect } from "./types";
+import type * as THREE from "three";
+import { VEHICLE_PHYSICS } from "../generated/vehicles";
+import { getElevation } from "../map/heightmap";
+import { particleDiameterPixels } from "../render/particles";
+import { terrainSurfaceHeight } from "../render/terrain-surface";
+import { createVehicleObject } from "../render/vehicle-meshes";
+import type { VehicleType } from "../vehicles/physics";
+import { type EffectParticles, type ThreeEffect, WIND } from "./types";
 
-interface Bubble {
+interface Puff {
 	x: number;
 	y: number;
-	/** Upward rise speed in world units/s */
-	riseSpeed: number;
+	z: number;
 	radius: number;
 	age: number;
+	life: number;
+	rise: number;
 }
 
-const DURATION = 3.0;
-const SQRT6 = Math.sqrt(6);
-const MAX_BUBBLES = 64;
+/** Seconds to go under, by vehicle size: big hulls take their time. */
+function sinkDuration(size: number): number {
+	if (size >= 150) return 16;
+	if (size >= 50) return 11;
+	if (size >= 8) return 6;
+	return 3;
+}
+
+const FALL_TIME = 0.9;
 
 export class Sinking implements ThreeEffect {
 	alive = true;
@@ -31,252 +42,181 @@ export class Sinking implements ThreeEffect {
 	private x: number;
 	private y: number;
 	private heading: number;
-	private size: number;
-	private initialFloodLevel: number;
-	private initialListAngle: number;
-	private bubbles: Bubble[] = [];
+	private readonly size: number;
+	private readonly airborne: boolean;
+	private readonly onLand: boolean;
+	private readonly duration: number;
+	private readonly startHeight: number;
+	private readonly initialDraft: number;
+	private readonly initialList: number;
+	/** +1 sinks by the stern (bow rises), -1 by the bow. */
+	private readonly trimDirection: number;
+	private readonly puffs: Puff[] = [];
+	private readonly bubbles: Puff[] = [];
+	private puffAccum = 0;
 	private bubbleAccum = 0;
-
-	private hullMesh: THREE.Mesh;
-	private hullMat: THREE.MeshBasicMaterial;
-	private strokeLine: THREE.LineLoop;
-	private strokeMat: THREE.LineBasicMaterial;
-	private bubbleGeo: THREE.BufferGeometry;
 
 	constructor(
 		x: number,
 		y: number,
 		heading: number,
-		size: number,
-		color: number,
+		vehicleType: VehicleType,
+		entityId: number,
 		floodLevel = 0,
 		listAngle = 0,
 	) {
 		this.x = x;
 		this.y = y;
 		this.heading = heading;
-		this.initialFloodLevel = floodLevel;
-		this.initialListAngle = listAngle;
-		this.size = size;
-		this.root = new THREE.Group();
+		const physics = VEHICLE_PHYSICS[vehicleType];
+		this.size = physics?.size ?? 10;
+		this.airborne = physics?.airborne ?? false;
+		this.onLand = vehicleType === "truck";
+		this.duration = sinkDuration(this.size);
+		this.startHeight = this.airborne ? getElevation(x, y) + 30 : 0;
+		this.initialDraft = floodLevel * this.size * 0.08;
+		this.initialList = listAngle;
+		this.trimDirection = entityId % 2 === 0 ? 1 : -1;
 
-		const halfLen = size * 0.4;
-		const halfBeam = size * 0.08;
-
-		// Hull outline (local forward=X, lateral=Y for Shape, rotated to XZ)
-		const outline: [number, number][] = [
-			[halfLen, 0],
-			[halfLen * 0.7, -halfBeam],
-			[-halfLen * 0.5, -halfBeam],
-			[-halfLen, -halfBeam * 0.5],
-			[-halfLen, halfBeam * 0.5],
-			[-halfLen * 0.5, halfBeam],
-			[halfLen * 0.7, halfBeam],
-		];
-
-		// ShapeGeometry for hull fill
-		const shape = new THREE.Shape();
-		shape.moveTo(outline[0][0], outline[0][1]);
-		for (let i = 1; i < outline.length; i++) {
-			shape.lineTo(outline[i][0], outline[i][1]);
-		}
-		const hullGeo = new THREE.ShapeGeometry(shape);
-		hullGeo.rotateX(-Math.PI / 2); // XY → XZ plane
-
-		this.hullMat = new THREE.MeshBasicMaterial({
-			color,
-			transparent: true,
-			opacity: 0.3,
-			side: THREE.DoubleSide,
-			depthWrite: false,
-		});
-		this.hullMesh = new THREE.Mesh(hullGeo, this.hullMat);
-		this.root.add(this.hullMesh);
-
-		// Stroke outline
-		const linePoints = outline.map(
-			([lx, ly]) => new THREE.Vector3(lx, 0.01, ly),
-		);
-		const lineGeo = new THREE.BufferGeometry().setFromPoints(linePoints);
-		this.strokeMat = new THREE.LineBasicMaterial({
-			color: 0x000000,
-			transparent: true,
-			opacity: 0.18,
-		});
-		this.strokeLine = new THREE.LineLoop(lineGeo, this.strokeMat);
-		this.root.add(this.strokeLine);
-
-		// Bubble Points
-		const positions = new Float32Array(MAX_BUBBLES * 3);
-		const alphas = new Float32Array(MAX_BUBBLES);
-		const sizes = new Float32Array(MAX_BUBBLES);
-
-		this.bubbleGeo = new THREE.BufferGeometry();
-		this.bubbleGeo.setAttribute(
-			"position",
-			new THREE.BufferAttribute(positions, 3),
-		);
-		this.bubbleGeo.setAttribute(
-			"aAlpha",
-			new THREE.BufferAttribute(alphas, 1),
-		);
-		this.bubbleGeo.setAttribute(
-			"aSize",
-			new THREE.BufferAttribute(sizes, 1),
-		);
-		this.bubbleGeo.setDrawRange(0, 0);
-
-		const bubbleMat = new THREE.ShaderMaterial({
-			vertexShader: BUBBLE_VERT,
-			fragmentShader: BUBBLE_FRAG,
-			transparent: true,
-			depthWrite: false,
-			glslVersion: THREE.GLSL3,
-		});
-
-		const bubblePoints = new THREE.Points(this.bubbleGeo, bubbleMat);
-		bubblePoints.frustumCulled = false;
-		this.root.add(bubblePoints);
-
-		// Set initial position and rotation
-		this.root.position.set(x, 0, y);
+		this.root = createVehicleObject(vehicleType, entityId).group;
+		this.root.scale.setScalar(this.size);
 		this.root.rotation.order = "YZX";
-		this.root.rotation.y = -heading;
+		this.place(0);
 	}
 
-	update(dt: number, zoom: number): void {
+	update(dt: number, _zoom: number): void {
 		this.age += dt;
-		if (this.age >= DURATION) {
+		if (this.age >= this.duration) {
 			this.alive = false;
 			return;
 		}
+		this.heading += dt * 0.03;
+		this.x += Math.cos(this.heading) * dt * this.size * 0.004;
+		this.y += Math.sin(this.heading) * dt * this.size * 0.004;
+		this.place(this.age / this.duration);
 
-		const t = this.age / DURATION;
-
-		// Slowly drift and rotate
-		this.heading += dt * 0.1;
-		this.x += Math.cos(this.heading) * dt * 0.5;
-		this.y += Math.sin(this.heading) * dt * 0.5;
-
-		// Sinking offset — continues from initial flood draft
-		const initialDraft = this.initialFloodLevel * this.size * 0.3;
-		const additionalSink = t * this.size * 0.3;
-		const sinkOffset = initialDraft + additionalSink;
-
-		// Bow tilt stacks on initial list angle
-		const bowRise = t * this.size * 0.1;
-		const halfLen = this.size * 0.4;
-		const tiltAngle = Math.asin(Math.min(bowRise / halfLen, 1));
-
-		this.root.position.set(this.x, -sinkOffset, this.y);
-		this.root.rotation.y = -this.heading;
-		this.root.rotation.x = this.initialListAngle * (1 - t); // list fades as ship sinks
-		this.root.rotation.z = tiltAngle;
-
-		// Hull opacity: (1-t) * 0.6 * 0.5 for fill, (1-t) * 0.6 * 0.3 for stroke
-		const alpha = (1 - t) * 0.6;
-		this.hullMat.opacity = alpha * 0.5;
-		this.strokeMat.opacity = alpha * 0.3;
-
-		// Emit bubbles
-		const bubbleRate = (1 - t) * 8;
-		this.bubbleAccum += bubbleRate * dt;
-		while (this.bubbleAccum >= 1 && this.bubbles.length < MAX_BUBBLES) {
-			this.bubbleAccum -= 1;
-			const cos = Math.cos(this.heading);
-			const sin = Math.sin(this.heading);
-			const ox = (Math.random() - 0.5) * this.size * 0.4;
-			const oy = (Math.random() - 0.5) * this.size * 0.2;
-			this.bubbles.push({
-				x: this.x + cos * ox - sin * oy,
-				y: this.y + sin * ox + cos * oy,
-				riseSpeed: 4 + Math.random() * 8,
-				radius: 1 + Math.random() * 2,
-				age: 0,
-			});
+		for (const p of [...this.puffs, ...this.bubbles]) {
+			p.age += dt;
+			p.y += p.rise * dt;
+			p.x += WIND.x * dt * (p.rise > 0 ? 1 : 0);
+			p.z += WIND.z * dt * (p.rise > 0 ? 1 : 0);
+			p.radius += this.size * 0.02 * dt;
 		}
+		this.prune(this.puffs);
+		this.prune(this.bubbles);
+		this.emit(dt);
+	}
 
-		// Update bubbles
+	drawParticles(particles: EffectParticles, zoom: number): void {
+		for (const p of this.puffs) {
+			const life = p.age / p.life;
+			const pixels = particleDiameterPixels(p.radius, zoom);
+			particles.smoke.push(
+				p.x,
+				p.y,
+				p.z,
+				pixels,
+				0.05,
+				0.048,
+				0.045,
+				(1 - life) * Math.min(1, p.age * 4) * 0.55,
+			);
+			if (p.age < 0.4) {
+				particles.glow.push(
+					p.x,
+					p.y - p.radius * 0.3,
+					p.z,
+					pixels * 0.5,
+					5,
+					1.6,
+					0.3,
+					(1 - p.age / 0.4) * 0.8,
+				);
+			}
+		}
 		for (const b of this.bubbles) {
-			b.age += dt;
-			b.x += (Math.random() - 0.5) * dt * 3;
+			const fade = 1 - b.age / b.life;
+			particles.spray.push(
+				b.x,
+				0.15,
+				b.z,
+				particleDiameterPixels(b.radius, zoom),
+				0.85,
+				0.92,
+				0.95,
+				fade * 0.5,
+			);
 		}
-		this.bubbles = this.bubbles.filter((b) => b.age < 1.5);
-
-		// Rebuild bubble buffers
-		const posAttr = this.bubbleGeo.attributes
-			.position as THREE.BufferAttribute;
-		const alphaAttr = this.bubbleGeo.attributes
-			.aAlpha as THREE.BufferAttribute;
-		const sizeAttr = this.bubbleGeo.attributes
-			.aSize as THREE.BufferAttribute;
-		const positions = posAttr.array as Float32Array;
-		const alphas = alphaAttr.array as Float32Array;
-		const sizes = sizeAttr.array as Float32Array;
-
-		const pixelScale = zoom * SQRT6;
-		let count = 0;
-
-		for (const b of this.bubbles) {
-			const bubbleAlpha = (1 - b.age / 1.5) * 0.3 * (1 - t);
-			if (bubbleAlpha < 0.01) continue;
-			const r = b.radius * pixelScale;
-			if (r < 0.3) continue;
-
-			const i3 = count * 3;
-			positions[i3] = b.x;
-			positions[i3 + 1] = b.riseSpeed * b.age; // float upward
-			positions[i3 + 2] = b.y;
-			alphas[count] = bubbleAlpha;
-			sizes[count] = r * 2;
-			count++;
-		}
-
-		this.bubbleGeo.setDrawRange(0, count);
-		posAttr.needsUpdate = true;
-		alphaAttr.needsUpdate = true;
-		sizeAttr.needsUpdate = true;
 	}
 
 	dispose(): void {
-		this.root.traverse((obj) => {
-			if (
-				obj instanceof THREE.Mesh ||
-				obj instanceof THREE.Line ||
-				obj instanceof THREE.Points
-			) {
-				obj.geometry.dispose();
-				if (obj.material instanceof THREE.Material) {
-					obj.material.dispose();
-				}
-			}
-		});
+		// Geometry and material are shared with live vehicles.
+	}
+
+	private place(t: number): void {
+		let height: number;
+		if (this.airborne) {
+			const fall = Math.min(this.age / FALL_TIME, 1);
+			height =
+				this.startHeight * (1 - fall * fall) -
+				Math.max(0, t - 0.3) * this.size * 0.6;
+		} else if (this.onLand) {
+			height = terrainSurfaceHeight(this.x, this.y) - t * this.size * 0.4;
+		} else {
+			// Slow at first as compartments flood, then the hull goes quickly.
+			height = -this.initialDraft - t ** 1.6 * this.size * 0.55;
+		}
+		this.root.position.set(this.x, height, this.y);
+		this.root.rotation.y = -this.heading;
+		this.root.rotation.z = this.trimDirection * Math.min(t * 1.4, 1) * 0.2;
+		this.root.rotation.x = this.initialList * (1 + t * 1.5);
+	}
+
+	private emit(dt: number): void {
+		const t = this.age / this.duration;
+		if (this.airborne && this.age < FALL_TIME) return;
+		const cos = Math.cos(this.heading);
+		const sin = Math.sin(this.heading);
+		const along = () => (Math.random() - 0.5) * this.size * 0.6;
+
+		// Burning while the deck is still above water.
+		this.puffAccum +=
+			(1 - t) * (this.onLand ? 6 : 10) * dt * (t < 0.65 ? 1 : 0);
+		while (this.puffAccum >= 1) {
+			this.puffAccum -= 1;
+			const offset = along();
+			this.puffs.push({
+				x: this.x + cos * offset,
+				y: Math.max(this.root.position.y + this.size * 0.12, 1),
+				z: this.y + sin * offset,
+				radius: this.size * (0.04 + Math.random() * 0.04),
+				age: 0,
+				life: 3 + Math.random() * 3,
+				rise: this.size * (0.12 + Math.random() * 0.1),
+			});
+		}
+
+		if (this.onLand) return;
+		this.bubbleAccum += (1 - t) * 14 * dt;
+		while (this.bubbleAccum >= 1) {
+			this.bubbleAccum -= 1;
+			const offset = along();
+			const lateral = (Math.random() - 0.5) * this.size * 0.2;
+			this.bubbles.push({
+				x: this.x + cos * offset - sin * lateral,
+				y: 0,
+				z: this.y + sin * offset + cos * lateral,
+				radius: this.size * (0.01 + Math.random() * 0.02),
+				age: 0,
+				life: 1 + Math.random(),
+				rise: 0,
+			});
+		}
+	}
+
+	private prune(list: Puff[]): void {
+		for (let i = list.length - 1; i >= 0; i--) {
+			if (list[i].age >= list[i].life) list.splice(i, 1);
+		}
 	}
 }
-
-// Bubble shaders (same circular point as stern churn but light blue)
-const BUBBLE_VERT = `
-#include <common>
-#include <logdepthbuf_pars_vertex>
-in float aAlpha;
-in float aSize;
-out float vAlpha;
-void main() {
-    vAlpha = aAlpha;
-    gl_PointSize = aSize;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-    #include <logdepthbuf_vertex>
-}
-`;
-
-const BUBBLE_FRAG = `
-#include <logdepthbuf_pars_fragment>
-in float vAlpha;
-out vec4 fragColor;
-void main() {
-    vec2 c = gl_PointCoord - 0.5;
-    if (dot(c, c) > 0.25) discard;
-    fragColor = vec4(0.667, 0.867, 1.0, vAlpha);
-    #include <logdepthbuf_fragment>
-}
-`;
