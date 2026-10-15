@@ -1,24 +1,28 @@
 /**
  * Three.js vehicle renderer with object pooling.
  *
- * Maintains a pool of Three.js Groups keyed by entity ID. Each frame,
- * existing groups are repositioned and new ones are created on demand.
+ * Maintains a pool of vehicle objects keyed by entity ID. Each frame,
+ * existing objects are repositioned and new ones are created on demand.
  * The depth buffer handles isometric sorting — no manual sort needed.
  *
- * Coordinate mapping: game (x, y) → Three.js (x, elevation, y).
- * Heading rotation around Y axis, terrain pitch around local lateral axis.
+ * Ships ride the sea surface with a gentle roll and pitch; trucks follow
+ * the rendered terrain; drones fly at a fixed altitude. Vehicles wear
+ * realistic paint, so faction is shown by an IFF ring beneath each one
+ * that keeps a minimum on-screen size when zoomed out.
+ *
+ * Coordinate mapping: game (x, y) → Three.js (x, height, y).
  */
 
-import * as THREE from "three";
+import { uniform } from "three/tsl";
+import * as THREE from "three/webgpu";
 import type { EntityState } from "../game/entities";
 import { DETECTION_RANGE, VEHICLE_PHYSICS } from "../generated/vehicles";
 import { getElevation, getSlopeAlongHeading } from "../map/heightmap";
 import type { VehicleType } from "../vehicles/physics";
-import {
-	createVehicleMesh,
-	disposeVehicleMesh,
-	setVehicleColor,
-} from "./vehicle-meshes";
+import { lightingUniforms } from "./environment";
+import { ParticleBatch } from "./particles";
+import { terrainSurfaceHeight } from "./terrain-surface";
+import { type VehicleObject, createVehicleObject } from "./vehicle-meshes";
 
 // ---------------------------------------------------------------------------
 // Coalition radar detection — derived from YAML
@@ -59,14 +63,29 @@ const VEHICLE_INFO: Record<string, { size: number; airborne: boolean }> =
 
 const DEFAULT_INFO = { size: 10, airborne: false };
 
+const AIRBORNE_ALTITUDE = 30;
+
+/** Ship motion in a light Gulf sea: roll amplitude (radians) at size 1, scaled down for big hulls. */
+const ROLL_AMPLITUDE = 0.05;
+/** Bow-up trim of a planing speedboat at full speed (radians). */
+const PLANING_TRIM = 0.07;
+
+/** IFF ring: never smaller than this many pixels across when zoomed out. */
+const IFF_MIN_RADIUS_PX = 7;
+const IFF_Y = 0.35;
+
+/** Lamp sprite size range in pixels. */
+const LAMP_MIN_PX = 2.5;
+const LAMP_MAX_PX = 9;
+const LAMP_INTENSITY = 6;
+
 // ---------------------------------------------------------------------------
 // Pool entry
 // ---------------------------------------------------------------------------
 
-interface VehicleEntry {
-	group: THREE.Group;
+interface VehicleEntry extends VehicleObject {
 	vehicleType: string;
-	currentColor: number;
+	ring: THREE.Mesh;
 }
 
 // Two-tier detection: "direct" = own radar (red), "shared" = coalition intel (pink)
@@ -76,6 +95,9 @@ interface DetectionEntry {
 	obj: THREE.Object3D;
 	tier: DetectionTier;
 }
+
+const _lamp = new THREE.Vector3();
+const _lampColor = new THREE.Color();
 
 // ---------------------------------------------------------------------------
 // Renderer
@@ -89,9 +111,17 @@ export class ThreeVehicleRenderer {
 	private directDetectionMat: THREE.MeshBasicMaterial;
 	private sharedDetectionGroup: THREE.Group;
 	private sharedDetectionMat: THREE.MeshBasicMaterial;
+	private ringGeometry: THREE.RingGeometry;
+	private ringMaterial: THREE.MeshBasicNodeMaterial;
+	private lamps = new ParticleBatch(4096, {
+		shape: "glow",
+		additive: true,
+		renderOrder: 7,
+	});
 
 	constructor() {
 		this.root = new THREE.Group();
+		this.root.add(this.lamps.object);
 
 		// Solid red ring — own radar detection
 		this.directDetectionGeo = new THREE.RingGeometry(
@@ -136,22 +166,43 @@ export class ThreeVehicleRenderer {
 			const seg = new THREE.Mesh(segGeo, this.sharedDetectionMat);
 			this.sharedDetectionGroup.add(seg);
 		}
+
+		// IFF rings: one material, colour and opacity per ring object.
+		this.ringGeometry = new THREE.RingGeometry(0.84, 1, 48);
+		this.ringGeometry.rotateX(-Math.PI / 2);
+		this.ringMaterial = new THREE.MeshBasicNodeMaterial({
+			transparent: true,
+			depthWrite: false,
+			side: THREE.DoubleSide,
+		});
+		// Rings are UI, so unlit — but toned down at night so they don't glare.
+		this.ringMaterial.colorNode = uniform(new THREE.Color())
+			.onObjectUpdate(({ object }) => object?.userData.ringColor as THREE.Color)
+			.mul(lightingUniforms.daylight.mul(0.45).add(0.55));
+		this.ringMaterial.opacityNode = uniform(1).onObjectUpdate(
+			({ object }) => object?.userData.ringOpacity as number,
+		);
 	}
 
 	/**
 	 * Update all vehicle meshes for this frame.
 	 *
-	 * Creates new mesh groups for entities entering the scene,
-	 * updates position/rotation/color for existing ones,
-	 * and removes groups for entities that are dead or gone.
+	 * Creates new objects for entities entering the scene,
+	 * updates position/rotation/IFF ring for existing ones,
+	 * and removes objects for entities that are dead or gone.
+	 * `zoom` is screen pixels per world unit (for IFF and lamp sizing).
 	 */
 	update(
 		entities: EntityState[],
 		assignedEntityId: number | null,
 		assignedVehicleType: string,
 		factionColors: Record<string, number>,
+		zoom: number,
 	): void {
 		const activeIds = new Set<number>();
+		const time = performance.now() / 1000;
+		const nightLights = lightingUniforms.artificialLights.value;
+		this.lamps.clear();
 
 		// Detection rings: frigate players see both tiers, tanker players see own radar only
 		const showDirectRings =
@@ -169,9 +220,17 @@ export class ThreeVehicleRenderer {
 					DETECTION_RANGE_SQ[e.vehicleType] != null
 				) {
 					if (e.id === assignedEntityId) {
-						directObservers.push({ x: e.x, y: e.y, vehicleType: e.vehicleType });
+						directObservers.push({
+							x: e.x,
+							y: e.y,
+							vehicleType: e.vehicleType,
+						});
 					} else {
-						sharedObservers.push({ x: e.x, y: e.y, vehicleType: e.vehicleType });
+						sharedObservers.push({
+							x: e.x,
+							y: e.y,
+							vehicleType: e.vehicleType,
+						});
 					}
 				}
 			}
@@ -186,56 +245,96 @@ export class ThreeVehicleRenderer {
 
 			let entry = this.pool.get(e.id);
 			if (!entry) {
-				const group = createVehicleMesh(e.vehicleType as VehicleType);
-				this.root.add(group);
-				entry = { group, vehicleType: e.vehicleType, currentColor: -1 };
+				const object = createVehicleObject(e.vehicleType as VehicleType, e.id);
+				const ring = new THREE.Mesh(this.ringGeometry, this.ringMaterial);
+				ring.userData.ringColor = new THREE.Color();
+				ring.renderOrder = 4;
+				this.root.add(object.group, ring);
+				entry = { ...object, vehicleType: e.vehicleType, ring };
 				this.pool.set(e.id, entry);
 			}
 
 			const info = VEHICLE_INFO[e.vehicleType] ?? DEFAULT_INFO;
+			const group = entry.group;
+			const phase = e.id * 1.618;
 
-			// Terrain elevation and pitch
-			let elevation = getElevation(e.x, e.y);
-			let pitchSlope = getSlopeAlongHeading(e.x, e.y, e.heading);
+			// Height and trim: sea surface, rendered terrain, or flight altitude
+			let height: number;
+			let pitch = 0;
+			let roll = e.listAngle ?? 0;
 			if (info.airborne) {
-				elevation += 30;
-				pitchSlope = 0;
-			}
-
-			// Flooding: ship rides lower as it takes on water
-			const floodLevel = e.floodLevel ?? 0;
-			const draftOffset = floodLevel * info.size * 0.08;
-
-			// Position: game (x, y) → Three.js (x, elevation, y)
-			entry.group.position.set(e.x, elevation - draftOffset, e.y);
-
-			// Scale by vehicle size (model coords are fractions of size)
-			entry.group.scale.setScalar(info.size);
-
-			// Rotation: heading (yaw), pitch (terrain slope), roll (list from flooding)
-			entry.group.rotation.order = "YZX";
-			entry.group.rotation.y = -e.heading;
-			entry.group.rotation.z = pitchSlope;
-			entry.group.rotation.x = e.listAngle ?? 0;
-
-			// Update faction color only when it changes
-			const color =
-				e.id === assignedEntityId
-					? 0xffffff
-					: (factionColors[e.faction] ?? 0xcccccc);
-			if (color !== entry.currentColor) {
-				setVehicleColor(entry.group, color);
-				entry.currentColor = color;
-			}
-
-			// Quadcopter front light blink
-			if (e.vehicleType === "quadcopter") {
-				const light = entry.group.userData.frontLight as THREE.Mesh | undefined;
-				if (light) {
-					const t = performance.now() / 1000;
-					(light.material as THREE.MeshBasicMaterial).opacity =
-						Math.sin(t * 8) > 0 ? 0.9 : 0.05;
+				height = getElevation(e.x, e.y) + AIRBORNE_ALTITUDE;
+			} else if (e.vehicleType === "truck") {
+				height = terrainSurfaceHeight(e.x, e.y);
+				pitch = getSlopeAlongHeading(e.x, e.y, e.heading);
+			} else {
+				// Flooding: ship rides lower as it takes on water
+				const floodLevel = e.floodLevel ?? 0;
+				const swell = 1 / Math.sqrt(info.size);
+				height =
+					-floodLevel * info.size * 0.08 +
+					Math.sin(time * 0.9 + phase) * info.size * 0.003;
+				roll += Math.sin(time * 0.7 + phase) * ROLL_AMPLITUDE * swell;
+				pitch =
+					Math.sin(time * 0.55 + phase * 0.7) * ROLL_AMPLITUDE * 0.4 * swell;
+				if (e.vehicleType === "speedboat") {
+					pitch += Math.min(Math.abs(e.speed) / 40, 1) * PLANING_TRIM;
 				}
+			}
+
+			group.position.set(e.x, height, e.y);
+			group.scale.setScalar(info.size);
+			group.rotation.order = "YZX";
+			group.rotation.y = -e.heading;
+			group.rotation.z = pitch;
+			group.rotation.x = roll;
+			group.updateMatrixWorld();
+
+			for (const spinner of entry.spinners) spinner.rotation.y = time * 70;
+
+			// IFF ring: faction colour (white for the player), fades as the ship grows on screen
+			const isPlayer = e.id === assignedEntityId;
+			const screenLength = info.size * zoom;
+			const ring = entry.ring;
+			(ring.userData.ringColor as THREE.Color).set(
+				isPlayer ? 0xffffff : (factionColors[e.faction] ?? 0xcccccc),
+			);
+			// Once the vehicle itself is readable on screen the ring gets out of the way.
+			const fade = THREE.MathUtils.smoothstep(screenLength, 24, 120);
+			ring.userData.ringOpacity = isPlayer
+				? 0.95 - fade * 0.65
+				: 0.85 * (1 - fade);
+			ring.visible = ring.userData.ringOpacity > 0.01;
+			ring.scale.setScalar(Math.max(info.size * 0.6, IFF_MIN_RADIUS_PX / zoom));
+			ring.position.set(
+				e.x,
+				(info.airborne ? height : Math.max(height, 0)) + IFF_Y,
+				e.y,
+			);
+
+			// Navigation lights, drone strobes, headlights
+			for (const lamp of entry.lamps) {
+				const lit = lamp.always ? 1 : nightLights;
+				const on = lamp.blink ? (Math.sin(time * 8 + phase) > 0.6 ? 1 : 0) : 1;
+				const alpha = lit * on;
+				if (alpha < 0.02) continue;
+				_lamp.set(...lamp.position).applyMatrix4(group.matrixWorld);
+				_lampColor.set(lamp.color);
+				const size = THREE.MathUtils.clamp(
+					info.size * zoom * 0.05,
+					LAMP_MIN_PX,
+					LAMP_MAX_PX,
+				);
+				this.lamps.push(
+					_lamp.x,
+					_lamp.y,
+					_lamp.z,
+					size,
+					_lampColor.r * LAMP_INTENSITY,
+					_lampColor.g * LAMP_INTENSITY,
+					_lampColor.b * LAMP_INTENSITY,
+					alpha,
+				);
 			}
 
 			// Two-tier radar detection for enemy entities
@@ -243,7 +342,8 @@ export class ThreeVehicleRenderer {
 				// Direct detection: player's own vessel type radar
 				if (showDirectRings) {
 					for (const obs of directObservers) {
-						const rangeSq = DETECTION_RANGE_SQ[obs.vehicleType]?.[e.vehicleType];
+						const rangeSq =
+							DETECTION_RANGE_SQ[obs.vehicleType]?.[e.vehicleType];
 						if (rangeSq === undefined) continue;
 						const dx = obs.x - e.x;
 						const dy = obs.y - e.y;
@@ -256,7 +356,8 @@ export class ThreeVehicleRenderer {
 				// Shared detection: other coalition vessel types (only if not already direct)
 				if (showSharedRings && !detectionTiers.has(e.id)) {
 					for (const obs of sharedObservers) {
-						const rangeSq = DETECTION_RANGE_SQ[obs.vehicleType]?.[e.vehicleType];
+						const rangeSq =
+							DETECTION_RANGE_SQ[obs.vehicleType]?.[e.vehicleType];
 						if (rangeSq === undefined) continue;
 						const dx = obs.x - e.x;
 						const dy = obs.y - e.y;
@@ -268,12 +369,15 @@ export class ThreeVehicleRenderer {
 				}
 			}
 		}
+		this.lamps.commit();
 
 		// Update detection indicator rings (two-tier: red=direct, pink=shared)
 		for (const e of entities) {
 			if (
 				e.hp <= 0 ||
-				(e.vehicleType !== "shahed" && e.vehicleType !== "quadcopter" && e.vehicleType !== "speedboat")
+				(e.vehicleType !== "shahed" &&
+					e.vehicleType !== "quadcopter" &&
+					e.vehicleType !== "speedboat")
 			)
 				continue;
 
@@ -287,7 +391,10 @@ export class ThreeVehicleRenderer {
 					}
 					let obj: THREE.Object3D;
 					if (tier === "direct") {
-						obj = new THREE.Mesh(this.directDetectionGeo, this.directDetectionMat);
+						obj = new THREE.Mesh(
+							this.directDetectionGeo,
+							this.directDetectionMat,
+						);
 					} else {
 						obj = this.sharedDetectionGroup.clone();
 					}
@@ -310,8 +417,7 @@ export class ThreeVehicleRenderer {
 		// Remove entities no longer alive
 		for (const [id, entry] of this.pool) {
 			if (!activeIds.has(id)) {
-				this.root.remove(entry.group);
-				disposeVehicleMesh(entry.group);
+				this.root.remove(entry.group, entry.ring);
 				this.pool.delete(id);
 			}
 		}
@@ -326,16 +432,13 @@ export class ThreeVehicleRenderer {
 
 	/** Get the CIWS turret group for a frigate entity (null if not a frigate or not pooled). */
 	getCiwsTurret(entityId: number): THREE.Group | null {
-		const entry = this.pool.get(entityId);
-		if (!entry) return null;
-		return (entry.group.userData.ciwsTurret as THREE.Group) ?? null;
+		return this.pool.get(entityId)?.ciwsTurret ?? null;
 	}
 
-	/** Clean up all GPU resources. */
+	/** Clean up GPU resources owned by the renderer (vehicle geometry is shared and cached). */
 	dispose(): void {
 		for (const [, entry] of this.pool) {
-			this.root.remove(entry.group);
-			disposeVehicleMesh(entry.group);
+			this.root.remove(entry.group, entry.ring);
 		}
 		this.pool.clear();
 		for (const [, det] of this.detectionIndicators) {
@@ -348,5 +451,8 @@ export class ThreeVehicleRenderer {
 			(child as THREE.Mesh).geometry.dispose();
 		}
 		this.sharedDetectionMat.dispose();
+		this.ringGeometry.dispose();
+		this.ringMaterial.dispose();
+		this.lamps.dispose();
 	}
 }

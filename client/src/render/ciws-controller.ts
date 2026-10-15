@@ -10,11 +10,15 @@
  * for actual damage.
  */
 
-import * as THREE from "three";
+import * as THREE from "three/webgpu";
 import type { EntityState } from "../game/entities";
-import { AUTOCANNON, DETECTION_RANGE } from "../generated/vehicles";
-import { getElevation } from "../map/heightmap";
-import { CIWS_MUZZLE_OFFSET, CIWS_TURRET_POS } from "./vehicle-meshes";
+import {
+	AUTOCANNON,
+	DETECTION_RANGE,
+	VEHICLE_PHYSICS,
+} from "../generated/vehicles";
+import { ParticleBatch } from "./particles";
+import { CIWS_MUZZLE_OFFSET, CIWS_TURRET_POS } from "./vehicle-models";
 
 // ---------------------------------------------------------------------------
 // Tunable parameters (exposed for playground GUI)
@@ -54,7 +58,7 @@ type CiwsParams = typeof CIWS_PARAMS;
 // Constants
 // ---------------------------------------------------------------------------
 
-const FRIGATE_SIZE = 100;
+const FRIGATE_SIZE = VEHICLE_PHYSICS.frigate.size;
 const MAX_TRACERS = 512;
 const SQRT6 = Math.sqrt(6);
 
@@ -104,43 +108,6 @@ function angleDiff(from: number, to: number): number {
 }
 
 // ---------------------------------------------------------------------------
-// Shaders
-// ---------------------------------------------------------------------------
-
-const TRACER_VERT = `
-#include <common>
-#include <logdepthbuf_pars_vertex>
-in float aAlpha;
-in float aSize;
-out float vAlpha;
-void main() {
-    vAlpha = aAlpha;
-    gl_PointSize = aSize;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-    #include <logdepthbuf_vertex>
-}
-`;
-
-const TRACER_FRAG = `
-#include <logdepthbuf_pars_fragment>
-in float vAlpha;
-out vec4 fragColor;
-void main() {
-    vec2 c = gl_PointCoord - 0.5;
-    float d = length(c) * 2.0;
-    if (d > 1.0) discard;
-    // Bright core with soft glow
-    float core = smoothstep(0.4, 0.0, d);
-    float glow = (1.0 - d * d) * 0.4;
-    float brightness = core + glow;
-    // Yellow-orange tracer colour
-    vec3 color = mix(vec3(1.0, 0.55, 0.0), vec3(1.0, 1.0, 0.8), core);
-    fragColor = vec4(color, vAlpha * brightness);
-    #include <logdepthbuf_fragment>
-}
-`;
-
-// ---------------------------------------------------------------------------
 // Controller
 // ---------------------------------------------------------------------------
 
@@ -151,40 +118,16 @@ export class CiwsController {
 	private states = new Map<number, CiwsState>();
 	private tracers: Tracer[] = [];
 
-	// GPU buffers
-	private tracerGeo: THREE.BufferGeometry;
-	private tracerMat: THREE.ShaderMaterial;
-	private tracerPoints: THREE.Points;
+	private particles = new ParticleBatch(MAX_TRACERS, {
+		shape: "glow",
+		additive: true,
+		renderOrder: 9,
+	});
 
 	constructor(params?: CiwsParams) {
 		this.params = params ?? CIWS_PARAMS;
 		this.root = new THREE.Group();
-
-		// Tracer Points geometry
-		const positions = new Float32Array(MAX_TRACERS * 3);
-		const alphas = new Float32Array(MAX_TRACERS);
-		const sizes = new Float32Array(MAX_TRACERS);
-
-		this.tracerGeo = new THREE.BufferGeometry();
-		this.tracerGeo.setAttribute(
-			"position",
-			new THREE.BufferAttribute(positions, 3),
-		);
-		this.tracerGeo.setAttribute("aAlpha", new THREE.BufferAttribute(alphas, 1));
-		this.tracerGeo.setAttribute("aSize", new THREE.BufferAttribute(sizes, 1));
-		this.tracerGeo.setDrawRange(0, 0);
-
-		this.tracerMat = new THREE.ShaderMaterial({
-			vertexShader: TRACER_VERT,
-			fragmentShader: TRACER_FRAG,
-			transparent: true,
-			depthWrite: false,
-			glslVersion: THREE.GLSL3,
-		});
-
-		this.tracerPoints = new THREE.Points(this.tracerGeo, this.tracerMat);
-		this.tracerPoints.frustumCulled = false;
-		this.root.add(this.tracerPoints);
+		this.root.add(this.particles.object);
 	}
 
 	/**
@@ -249,8 +192,7 @@ export class CiwsController {
 					const dy = t.y - f.y;
 					const distSq = dx * dx + dy * dy;
 					const radarSq = RADAR_RANGE_SQ[t.vehicleType] ?? 0;
-					if (distSq > rangeSq || distSq > radarSq)
-						state.targetId = null;
+					if (distSq > rangeSq || distSq > radarSq) state.targetId = null;
 				}
 			}
 
@@ -361,8 +303,8 @@ export class CiwsController {
 			turretY +
 			(CIWS_MUZZLE_OFFSET.x * sinT + CIWS_MUZZLE_OFFSET.z * cosT) *
 				FRIGATE_SIZE;
+		// Frigates ride the sea surface (y = 0).
 		const muzzleHeight =
-			getElevation(frigate.x, frigate.y) +
 			(CIWS_TURRET_POS.y + CIWS_MUZZLE_OFFSET.y) * FRIGATE_SIZE;
 
 		// Aim angle with random spread
@@ -411,18 +353,8 @@ export class CiwsController {
 		}
 		this.tracers = this.tracers.filter((t) => t.age < t.maxAge);
 
-		// Write to GPU buffers
-		const posAttr = this.tracerGeo.attributes.position as THREE.BufferAttribute;
-		const alphaAttr = this.tracerGeo.attributes.aAlpha as THREE.BufferAttribute;
-		const sizeAttr = this.tracerGeo.attributes.aSize as THREE.BufferAttribute;
-		const positions = posAttr.array as Float32Array;
-		const alphas = alphaAttr.array as Float32Array;
-		const sizes = sizeAttr.array as Float32Array;
-
-		let count = 0;
+		this.particles.clear();
 		for (const t of this.tracers) {
-			if (count >= MAX_TRACERS) break;
-
 			const life = t.age / t.maxAge;
 			let alpha: number;
 			let size: number;
@@ -440,23 +372,23 @@ export class CiwsController {
 
 			if (alpha < 0.01 || size < 0.3) continue;
 
-			const i3 = count * 3;
-			positions[i3] = t.x;
-			positions[i3 + 1] = t.height;
-			positions[i3 + 2] = t.y;
-			alphas[count] = alpha;
-			sizes[count] = size;
-			count++;
+			// HDR yellow-orange so tracers and flashes bloom.
+			const heat = t.isMuzzleFlash ? 2 : 1;
+			this.particles.push(
+				t.x,
+				t.height,
+				t.y,
+				size,
+				3.6 * heat,
+				1.7 * heat,
+				0.35 * heat,
+				alpha,
+			);
 		}
-
-		this.tracerGeo.setDrawRange(0, count);
-		posAttr.needsUpdate = true;
-		alphaAttr.needsUpdate = true;
-		sizeAttr.needsUpdate = true;
+		this.particles.commit();
 	}
 
 	dispose(): void {
-		this.tracerGeo.dispose();
-		this.tracerMat.dispose();
+		this.particles.dispose();
 	}
 }

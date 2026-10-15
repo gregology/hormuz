@@ -5,7 +5,6 @@ import {
 	HEIGHTMAP_HEIGHT,
 	HEIGHTMAP_WIDTH,
 	getElevation,
-	getHillshade,
 	getRawElevation,
 	getSlopeAlongHeading,
 	getTerrainGradient,
@@ -140,37 +139,5 @@ describe("getSlopeAlongHeading", () => {
 	it("returns zero on flat terrain", () => {
 		const slope = getSlopeAlongHeading(75000, 44000, 0);
 		expect(Math.abs(slope)).toBeLessThan(0.01);
-	});
-});
-
-// ---------------------------------------------------------------------------
-// Hillshade
-// ---------------------------------------------------------------------------
-
-describe("getHillshade", () => {
-	it("returns -1 for ocean cells", () => {
-		// Find an ocean cell (elevation 0)
-		// Strait center at roughly col=150, row=88 (75000/500, 44000/500)
-		const col = Math.round(75000 / HEIGHTMAP_CELL_SIZE);
-		const row = Math.round(44000 / HEIGHTMAP_CELL_SIZE);
-		expect(getHillshade(col, row)).toBe(-1);
-	});
-
-	it("returns value in [0, 1] for land cells", () => {
-		// Interior Iran
-		const col = Math.round(75000 / HEIGHTMAP_CELL_SIZE);
-		const row = Math.round(38000 / HEIGHTMAP_CELL_SIZE);
-		const shade = getHillshade(col, row);
-		if (shade !== -1) {
-			expect(shade).toBeGreaterThanOrEqual(0);
-			expect(shade).toBeLessThanOrEqual(1);
-		}
-	});
-
-	it("returns -1 for out-of-bounds", () => {
-		expect(getHillshade(-1, 0)).toBe(-1);
-		expect(getHillshade(0, -1)).toBe(-1);
-		expect(getHillshade(HEIGHTMAP_WIDTH, 0)).toBe(-1);
-		expect(getHillshade(0, HEIGHTMAP_HEIGHT)).toBe(-1);
 	});
 });

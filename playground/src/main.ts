@@ -1,5 +1,5 @@
 import GUI, { type Controller } from "lil-gui";
-import * as THREE from "three";
+import * as THREE from "three/webgpu";
 import { buildClientGameData } from "../../client/src/ai/game-data";
 import {
 	type AIBotState,
@@ -33,6 +33,11 @@ import {
 	ThreeMapRenderer,
 } from "../../client/src/render/map-renderer";
 import { ThreeScene } from "../../client/src/render/scene";
+import {
+	atStraitHour,
+	formatStraitTime,
+	straitSolarPosition,
+} from "../../client/src/render/solar";
 import { ThreeVehicleRenderer } from "../../client/src/render/vehicle-renderer";
 import {
 	COLLISION_POLYGONS,
@@ -138,12 +143,12 @@ function headingBetween(
 	return Math.atan2(b[1] - a[1], b[0] - a[0]);
 }
 
-function init() {
+async function init() {
 	const screenW = window.innerWidth;
 	const screenH = window.innerHeight;
 
-	// ---- Three.js scene ----
-	const threeScene = new ThreeScene();
+	// ---- Three.js scene (WebGPU, falling back to WebGL2) ----
+	const threeScene = await ThreeScene.create();
 	threeScene.setSize(screenW, screenH);
 	document.body.appendChild(threeScene.renderer.domElement);
 
@@ -153,7 +158,10 @@ function init() {
 
 	// ---- Map (Three.js) ----
 	const layers: MapLayers = { ...DEFAULT_LAYERS };
-	const threeMap = new ThreeMapRenderer(layers);
+	const threeMap = new ThreeMapRenderer(
+		layers,
+		threeScene.environment.reflections,
+	);
 	threeScene.scene.add(threeMap.root);
 
 	// ---- Vehicles (Three.js) ----
@@ -169,13 +177,7 @@ function init() {
 	threeScene.scene.add(ciwsController.root);
 
 	// ---- Perspective camera (for first/third-person views) ----
-	const perspCamera = new THREE.PerspectiveCamera(
-		60,
-		screenW / screenH,
-		1,
-		100000,
-	);
-	threeScene.scene.add(perspCamera);
+	const perspCamera = threeScene.perspCamera;
 
 	// ---- Collision debug wireframes ----
 	const MAX_COLLISION_VERTS = 4096;
@@ -418,7 +420,6 @@ function init() {
 	let lastMouseY = 0;
 	let mouseScreenX = 0;
 	let mouseScreenY = 0;
-	let elapsedTime = 0;
 
 	// Stepped throttle for ships (-10 to +10)
 	let throttleLevel = 0;
@@ -456,6 +457,14 @@ function init() {
 		timeScale: 1.0,
 		paused: false,
 		showCollisionPolygons: true,
+	};
+
+	const timeOfDay = {
+		followRealTime: true,
+		/** Strait local hour (GST) used when not following real time. */
+		hour: 16.5,
+		clock: "",
+		sunElevation: 0,
 	};
 
 	// ---- Dev panel ----
@@ -928,6 +937,23 @@ function init() {
 	presetsFolder.add(presets, "Strait");
 	presetsFolder.add(presets, "Follow Vehicle");
 
+	// Time of day (lighting follows the strait's local time unless overridden)
+	const timeFolder = gui.addFolder("Time of Day");
+	timeFolder.add(timeOfDay, "followRealTime").name("Real strait time");
+	timeFolder
+		.add(timeOfDay, "hour", 0, 24, 0.05)
+		.name("Hour (GST)")
+		.onChange(() => {
+			timeOfDay.followRealTime = false;
+		})
+		.listen();
+	timeFolder.add(timeOfDay, "clock").name("Clock").listen().disable();
+	timeFolder
+		.add(timeOfDay, "sunElevation")
+		.name("Sun elevation°")
+		.listen()
+		.disable();
+
 	// Layers
 	const layersFolder = gui.addFolder("Layers");
 	const onLayerChange = () => threeMap.setLayers(layers);
@@ -1146,8 +1172,6 @@ function init() {
 		cam.screenWidth = w;
 		cam.screenHeight = h;
 		threeScene.setSize(w, h);
-		perspCamera.aspect = w / h;
-		perspCamera.updateProjectionMatrix();
 	});
 
 	// ---- Render loop ----
@@ -1156,7 +1180,9 @@ function init() {
 	function frame(now: number) {
 		requestAnimationFrame(frame);
 
-		const rawDt = (now - lastTime) / 1000;
+		// Clamp so a long frame (e.g. a shader-compile hitch) can't destabilise the
+		// camera follow (gain × dt > 2 diverges) or tunnel vehicles through land.
+		const rawDt = Math.min((now - lastTime) / 1000, 0.1);
 		lastTime = now;
 		const dt = simSettings.paused ? 0 : rawDt * simSettings.timeScale;
 
@@ -1366,21 +1392,37 @@ function init() {
 		}
 
 		// -- Update Three.js renderers --
-		elapsedTime += rawDt;
-		threeMap.update(elapsedTime, cam.zoom);
+		const lightingTime = timeOfDay.followRealTime
+			? new Date()
+			: atStraitHour(new Date(), timeOfDay.hour);
+		threeScene.environment.setTime(lightingTime);
+		timeOfDay.clock = formatStraitTime(lightingTime);
+		timeOfDay.sunElevation = Math.round(
+			straitSolarPosition(lightingTime).elevation,
+		);
+		// In perspective modes, use the ortho zoom that shows the followed
+		// vehicle at the same size, so pixel-sized effects and IFF rings match.
+		let effectZoom = cam.zoom;
+		if (mode.cameraMode !== "isometric" && pv) {
+			const distance = pv.vehicle.size * perspSettings.tpDistance;
+			const halfFov = (perspCamera.fov * Math.PI) / 360;
+			effectZoom =
+				cam.screenWidth / (Math.sqrt(6) * 2 * distance * Math.tan(halfFov));
+		}
 		threeVehicles.update(
 			entityStates,
 			activeId === -1 ? null : activeId,
 			pv?.vehicle.vehicleType ?? "",
 			FACTION_COLORS,
+			effectZoom,
 		);
 		ciwsController.update(
 			entityStates,
 			(id) => threeVehicles.getCiwsTurret(id),
 			dt,
-			cam.zoom,
+			effectZoom,
 		);
-		threeEffects.update(entityStates, dt, cam.zoom);
+		threeEffects.update(entityStates, dt, effectZoom);
 
 		// -- Collision debug wireframes --
 		let vertexCount = 0;
@@ -1430,7 +1472,7 @@ function init() {
 			);
 			threeScene.render();
 		} else {
-			threeScene.renderer.render(threeScene.scene, perspCamera);
+			threeScene.renderPerspective();
 		}
 
 		// -- HUD --
@@ -1513,4 +1555,4 @@ function init() {
 	);
 }
 
-init();
+void init();

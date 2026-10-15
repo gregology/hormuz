@@ -13,7 +13,16 @@
  * center foam + left/right Kelvin V-spread.
  */
 
-import * as THREE from "three";
+import {
+	attribute,
+	float,
+	mx_noise_float,
+	positionWorld,
+	smoothstep,
+	time,
+	vec3,
+} from "three/tsl";
+import * as THREE from "three/webgpu";
 
 // --- Tuning constants ---
 
@@ -28,7 +37,7 @@ const MAX_AGE = 120.0;
 const EMIT_INTERVAL = 0.25;
 
 /** Height above water to avoid z-fighting with water surface. */
-const WATER_Y = 0.05;
+const WATER_Y = 0.08;
 
 const SQRT6 = Math.sqrt(6);
 
@@ -39,30 +48,10 @@ const MAX_SEGMENT_DIST = 500;
 // 3 ribbons per segment, 6 vertices (2 triangles) per ribbon segment
 const MAX_VERTICES = 3 * MAX_WAKE_POINTS * 6;
 
-// --- Shaders (identical to old wake-trail.ts) ---
-
-const WAKE_VERT = `
-#include <common>
-#include <logdepthbuf_pars_vertex>
-in float aAlpha;
-out float vAlpha;
-void main() {
-    vAlpha = aAlpha;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-    #include <logdepthbuf_vertex>
-}
-`;
-
-const WAKE_FRAG = `
-#include <logdepthbuf_pars_fragment>
-in float vAlpha;
-out vec4 fragColor;
-void main() {
-    if (vAlpha < 0.002) discard;
-    fragColor = vec4(1.0, 1.0, 1.0, vAlpha);
-    #include <logdepthbuf_fragment>
-}
-`;
+/** Kelvin wake: arms spread at tan(19.5°) of the distance travelled. */
+const KELVIN_SPREAD = 0.35;
+/** Kelvin arms vanish over the first (1 - ARM_FADE) of a wake point's life. */
+const ARM_FADE = 0.75;
 
 export class WakeSystem {
 	readonly root: THREE.Mesh;
@@ -72,6 +61,7 @@ export class WakeSystem {
 	private readonly pz = new Float32Array(MAX_WAKE_POINTS);
 	private readonly pHeading = new Float32Array(MAX_WAKE_POINTS);
 	private readonly pSpeed = new Float32Array(MAX_WAKE_POINTS);
+	private readonly pSize = new Float32Array(MAX_WAKE_POINTS);
 	private readonly pBirth = new Float32Array(MAX_WAKE_POINTS);
 	private readonly pPrev = new Int32Array(MAX_WAKE_POINTS).fill(-1);
 
@@ -97,16 +87,30 @@ export class WakeSystem {
 			new THREE.BufferAttribute(positions, 3),
 		);
 		this.geometry.setAttribute("aAlpha", new THREE.BufferAttribute(alphas, 1));
+		// Which edge of its ribbon each vertex is on (fixed vertex order in buildSegment).
+		const edges = new Float32Array(MAX_VERTICES);
+		for (let i = 0; i < MAX_VERTICES; i++) edges[i] = i % 2 === 0 ? 1 : -1;
+		this.geometry.setAttribute("aEdge", new THREE.BufferAttribute(edges, 1));
 		this.geometry.setDrawRange(0, 0);
 
-		const material = new THREE.ShaderMaterial({
-			vertexShader: WAKE_VERT,
-			fragmentShader: WAKE_FRAG,
+		// Lit foam, broken up by drifting noise so trails don't read as solid ribbons.
+		const breakup = smoothstep(
+			-0.35,
+			0.45,
+			mx_noise_float(vec3(positionWorld.xz.div(22), time.mul(0.15))),
+		);
+		const material = new THREE.MeshStandardNodeMaterial({
 			transparent: true,
 			depthWrite: false,
 			side: THREE.DoubleSide,
-			glslVersion: THREE.GLSL3,
 		});
+		material.colorNode = vec3(0.86, 0.89, 0.9);
+		material.roughnessNode = float(0.85);
+		const edge = attribute<"float">("aEdge", "float");
+		const feather = float(1).sub(edge.mul(edge));
+		material.opacityNode = attribute<"float">("aAlpha", "float")
+			.mul(breakup.mul(0.65).add(0.35))
+			.mul(feather);
 
 		this.root = new THREE.Mesh(this.geometry, material);
 		this.root.frustumCulled = false;
@@ -143,6 +147,7 @@ export class WakeSystem {
 		this.pz[slot] = sternZ;
 		this.pHeading[slot] = heading;
 		this.pSpeed[slot] = Math.abs(speed);
+		this.pSize[slot] = size;
 		this.pBirth[slot] = this.globalTime;
 
 		// Chain to previous point for this entity
@@ -210,7 +215,9 @@ export class WakeSystem {
 			const life = 1 - age / MAX_AGE;
 			const prevLife = 1 - prevAge / MAX_AGE;
 
-			// Center foam ribbon
+			// Turbulent centre wake: about a beam wide, spreading as it ages
+			const beam = this.pSize[i] * 0.07;
+			const spreadRate = this.pSize[i] * 0.004;
 			vi = this.buildSegment(
 				positions,
 				alphas,
@@ -222,47 +229,39 @@ export class WakeSystem {
 				age,
 				prevAge,
 				0,
-				(l) => (1.5 + l * 2.0) * pixelsToWorld,
-				(l) => l * l * 0.35,
+				(l) =>
+					Math.max(
+						(1.5 + l * 2.0) * pixelsToWorld,
+						beam + (1 - l) * MAX_AGE * spreadRate,
+					),
+				(l) => l ** 1.5 * 0.42,
 				0.003,
 			);
 
-			// Left V-spread ribbon
-			vi = this.buildSegment(
-				positions,
-				alphas,
-				vi,
-				i,
-				pi,
-				life,
-				prevLife,
-				age,
-				prevAge,
-				-1,
-				(l) => (0.8 + l * 1.2) * pixelsToWorld,
-				(l) => l * l * 0.15,
-				0.002,
-			);
-
-			// Right V-spread ribbon
-			vi = this.buildSegment(
-				positions,
-				alphas,
-				vi,
-				i,
-				pi,
-				life,
-				prevLife,
-				age,
-				prevAge,
-				1,
-				(l) => (0.8 + l * 1.2) * pixelsToWorld,
-				(l) => l * l * 0.15,
-				0.002,
-			);
+			// Kelvin arms: faint, and gone well before the centre trail
+			const armLife = (l: number) =>
+				Math.max(0, (l - ARM_FADE) / (1 - ARM_FADE));
+			for (const side of [-1, 1]) {
+				vi = this.buildSegment(
+					positions,
+					alphas,
+					vi,
+					i,
+					pi,
+					life,
+					prevLife,
+					age,
+					prevAge,
+					side,
+					(l) => Math.max((0.8 + l * 1.2) * pixelsToWorld, beam * 0.25),
+					(l) => armLife(l) ** 2 * 0.14,
+					0.002,
+				);
+			}
 		}
 
 		this.geometry.setDrawRange(0, vi);
+		this.root.visible = vi > 0;
 		posAttr.needsUpdate = true;
 		alphaAttr.needsUpdate = true;
 	}
@@ -301,8 +300,8 @@ export class WakeSystem {
 
 		// Apply lateral V-spread offset
 		if (side !== 0) {
-			const spread = age * this.pSpeed[idx] * 0.12;
-			const prevSpread = prevAge * this.pSpeed[prevIdx] * 0.12;
+			const spread = age * this.pSpeed[idx] * KELVIN_SPREAD;
+			const prevSpread = prevAge * this.pSpeed[prevIdx] * KELVIN_SPREAD;
 			const cos = Math.cos(this.pHeading[idx]);
 			const sin = Math.sin(this.pHeading[idx]);
 			const prevCos = Math.cos(this.pHeading[prevIdx]);

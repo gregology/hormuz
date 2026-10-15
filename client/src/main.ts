@@ -4,7 +4,7 @@
  * Single Three.js canvas with a DOM HUD overlay.
  */
 
-import * as THREE from "three";
+import * as THREE from "three/webgpu";
 import { ThreeEffectManager } from "./effects/manager";
 import { EntityStore } from "./game/entities";
 import { SnapshotInterpolator } from "./game/interpolation";
@@ -24,6 +24,7 @@ import {
 	ThreeMapRenderer,
 } from "./render/map-renderer";
 import { ThreeScene } from "./render/scene";
+import { formatStraitTime } from "./render/solar";
 import { ThreeVehicleRenderer } from "./render/vehicle-renderer";
 
 // Faction -> render color
@@ -45,14 +46,14 @@ const VEHICLE_DEFAULTS: Record<
 	quadcopter: { size: 2, airborne: true, equilibriumSpeed: 22 },
 };
 
-function init() {
+async function init() {
 	// biome-ignore lint/style/noNonNullAssertion: element defined in index.html
 	const container = document.getElementById("game-container")!;
 	const screenW = window.innerWidth;
 	const screenH = window.innerHeight;
 
-	// --- Three.js canvas ---
-	const threeScene = new ThreeScene();
+	// --- Three.js canvas (WebGPU, falling back to WebGL2) ---
+	const threeScene = await ThreeScene.create();
 	threeScene.setSize(screenW, screenH);
 	container.appendChild(threeScene.renderer.domElement);
 
@@ -67,7 +68,10 @@ function init() {
 
 	// --- Map layers (Three.js) ---
 	const layers: MapLayers = { ...DEFAULT_LAYERS };
-	const threeMap = new ThreeMapRenderer(layers);
+	const threeMap = new ThreeMapRenderer(
+		layers,
+		threeScene.environment.reflections,
+	);
 	threeScene.scene.add(threeMap.root);
 
 	// --- Three.js vehicles ---
@@ -100,7 +104,6 @@ function init() {
 		speedboatsSunk: 0,
 		playersOnline: 0,
 	};
-	let elapsedTime = 0;
 	let autopilotOn = true;
 
 	// Zoom limits per vehicle type (scaled roughly by inverse vehicle size)
@@ -250,7 +253,6 @@ function init() {
 
 		const dt = (now - lastTime) / 1000;
 		lastTime = now;
-		elapsedTime += dt;
 		const renderTime = now / 1000;
 
 		// --- Autopilot logic (tankers only) ---
@@ -367,12 +369,15 @@ function init() {
 			const halfFov = (threeScene.perspCamera.fov * Math.PI) / 360;
 			effectZoom = cam.screenWidth / (SQRT6 * 2 * dist * Math.tan(halfFov));
 		}
-		threeMap.update(elapsedTime, effectZoom);
+		// Lighting follows the real time of day in the strait.
+		const wallClock = new Date();
+		threeScene.environment.setTime(wallClock);
 		threeVehicles.update(
 			entities,
 			assignedEntityId,
 			assignedVehicleType,
 			FACTION_COLORS,
+			effectZoom,
 		);
 		ciwsController.update(
 			entities,
@@ -400,6 +405,7 @@ function init() {
 		hud.updateVehicle(spectating, pendingAssign !== null, assignedVehicleType);
 		input.updateSpectating(spectating, pendingAssign !== null);
 		hud.updateStats(warCost);
+		hud.updateClock(formatStraitTime(wallClock));
 
 		// Vehicle instruments — speed, heading, HP, flood
 		if (!spectating && assignedEntityId !== null) {

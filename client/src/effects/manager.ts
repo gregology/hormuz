@@ -3,88 +3,90 @@
  *
  * Owns a THREE.Group added to the scene graph. Handles:
  *   - WakeSystem: global ring buffer for all ship wake trails (1 draw call)
- *   - Continuous effects (stern churn) tied to entity state
+ *   - Continuous per-entity emitters: stern churn, damage smoke
  *   - Transient effects (explosions, sinking, oil patches) that run independently
+ *   - Shared particle batches (spray, smoke, glow) every effect draws into
  */
 
-import * as THREE from "three";
+import * as THREE from "three/webgpu";
 import type { EntityState } from "../game/entities";
+import { MAX_HP, VEHICLE_PHYSICS } from "../generated/vehicles";
+import { ParticleBatch } from "../render/particles";
+import { terrainSurfaceHeight } from "../render/terrain-surface";
+import type { VehicleType } from "../vehicles/physics";
+import { DamageSmoke, SMOKE_BELOW_HEALTH } from "./damage-smoke";
 import { Explosion } from "./explosion";
 import { OilPatch, oilPatchParams } from "./oil-patch";
 import { Sinking } from "./sinking";
 import { SternChurn } from "./stern-churn";
-import type { ThreeEffect } from "./types";
+import type { EffectParticles, ThreeEffect } from "./types";
 import { WakeSystem } from "./wake-system";
 
-// Vehicle defaults needed for effect generation
-const VEHICLE_DEFAULTS: Record<
-	string,
-	{ size: number; airborne: boolean; equilibriumSpeed: number }
-> = {
-	oil_tanker: { size: 220, airborne: false, equilibriumSpeed: 15 },
-	shahed: { size: 4, airborne: true, equilibriumSpeed: 80 },
-	speedboat: { size: 10, airborne: false, equilibriumSpeed: 26 },
-	frigate: { size: 100, airborne: false, equilibriumSpeed: 13.5 },
-	truck: { size: 5, airborne: false, equilibriumSpeed: 18 },
-	quadcopter: { size: 2, airborne: true, equilibriumSpeed: 22 },
-};
-
-// Faction -> render color (duplicated from main.ts to avoid circular dep)
-const FACTION_COLORS: Record<string, number> = {
-	civilian: 0xf39c12,
-	iran: 0x27ae60,
-	us: 0x2980b9,
-};
+/** Deck height above the vehicle's base, as a fraction of size (where smoke rises from). */
+const SMOKE_SOURCE_HEIGHT = 0.12;
 
 export class ThreeEffectManager {
 	readonly root: THREE.Group;
 	private transientEffects: ThreeEffect[] = [];
 	private wakeSystem: WakeSystem;
 	private sternChurns = new Map<number, SternChurn>();
+	private damageSmoke = new Map<number, DamageSmoke>();
 	private previousHp = new Map<number, number>();
+	private particles: EffectParticles;
+	private time = 0;
 
 	constructor() {
 		this.root = new THREE.Group();
 		this.wakeSystem = new WakeSystem();
-		this.root.add(this.wakeSystem.root);
+		this.particles = {
+			spray: new ParticleBatch(8192, {
+				shape: "soft",
+				daylit: true,
+				renderOrder: 3,
+			}),
+			smoke: new ParticleBatch(8192, {
+				shape: "soft",
+				daylit: true,
+				renderOrder: 8,
+			}),
+			glow: new ParticleBatch(4096, {
+				shape: "glow",
+				additive: true,
+				renderOrder: 9,
+			}),
+		};
+		this.root.add(
+			this.wakeSystem.root,
+			this.particles.spray.object,
+			this.particles.smoke.object,
+			this.particles.glow.object,
+		);
 	}
 
 	/** Spawn an explosion effect at the given world position. */
 	spawnExplosion(x: number, y: number, radius = 60): void {
-		const effect = new Explosion(x, y, radius);
-		this.transientEffects.push(effect);
-		this.root.add(effect.root);
+		this.addTransient(new Explosion(x, y, radius));
 	}
 
-	/** Spawn a sinking effect for a destroyed vehicle. */
-	spawnSinking(
-		x: number,
-		y: number,
-		heading: number,
-		size: number,
-		color: number,
-		floodLevel = 0,
-		listAngle = 0,
-	): void {
-		const effect = new Sinking(
-			x,
-			y,
-			heading,
-			size,
-			color,
-			floodLevel,
-			listAngle,
+	/** Spawn the sinking wreck of a destroyed vehicle. */
+	spawnSinking(entity: EntityState): void {
+		this.addTransient(
+			new Sinking(
+				entity.x,
+				entity.y,
+				entity.heading,
+				entity.vehicleType as VehicleType,
+				entity.id,
+				entity.floodLevel ?? 0,
+				entity.listAngle ?? 0,
+			),
 		);
-		this.transientEffects.push(effect);
-		this.root.add(effect.root);
 	}
 
 	/** Spawn an oil patch at the given position, sized for the vehicle type. */
 	spawnOilPatch(x: number, y: number, vehicleType: string, size: number): void {
 		const { radius, duration } = oilPatchParams(vehicleType, size);
-		const effect = new OilPatch(x, y, radius, duration);
-		this.transientEffects.push(effect);
-		this.root.add(effect.root);
+		this.addTransient(new OilPatch(x, y, radius, duration));
 	}
 
 	/**
@@ -92,41 +94,59 @@ export class ThreeEffectManager {
 	 * Zoom is needed for screen-pixel-to-world-unit conversions.
 	 */
 	update(entities: EntityState[], dt: number, zoom: number): void {
+		this.time += dt;
 		const activeIds = new Set<number>();
+		const fedSmoke = new Set<number>();
 
 		for (const e of entities) {
-			const defaults = VEHICLE_DEFAULTS[e.vehicleType];
-			if (!defaults) continue;
+			const physics = VEHICLE_PHYSICS[e.vehicleType as VehicleType];
+			if (!physics) continue;
 
 			activeIds.add(e.id);
+			const onWater = !physics.airborne && e.vehicleType !== "truck";
 
 			// Detect death: hp was positive, now zero or negative
 			const prevHp = this.previousHp.get(e.id) ?? e.hp;
 			if (prevHp > 0 && e.hp <= 0) {
-				const color = FACTION_COLORS[e.faction] ?? 0xcccccc;
-				this.spawnSinking(
-					e.x,
-					e.y,
-					e.heading,
-					defaults.size,
-					color,
-					e.floodLevel ?? 0,
-					e.listAngle ?? 0,
-				);
-
-				// Spawn oil patch for water vehicles
-				if (!defaults.airborne && e.vehicleType !== "truck") {
-					this.spawnOilPatch(e.x, e.y, e.vehicleType, defaults.size);
-				}
+				this.spawnSinking(e);
+				if (onWater) this.spawnOilPatch(e.x, e.y, e.vehicleType, physics.size);
 
 				// Detach wake (existing points remain and fade naturally)
 				this.wakeSystem.detach(e.id);
-				this.removeChurn(e.id);
+				this.sternChurns.delete(e.id);
 			}
 			this.previousHp.set(e.id, e.hp);
 
-			// Skip dead, airborne, or truck entities for water effects
-			if (e.hp <= 0 || defaults.airborne || e.vehicleType === "truck") continue;
+			if (e.hp <= 0) continue;
+
+			// Burning damage (ships and trucks; drones die outright)
+			const maxHp = MAX_HP[e.vehicleType as VehicleType] ?? 100;
+			const health = e.hp / maxHp;
+			const flooding = e.floodLevel ?? 0;
+			const damage = Math.max(
+				(SMOKE_BELOW_HEALTH - health) / SMOKE_BELOW_HEALTH,
+				flooding > 0.05 ? 0.3 + flooding * 0.7 : 0,
+			);
+			let smoke = this.damageSmoke.get(e.id);
+			if (damage > 0 && !physics.airborne) {
+				if (!smoke) {
+					smoke = new DamageSmoke();
+					this.damageSmoke.set(e.id, smoke);
+				}
+				fedSmoke.add(e.id);
+				const base = onWater ? 0 : terrainSurfaceHeight(e.x, e.y);
+				smoke.feed(
+					e.x,
+					e.y,
+					e.heading,
+					physics.size,
+					base + physics.size * SMOKE_SOURCE_HEIGHT,
+					Math.min(damage, 1),
+					dt,
+				);
+			}
+
+			if (!onWater) continue;
 
 			// Feed wake system (global ring buffer)
 			this.wakeSystem.emit(
@@ -135,31 +155,35 @@ export class ThreeEffectManager {
 				e.y,
 				e.heading,
 				e.speed,
-				defaults.size,
+				physics.size,
 				dt,
 			);
 
-			// Stern churn
 			let churn = this.sternChurns.get(e.id);
 			if (!churn) {
-				churn = new SternChurn(e.id);
+				churn = new SternChurn();
 				this.sternChurns.set(e.id, churn);
-				this.root.add(churn.root);
 			}
 			churn.feed(
 				e.x,
 				e.y,
 				e.heading,
 				e.speed,
-				defaults.equilibriumSpeed,
-				defaults.size,
+				physics.maxSpeed,
+				physics.size,
 				dt,
 			);
 		}
 
-		// Remove stern churns for entities that no longer exist
+		// Forget emitters for entities that no longer exist (smoke drifts away first)
 		for (const [id] of this.sternChurns) {
-			if (!activeIds.has(id)) this.removeChurn(id);
+			if (!activeIds.has(id)) this.sternChurns.delete(id);
+		}
+		for (const [id, smoke] of this.damageSmoke) {
+			if (fedSmoke.has(id)) continue;
+			smoke.extinguish();
+			smoke.advance(dt);
+			if (smoke.idle) this.damageSmoke.delete(id);
 		}
 		for (const [id] of this.previousHp) {
 			if (!activeIds.has(id)) this.previousHp.delete(id);
@@ -167,16 +191,8 @@ export class ThreeEffectManager {
 
 		// Detach wakes for entities that left (points remain and fade)
 		this.wakeSystem.detachMissing(activeIds);
-
-		// Update wake system (single draw call for all wakes)
 		this.wakeSystem.update(dt, zoom);
 
-		// Update all continuous effects
-		for (const [, churn] of this.sternChurns) {
-			churn.update(dt, zoom);
-		}
-
-		// Update transient effects, remove dead ones
 		for (const effect of this.transientEffects) {
 			effect.update(dt, zoom);
 		}
@@ -186,30 +202,37 @@ export class ThreeEffectManager {
 			effect.dispose();
 		}
 		this.transientEffects = this.transientEffects.filter((e) => e.alive);
+
+		this.drawParticles(zoom);
 	}
 
-	private removeChurn(id: number): void {
-		const churn = this.sternChurns.get(id);
-		if (churn) {
-			this.root.remove(churn.root);
-			churn.dispose();
-			this.sternChurns.delete(id);
-		}
+	private drawParticles(zoom: number): void {
+		const { spray, smoke, glow } = this.particles;
+		for (const batch of [spray, smoke, glow]) batch.clear();
+		for (const [, churn] of this.sternChurns) churn.draw(this.particles, zoom);
+		for (const [, emitter] of this.damageSmoke)
+			emitter.draw(this.particles, zoom, this.time);
+		for (const effect of this.transientEffects)
+			effect.drawParticles?.(this.particles, zoom);
+		for (const batch of [spray, smoke, glow]) batch.commit();
+	}
+
+	private addTransient(effect: ThreeEffect): void {
+		this.transientEffects.push(effect);
+		this.root.add(effect.root);
 	}
 
 	/** Clean up all GPU resources. */
 	dispose(): void {
 		this.wakeSystem.dispose();
-		this.root.remove(this.wakeSystem.root);
-		for (const [, churn] of this.sternChurns) {
-			this.root.remove(churn.root);
-			churn.dispose();
-		}
 		for (const effect of this.transientEffects) {
 			this.root.remove(effect.root);
 			effect.dispose();
 		}
+		for (const batch of Object.values(this.particles)) batch.dispose();
+		this.root.clear();
 		this.sternChurns.clear();
+		this.damageSmoke.clear();
 		this.transientEffects = [];
 	}
 }

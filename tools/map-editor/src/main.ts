@@ -3,7 +3,8 @@ import {
 	DEFAULT_LAYERS,
 	type MapLayers,
 } from "../../../client/src/render/map-renderer";
-import { ThreeScene, syncCamera } from "../../../client/src/render/scene";
+import { ThreeScene } from "../../../client/src/render/scene";
+import { atStraitHour } from "../../../client/src/render/solar";
 import { createCamera, screenToWorld } from "../../../client/src/render/camera";
 import { MAP } from "../../../client/src/map/data";
 import { ZoneOverlay } from "./zone-overlay";
@@ -17,8 +18,10 @@ import { exportYAML } from "./yaml";
 
 const viewport = document.getElementById("viewport")!;
 
-const threeScene = new ThreeScene();
+const threeScene = await ThreeScene.create();
 viewport.prepend(threeScene.renderer.domElement);
+// Edit in late-morning light regardless of the real time in the strait.
+threeScene.environment.setTime(atStraitHour(new Date(), 10.5));
 
 const screenW = viewport.clientWidth;
 const screenH = viewport.clientHeight;
@@ -34,7 +37,7 @@ const layers: MapLayers = {
 	showSpawnPoints: true,
 	showExclusionZones: false, // we render our own editable overlay
 };
-const threeMap = new ThreeMapRenderer(layers);
+const threeMap = new ThreeMapRenderer(layers, threeScene.environment.reflections);
 threeScene.scene.add(threeMap.root);
 
 // ---------------------------------------------------------------------------
@@ -219,8 +222,7 @@ for (const def of layerDefs) {
 
 function animate(): void {
 	requestAnimationFrame(animate);
-	syncCamera(threeScene.camera, cam.worldX, cam.worldY, cam.zoom, cam.screenWidth, cam.screenHeight);
-	threeMap.update(performance.now() / 1000, cam.zoom);
+	threeScene.syncCamera(cam.worldX, cam.worldY, cam.zoom, cam.screenWidth, cam.screenHeight);
 	overlay.updateHandleScale(cam.zoom);
 	threeScene.render();
 }

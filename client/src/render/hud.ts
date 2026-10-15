@@ -337,6 +337,7 @@ export class HUD {
 		this.sitrepPanel.appendChild(sitrepTitle);
 
 		const statKeys = [
+			"straitTime",
 			"tankersTransited",
 			"tankersSunk",
 			"frigatesSunk",
@@ -485,6 +486,11 @@ export class HUD {
 		this.sitrepLines.warCost.textContent = `War Cost     ${costStr}`;
 
 		this.sitrepLines.playersOnline.textContent = `Players Online     ${fmt(stats.playersOnline)}`;
+	}
+
+	/** Local time in the strait (the game's lighting follows it). */
+	updateClock(straitTime: string): void {
+		this.sitrepLines.straitTime.textContent = `Strait Time   ${straitTime} GST`;
 	}
 
 	updateThrottle(throttleLevel: number, visible: boolean): void {
