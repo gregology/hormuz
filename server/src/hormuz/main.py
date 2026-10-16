@@ -25,6 +25,7 @@ from hormuz.components import (
 from hormuz.generated.vehicles import (
     COLLISION_POLYGONS,
     MAX_HP,
+    TICK_RATE,
     VEHICLE_PHYSICS,
     VEHICLES,
     WORLD_SPAWNS,
@@ -58,7 +59,6 @@ logger = logging.getLogger("hormuz")
 
 app = FastAPI(title="Hormuz", version="0.0.1")
 
-TICK_RATE = 20
 TICK_INTERVAL = 1.0 / TICK_RATE
 
 # --- Player connection tracking ---

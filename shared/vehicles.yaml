@@ -257,6 +257,8 @@ vehicles:
     sprite: truck
 
 world:
+  # Server simulation and snapshot rate. Clients play snapshots back on this timeline.
+  tick_rate: 20
   spawns:
     oil_tanker:
       outbound: 10

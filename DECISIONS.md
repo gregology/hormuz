@@ -150,3 +150,33 @@ Three approaches were proposed: (A) add real lighting within `WebGLRenderer`, sp
 - **Async startup.** `ThreeScene.create()` must be awaited; long first frames (shader compilation) made the playground's camera follow diverge, so its frame delta is now clamped.
 - **Bigger bundle.** The client bundle is ~1.2 MB (330 KB gzip) with three's WebGPU build.
 - **Visual-only height mismatch near coasts.** Within 300 units of the coast the rendered terrain sits slightly below the gameplay heightmap; physics is unchanged.
+
+---
+
+## 005: Snapshot playback on the server tick timeline
+
+**Date:** 2026-10-15
+**Status:** Complete
+
+### Context
+
+Fast vehicles looked jittery, most visibly with the camera locked to a shahed or quadcopter. The client stamped each snapshot with its arrival time and rendered a fixed 100 ms behind, but the server advances exactly one tick between snapshots — arrival times carry the noise of the server loop, the network, TCP retransmits and the browser's main thread. Replaying recorded snapshots at 60 fps measured 8% frame-to-frame speed wobble on an idle localhost, 18% with 40 clients connected, ~28% with modelled internet jitter, and a freeze-then-jump whenever a gap exceeded 100 ms. Alternatives considered: client-side prediction of the player's own vehicle (needs `physics.ts` ↔ `physics.py` parity and a protocol change; can be layered on later), extrapolation (wrong exactly when drones turn or collide), and a higher tick rate (shrinks the gaps without fixing the timestamps, and multiplies bandwidth).
+
+### Decision
+
+- Snapshots are keyed by server time (`tick / TICK_RATE`). `SnapshotInterpolator` only interpolates; it no longer applies a delay of its own.
+- **`PlaybackClock`** (`client/src/game/playback-clock.ts`) decides which server time to render each frame. Over the last 6 s of arrivals it measures the server's pace (from the least-delayed snapshots, so late bursts can't skew it) and the spread of lateness, and aims just far enough behind that every recent snapshot would have arrived in time (covering up to 0.2 s of jitter). It reaches that target by playing up to 5% faster or slower, never runs past the newest snapshot (late data holds playback rather than jumping), skips ahead after an outage, and starts a new timeline if the tick counter goes backwards.
+- `TICK_RATE` moved to `shared/vehicles.yaml` (`world.tick_rate`) and is generated for both hosts.
+
+### Rationale
+
+- **Fixes the cause for every entity**, not only the player's vehicle. No protocol change: snapshots already carried the tick.
+- **Measured:** the same recordings replay with 0.9% wobble on localhost, 3% under load and ~6% with modelled internet jitter, with no jumps.
+- **Testable in isolation.** A pure module; `playback-clock.test.ts` streams a vehicle through simulated networks (jitter, a slow server, an outage, a restart) and checks what reaches the screen, plus a property test that playback never runs backwards or past the newest snapshot.
+- **A shared timeline to build on.** Game events can carry a tick and play at the right moment, and client-side prediction can reconcile against the same clock.
+
+### Costs accepted
+
+- **Latency follows the connection:** ~65 ms behind the newest snapshot on a clean link (previously a fixed ~75 ms), ~130 ms on a jittery one. Input still takes a round trip plus this buffer to show on screen; prediction would remove that.
+- **Slow recovery after outages.** After an outage longer than ~0.25 s, playback stays up to ~0.28 s behind for ~10 s while the burst of late snapshots ages out of the window.
+- **Server-side jitter remains.** The relative-sleep tick loop, input sent every frame and a broadcast that waits on slow clients still cause gaps; the clock hides them only up to the size of its buffer.
