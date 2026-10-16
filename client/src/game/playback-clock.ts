@@ -80,6 +80,11 @@ export class PlaybackClock {
 		return this.playback;
 	}
 
+	/** Server seconds per client second. */
+	get serverPace(): number {
+		return this.pace;
+	}
+
 	/** Record a snapshot's server time and the client time it arrived (both seconds). */
 	observe(serverTime: number, arrival: number): void {
 		if (this.newest === null || serverTime < this.newest) {
