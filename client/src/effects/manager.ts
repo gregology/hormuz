@@ -63,6 +63,29 @@ export class ThreeEffectManager {
 		);
 	}
 
+	/**
+	 * Draw one of each transient effect for a frame, so their shaders are
+	 * built while the game loads rather than by the first explosion of a
+	 * fight (about 100 ms the first time each one is drawn).
+	 */
+	prepareShaders(x: number, y: number, zoom: number, render: () => void): void {
+		const samples: ThreeEffect[] = [
+			new Explosion(x, y),
+			new OilPatch(x, y, 50, 1),
+		];
+		for (const effect of samples) this.addTransient(effect);
+		this.update([], 1 / 60, zoom);
+		render();
+		for (const effect of samples) {
+			this.root.remove(effect.root);
+			effect.dispose();
+		}
+		this.transientEffects = this.transientEffects.filter(
+			(effect) => !samples.includes(effect),
+		);
+		this.drawParticles(zoom);
+	}
+
 	/** Spawn an explosion effect at the given world position. */
 	spawnExplosion(x: number, y: number, radius = 60): void {
 		this.addTransient(new Explosion(x, y, radius));

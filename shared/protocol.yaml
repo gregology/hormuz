@@ -3,12 +3,15 @@
 
 client_messages:
   input:
-    description: Player input state sent each frame
+    description: One tick of player input; the server applies one per tick, in order
     fields:
-      keys: uint8          # bitmask of pressed keys
+      keys: uint8          # bitmask: 1=forward, 2=reverse, 4=left, 8=right, 16=fire
       mouse_x: float32
       mouse_y: float32
       action: uint8        # 0=none, 1=fire, 2=deploy, etc.
+      throttle: float64    # ship throttle setting, -1 to 1
+      autopilot: uint8     # tankers only
+      sequence: uint32     # numbers commands so snapshots can say which were applied
 
   heartbeat:
     description: Keepalive ping
@@ -27,18 +30,17 @@ server_messages:
       removed: array       # [entity_ids]
 
   full_snapshot:
-    description: Complete world state (on connect or resync)
+    description: Complete world state, every tick
     fields:
       tick: uint32
       entities: array
+      controlled: array    # this client's [entity_id, last_command, buffered_commands], or nil
 
-  event:
-    description: One-off visual event (explosion, oil spill, etc.)
+  events:
+    description: The one-off events of one tick (explosion, delivered, projectile), played at that tick
     fields:
-      type: string
-      x: float32
-      y: float32
-      data: object
+      tick: uint32
+      events: array        # [[type, x, y, ...type-specific fields], ...]
 
   assign_vehicle:
     description: Tells client which entity they control

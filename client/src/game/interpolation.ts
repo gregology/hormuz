@@ -4,11 +4,15 @@
  * Snapshots are keyed by server time (tick / TICK_RATE), not by when they
  * arrived, so states one tick apart on the server stay one tick apart here.
  * `PlaybackClock` decides which moment to render; this only interpolates
- * between known states, never extrapolates.
+ * between known states, never extrapolates. Positions follow smooth curves
+ * (`motion.ts`). Discrete state such as hit points changes when playback
+ * reaches the snapshot that carries it, the same moment events from that
+ * tick play, so a drone vanishes as its explosion goes off.
  */
 
 import { TICK_RATE } from "../generated/vehicles";
 import type { EntityState } from "./entities";
+import { headingBetween, positionBetween } from "./motion";
 
 /** How many snapshots to keep: one second, more than the playback clock ever buffers. */
 const BUFFER_SIZE = TICK_RATE;
@@ -53,23 +57,19 @@ export class SnapshotInterpolator {
 		const after = this.buffer[i + 1];
 
 		const eBefore = before.entities.get(entityId);
-		if (!after) return eBefore ?? null;
-
-		const eAfter = after.entities.get(entityId);
-		if (!eBefore) return eAfter ?? null;
+		if (!eBefore) return null;
+		const eAfter = after?.entities.get(entityId);
 		if (!eAfter) return eBefore;
 
 		const elapsed = after.time - before.time;
-		if (elapsed <= 0) return eAfter;
-
 		// Clamp to [0,1] — pure interpolation, no extrapolation
 		const t = Math.max(0, Math.min((serverTime - before.time) / elapsed, 1));
+		const eEarlier = this.buffer[i - 1]?.entities.get(entityId);
 
 		return {
-			...eAfter,
-			x: eBefore.x + (eAfter.x - eBefore.x) * t,
-			y: eBefore.y + (eAfter.y - eBefore.y) * t,
-			heading: lerpAngle(eBefore.heading, eAfter.heading, t),
+			...eBefore,
+			...positionBetween(eEarlier, eBefore, eAfter, t, elapsed),
+			heading: headingBetween(eBefore.heading, eAfter.heading, t),
 			speed: eBefore.speed + (eAfter.speed - eBefore.speed) * t,
 			drift: eBefore.drift + (eAfter.drift - eBefore.drift) * t,
 			angularVelocity:
@@ -81,9 +81,7 @@ export class SnapshotInterpolator {
 	getAllInterpolated(serverTime: number): EntityState[] {
 		if (this.buffer.length === 0) return [];
 
-		const i = this.findIndex(serverTime);
-		const source = this.buffer[i + 1] ?? this.buffer[i];
-
+		const source = this.buffer[this.findIndex(serverTime)];
 		const result: EntityState[] = [];
 		for (const id of source.entities.keys()) {
 			const e = this.getInterpolated(id, serverTime);
@@ -91,13 +89,4 @@ export class SnapshotInterpolator {
 		}
 		return result;
 	}
-}
-
-/** Shortest-arc angle interpolation. */
-function lerpAngle(a: number, b: number, t: number): number {
-	let diff = b - a;
-	// Normalize to [-pi, pi]
-	diff = ((diff + Math.PI) % (Math.PI * 2)) - Math.PI;
-	if (diff < -Math.PI) diff += Math.PI * 2;
-	return a + diff * t;
 }

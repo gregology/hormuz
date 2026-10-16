@@ -5,9 +5,16 @@
  */
 
 import { ThreeEffectManager } from "./effects/manager";
+import { CommandClock } from "./game/command-clock";
 import { EntityStore } from "./game/entities";
+import {
+	type EventHandlers,
+	EventTimeline,
+	dispatchEvent,
+} from "./game/event-timeline";
 import { SnapshotInterpolator } from "./game/interpolation";
 import { PlaybackClock } from "./game/playback-clock";
+import { VehiclePredictor } from "./game/prediction";
 import { TICK_RATE } from "./generated/vehicles";
 import { InputManager } from "./input/input-manager";
 import type { CameraMode } from "./input/keyboard";
@@ -15,6 +22,7 @@ import { MouseLook } from "./input/mouse-look";
 import { MAP } from "./map/data";
 import { getElevation } from "./map/heightmap";
 import { GameConnection } from "./net/connection";
+import type { GameEvent } from "./net/protocol";
 import { type Camera, createCamera } from "./render/camera";
 import { ChaseCamera } from "./render/chase-camera";
 import { CiwsController } from "./render/ciws-controller";
@@ -29,6 +37,8 @@ import {
 import { ThreeScene } from "./render/scene";
 import { formatStraitTime } from "./render/solar";
 import { ThreeVehicleRenderer } from "./render/vehicle-renderer";
+import { vehicleControls, withinJammingRange } from "./vehicles/controls";
+import type { VehicleType } from "./vehicles/physics";
 
 // Faction -> render color
 const FACTION_COLORS: Record<string, number> = {
@@ -93,6 +103,11 @@ async function init() {
 	const entityStore = new EntityStore();
 	const interpolator = new SnapshotInterpolator();
 	const playbackClock = new PlaybackClock();
+	const eventTimeline = new EventTimeline<GameEvent>();
+	const commandClock = new CommandClock();
+	const predictor = new VehiclePredictor();
+	let nextCommand = 1;
+	let predictedLastFrame = false;
 	const input = new InputManager(container);
 	const conn = new GameConnection();
 
@@ -138,8 +153,21 @@ async function init() {
 	conn.onSnapshot((snapshot) => {
 		entityStore.applySnapshot(snapshot);
 		const serverTime = snapshot.tick / TICK_RATE;
+		const now = performance.now() / 1000;
 		interpolator.pushSnapshot(entityStore.entities, serverTime);
-		playbackClock.observe(serverTime, performance.now() / 1000);
+		playbackClock.observe(serverTime, now);
+
+		const controlled = snapshot.controlled;
+		if (!controlled) return;
+		commandClock.observeBuffered(controlled.bufferedCommands);
+		const own = entityStore.entities.get(controlled.entityId);
+		if (own) {
+			predictor.reconcile(
+				own,
+				controlled.lastCommand,
+				commandClock.fraction(now),
+			);
+		}
 	});
 
 	conn.onAssign((msg) => {
@@ -182,11 +210,25 @@ async function init() {
 		warCost = msg;
 	});
 
-	conn.onEvent((msg) => {
-		if (msg.eventType === "explosion") {
-			threeEffects.spawnExplosion(msg.x, msg.y);
-		}
+	conn.onEvents((batch) => {
+		eventTimeline.push(batch.tick / TICK_RATE, batch.events);
 	});
+	const eventEffects: EventHandlers<GameEvent> = {
+		explosion: (event) => threeEffects.spawnExplosion(event.x, event.y),
+	};
+
+	/**
+	 * Predict the player's vehicle while the player steers it; the server's
+	 * autopilot steers tankers in ways the client can't foresee.
+	 */
+	function choosePrediction(predict: boolean): void {
+		if (!predict || assignedEntityId === null) {
+			predictor.stop();
+			return;
+		}
+		if (predictor.entityId === assignedEntityId) return;
+		predictor.follow(assignedEntityId, assignedVehicleType as VehicleType);
+	}
 
 	// --- Connect ---
 	const wsProtocol = location.protocol === "https:" ? "wss:" : "ws:";
@@ -268,22 +310,17 @@ async function init() {
 			input.consumeSteerInput();
 		}
 
-		// Send input to server
 		const isShip =
 			assignedVehicleType === "oil_tanker" ||
 			assignedVehicleType === "frigate" ||
 			assignedVehicleType === "speedboat";
-		const throttleFloat = isShip ? input.throttleFloat : 0.0;
-		conn.sendInput(
-			input.getBitmask(),
-			throttleFloat,
-			autopilotOn && assignedVehicleType === "oil_tanker",
-		);
 
-		// Get interpolated entities
-		const entities = interpolator.getAllInterpolated(
-			playbackClock.advance(now / 1000),
-		);
+		// Get interpolated entities, and play the events that happened by then
+		const time = playbackClock.advance(now / 1000);
+		const entities = interpolator.getAllInterpolated(time);
+		for (const event of eventTimeline.due(time)) {
+			dispatchEvent(eventEffects, event);
+		}
 
 		// Detect player death: assigned entity's HP drops to zero
 		if (assignedEntityId !== null && !spectating) {
@@ -297,6 +334,43 @@ async function init() {
 		if (spectating && pendingAssign && input.isDown(" ")) {
 			applyAssignment(pendingAssign.entityId, pendingAssign.vehicleType);
 		}
+
+		// Input goes out as one command per server tick, and moves the
+		// predicted vehicle at once.
+		const keys = input.getBitmask();
+		const throttleFloat = isShip ? input.throttleFloat : 0.0;
+		const autopilot = autopilotOn && assignedVehicleType === "oil_tanker";
+		choosePrediction(!spectating && !autopilot);
+		commandClock.setPace(playbackClock.serverPace);
+		for (let due = commandClock.due(now / 1000); due > 0; due--) {
+			const sequence = nextCommand++;
+			conn.sendCommand({ sequence, keys, throttle: throttleFloat, autopilot });
+			if (predictor.entityId === null) continue;
+			const at = predictor.position;
+			predictor.apply(
+				sequence,
+				vehicleControls(
+					assignedVehicleType as VehicleType,
+					keys,
+					throttleFloat,
+					() => at !== null && withinJammingRange(at.x, at.y, entities),
+				),
+			);
+		}
+		predictor.settle(dt);
+		const fraction = commandClock.fraction(now / 1000);
+		const ownIndex = entities.findIndex((e) => e.id === predictor.entityId);
+		const predicting = ownIndex >= 0 && predictor.pose(fraction) !== null;
+		if (predicting) {
+			// Glide into the present from where snapshots were drawing it.
+			if (!predictedLastFrame)
+				predictor.blendFrom(entities[ownIndex], fraction);
+			entities[ownIndex] = {
+				...entities[ownIndex],
+				...predictor.pose(fraction),
+			};
+		}
+		predictedLastFrame = predicting;
 
 		// Consume camera mode change (resets to isometric when spectating)
 		const cameraMode = spectating ? "isometric" : input.cameraMode;
@@ -444,6 +518,18 @@ async function init() {
 			assignedVehicleType === "oil_tanker" && !spectating,
 		);
 	}
+
+	// Build the effects' shaders now rather than in the middle of a fight.
+	threeScene.syncCamera(
+		cam.worldX,
+		cam.worldY,
+		cam.zoom,
+		cam.screenWidth,
+		cam.screenHeight,
+	);
+	threeEffects.prepareShaders(cam.worldX, cam.worldY, cam.zoom, () =>
+		threeScene.render(),
+	);
 
 	requestAnimationFrame(frame);
 

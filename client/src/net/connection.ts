@@ -2,32 +2,31 @@
  * WebSocket connection manager.
  */
 
-import { InputThrottle } from "./input-throttle";
 import {
 	type AssignVehicle,
 	type FullSnapshot,
-	type GameEvent,
+	type InputCommand,
 	MSG_ASSIGN_VEHICLE,
-	MSG_EVENT,
+	MSG_EVENTS,
 	MSG_FULL_SNAPSHOT,
 	MSG_WAR_COST,
+	type TickEvents,
 	type WarCost,
 	decodeMessage,
-	encodeInput,
+	encodeCommand,
 } from "./protocol";
 
 type SnapshotHandler = (snapshot: FullSnapshot) => void;
 type AssignHandler = (msg: AssignVehicle) => void;
 type WarCostHandler = (msg: WarCost) => void;
-type EventHandler = (msg: GameEvent) => void;
+type EventsHandler = (msg: TickEvents) => void;
 
 export class GameConnection {
 	private ws: WebSocket | null = null;
 	private onSnapshotCb: SnapshotHandler | null = null;
 	private onAssignCb: AssignHandler | null = null;
 	private onWarCostCb: WarCostHandler | null = null;
-	private onEventCb: EventHandler | null = null;
-	private inputThrottle = new InputThrottle();
+	private onEventsCb: EventsHandler | null = null;
 
 	connect(url: string): void {
 		this.ws = new WebSocket(url);
@@ -43,8 +42,8 @@ export class GameConnection {
 				this.onAssignCb(msg);
 			} else if (msg.type === MSG_WAR_COST && this.onWarCostCb) {
 				this.onWarCostCb(msg);
-			} else if (msg.type === MSG_EVENT && this.onEventCb) {
-				this.onEventCb(msg);
+			} else if (msg.type === MSG_EVENTS && this.onEventsCb) {
+				this.onEventsCb(msg);
 			}
 		};
 	}
@@ -61,15 +60,12 @@ export class GameConnection {
 		this.onWarCostCb = cb;
 	}
 
-	onEvent(cb: EventHandler): void {
-		this.onEventCb = cb;
+	onEvents(cb: EventsHandler): void {
+		this.onEventsCb = cb;
 	}
 
-	/** Call every frame; only changes and a once-per-tick repeat reach the server. */
-	sendInput(keys: number, throttleFloat: number, autopilot: boolean): void {
+	sendCommand(command: InputCommand): void {
 		if (this.ws?.readyState !== WebSocket.OPEN) return;
-		const input = { keys, throttle: throttleFloat, autopilot };
-		if (!this.inputThrottle.shouldSend(input, performance.now() / 1000)) return;
-		this.ws.send(encodeInput(keys, 0, 0, 0, throttleFloat, autopilot));
+		this.ws.send(encodeCommand(command));
 	}
 }

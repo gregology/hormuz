@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from hormuz.client_sender import ClientSender
+from hormuz.commands import CommandBuffer
 from hormuz.components import (
     Battery,
     BotControl,
@@ -23,6 +24,7 @@ from hormuz.components import (
     Transform,
     VehiclePhysics,
 )
+from hormuz.controls import vehicle_controls
 from hormuz.generated.vehicles import (
     COLLISION_POLYGONS,
     MAX_HP,
@@ -43,10 +45,11 @@ from hormuz.map_data import (
 )
 from hormuz.protocol import (
     MSG_INPUT,
+    ControlledVehicle,
+    Snapshot,
     decode_client_message,
     encode_assign_vehicle,
-    encode_event,
-    encode_full_snapshot,
+    encode_events,
     encode_war_cost,
 )
 from hormuz.systems.bot_ai import BotAIProcessor
@@ -69,6 +72,7 @@ MAX_TICK_LAG = 5 * TICK_INTERVAL
 
 connections: dict[int, ClientSender] = {}  # connection_id -> outbound queue
 player_entities: dict[int, int] = {}  # connection_id -> entity_id
+command_buffers: dict[int, CommandBuffer] = {}  # connection_id -> input commands
 _next_conn_id = 0
 
 # Game state
@@ -227,7 +231,7 @@ def setup_world() -> None:
 # --- Networking helpers ---
 
 
-def build_snapshot() -> bytes:
+def build_snapshot() -> Snapshot:
     """Build a full snapshot of all alive entities."""
     entities = []
     for ent, (tf, phys, health, faction) in esper.get_components(
@@ -252,7 +256,16 @@ def build_snapshot() -> bytes:
                 battery_pct,
             )
         )
-    return encode_full_snapshot(game_state["tick"], entities)
+    return Snapshot(game_state["tick"], entities)
+
+
+def controlled_vehicle(conn_id: int) -> ControlledVehicle | None:
+    """The vehicle a connection drives and how far through its commands the server is."""
+    ent = player_entities.get(conn_id)
+    commands = command_buffers.get(conn_id)
+    if ent is None or commands is None:
+        return None
+    return ControlledVehicle(ent, commands.last_applied, commands.buffered)
 
 
 ENEMY_FACTIONS: dict[str, set[str]] = {
@@ -397,11 +410,20 @@ def release_vehicle(conn_id: int) -> None:
 def disconnect_player(conn_id: int) -> None:
     """Forget a connection and hand its vehicle back to the bots. Safe to repeat."""
     connections.pop(conn_id, None)
+    command_buffers.pop(conn_id, None)
     release_vehicle(conn_id)
 
 
+def apply_player_commands() -> None:
+    """Apply each player's next input command; called once per tick."""
+    for conn_id, commands in command_buffers.items():
+        command = commands.take()
+        if command is not None:
+            apply_input(conn_id, command)
+
+
 def apply_input(conn_id: int, msg: dict) -> None:
-    """Decode input message and update player's vehicle input."""
+    """Steer a player's vehicle with one input command."""
     ent = player_entities.get(conn_id)
     if ent is None or not esper.entity_exists(ent):
         return
@@ -409,43 +431,29 @@ def apply_input(conn_id: int, msg: dict) -> None:
     if pc is None:
         return
 
-    keys = msg["keys"]
-    throttle_float = msg.get("throttle_float", 0.0)
-    autopilot = msg.get("autopilot", False)
-
     phys = esper.component_for_entity(ent, VehiclePhysics)
+    pc.throttle, pc.rudder = vehicle_controls(
+        phys.vehicle_type,
+        msg["keys"],
+        msg.get("throttle_float", 0.0),
+        near_jammer=lambda: _within_jamming_range(ent),
+    )
+    # Autopilot only for tankers
+    pc.autopilot = msg.get("autopilot", False) and phys.vehicle_type == "oil_tanker"
 
-    # Decode rudder from bitmask: bit2=A/Left, bit3=D/Right
-    left = 1.0 if keys & 0x04 else 0.0
-    right = 1.0 if keys & 0x08 else 0.0
-    pc.rudder = right - left
 
-    if phys.vehicle_type in ("shahed", "quadcopter"):
-        # Drones use hold-to-move (W/S from bitmask)
-        fwd = 1.0 if keys & 0x01 else 0.0
-        rev = 1.0 if keys & 0x02 else 0.0
-        pc.throttle = fwd - rev
-        pc.autopilot = False
+def _within_jamming_range(ent: int) -> bool:
+    """Whether a living frigate's jammer reaches this entity."""
+    from hormuz.systems.combat import JAM_RADIUS_SQ
 
-        # Jamming — shaheds lose steering near frigates (quadcopters are autonomous)
-        if pc.rudder != 0.0 and phys.vehicle_type == "shahed":
-            from hormuz.systems.combat import JAM_RADIUS_SQ
-
-            tf = esper.component_for_entity(ent, Transform)
-            for _, (f_tf, f_phys, f_health) in esper.get_components(
-                Transform, VehiclePhysics, Health
-            ):
-                if f_phys.vehicle_type == "frigate" and f_health.hp > 0:
-                    dx = f_tf.x - tf.x
-                    dy = f_tf.y - tf.y
-                    if dx * dx + dy * dy < JAM_RADIUS_SQ:
-                        pc.rudder = 0.0
-                        break
-    else:
-        # Ships use stepped throttle float from client
-        pc.throttle = max(-1.0, min(1.0, throttle_float))
-        # Autopilot only for tankers
-        pc.autopilot = autopilot if phys.vehicle_type == "oil_tanker" else False
+    tf = esper.component_for_entity(ent, Transform)
+    for _, (f_tf, f_phys, f_health) in esper.get_components(Transform, VehiclePhysics, Health):
+        if f_phys.vehicle_type == "frigate" and f_health.hp > 0:
+            dx = f_tf.x - tf.x
+            dy = f_tf.y - tf.y
+            if dx * dx + dy * dy < JAM_RADIUS_SQ:
+                return True
+    return False
 
 
 def broadcast(data: bytes) -> None:
@@ -454,10 +462,10 @@ def broadcast(data: bytes) -> None:
         sender.send(data)
 
 
-def broadcast_snapshot(data: bytes) -> None:
+def broadcast_snapshot(snapshot: Snapshot) -> None:
     """Queue a snapshot for every client, superseding any they haven't received yet."""
-    for sender in connections.values():
-        sender.send_snapshot(data)
+    for conn_id, sender in connections.items():
+        sender.send_snapshot(snapshot.for_client(controlled_vehicle(conn_id)))
 
 
 # --- Game loop ---
@@ -470,6 +478,7 @@ async def game_loop() -> None:
         game_state["tick"] += 1
         game_state["uptime_seconds"] = round(time.monotonic() - start_time, 1)
 
+        apply_player_commands()
         esper.process(dt=TICK_INTERVAL)
 
         # Update stats from processors
@@ -529,21 +538,9 @@ async def game_loop() -> None:
         broadcast_snapshot(build_snapshot())
 
         # Broadcast events (explosions, deliveries, projectiles)
-        for event in combat_proc.events:
-            if event["type"] == "projectile":
-                broadcast(
-                    encode_event(
-                        "projectile",
-                        event["x"],
-                        event["y"],
-                        event["target_x"],
-                        event["target_y"],
-                    )
-                )
-            else:
-                broadcast(encode_event(event["type"], event["x"], event["y"]))
-        for event in spawn_proc.events:
-            broadcast(encode_event(event["type"], event["x"], event["y"]))
+        events = [*combat_proc.events, *spawn_proc.events]
+        if events:
+            broadcast(encode_events(game_state["tick"], events))
 
         # Broadcast stats every second (every 20 ticks)
         if game_state["tick"] % TICK_RATE == 0:
@@ -621,6 +618,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     _next_conn_id += 1
     sender = ClientSender(websocket, on_stalled=lambda: disconnect_player(conn_id))
     connections[conn_id] = sender
+    commands = CommandBuffer()
+    command_buffers[conn_id] = commands
 
     # Assign a vehicle to this player
     assigned = assign_vehicle_to_player(conn_id)
@@ -629,7 +628,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         sender.send(encode_assign_vehicle(assigned, phys.vehicle_type))
 
     # Send full snapshot
-    sender.send_snapshot(build_snapshot())
+    sender.send_snapshot(build_snapshot().for_client(controlled_vehicle(conn_id)))
 
     # Send current stats
     sender.send(
@@ -650,7 +649,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             data = await websocket.receive_bytes()
             msg = decode_client_message(data)
             if msg["type"] == MSG_INPUT:
-                apply_input(conn_id, msg)
+                commands.push(msg)
     except WebSocketDisconnect:
         pass
     finally:

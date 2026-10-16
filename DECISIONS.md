@@ -180,3 +180,35 @@ Fast vehicles looked jittery, most visibly with the camera locked to a shahed or
 - **Latency follows the connection:** ~65 ms behind the newest snapshot on a clean link (previously a fixed ~75 ms), ~130 ms on a jittery one. Input still takes a round trip plus this buffer to show on screen; prediction would remove that.
 - **Slow recovery after outages.** After an outage longer than ~0.25 s, playback stays up to ~0.28 s behind for ~10 s while the burst of late snapshots ages out of the window.
 - **The clock can only hide gaps up to its buffer.** The server-side causes measured alongside it were fixed separately: the tick loop now runs on fixed deadlines (it fell to 18.4 Hz under load), clients no longer send input every frame, and broadcasting queues per client instead of awaiting each socket in turn (one stalled client had frozen the game for 36.6 s).
+
+## 006: Own-vehicle prediction, smooth curves and events on the timeline
+
+**Date:** 2026-10-16
+**Status:** Complete
+
+### Context
+
+After 005, drones still looked jittery zoomed in and in busy fights. Measured causes: every ship sunk on water built a new oil-patch material (a 70–100 ms frozen frame per kill); interpolating 20 Hz snapshots with straight lines turned hard turns into polygons whose corners shook the camera-locked view; and explosions played on arrival, at least 80 ms before the vehicles reached that moment. The player's own vehicle answered the controls a round trip plus the playback buffer late (~270 ms on a 40 ms link). Options considered: (A) smooth playback of the existing stream; (B) A plus client-side prediction of the player's own vehicle; (C) a 30–60 Hz tick and send rate with a leaner protocol, rejected for 1.5–3× server CPU and bandwidth at the planned ~340 entities.
+
+### Decision
+
+A and B, plus sharing the oil-patch material and building effect shaders during loading.
+
+- **Curves.** `game/motion.ts` draws Hermite curves through states one tick apart, leaving each state in the direction the vehicle was moving there. Where a tick's movement isn't explained by the vehicle's velocity (a collision push, a respawn) it falls back to a straight line. `SnapshotInterpolator` and the predictor both use it. Discrete state (hit points) changes when playback reaches the snapshot carrying it.
+- **Events on the timeline.** The server sends each tick's events as one message carrying the tick (`MSG_EVENTS`); `EventTimeline` plays them when playback reaches that tick. Handlers are registered per event kind (`EventHandlers`).
+- **Numbered input commands.** The client issues one command per server tick (`CommandClock`, paced by `PlaybackClock` and trimmed so the server holds about one). The server queues them per client (`commands.py`) and applies exactly one per tick before the ECS runs, repeating the last input when none has arrived.
+- **Per-client snapshot tail.** Each snapshot ends with the client's own vehicle: entity id, the last command applied and how many are waiting. The shared part is encoded once per tick; each client's copy appends its own element. Motion fields (speed, drift, angular velocity) are sent unrounded, since prediction replays from them.
+- **Prediction.** `VehiclePredictor` applies each command at once with `vehicles/physics.ts` and `vehicles/controls.ts`, restarts from each snapshot's server state, replays the unapplied commands and fades any difference out over 0.1 s. Corrections larger than three vehicle lengths jump. It is off while the server steers (tanker autopilot) and while spectating.
+- **Parity.** Key-to-control mapping lives in `controls.py` / `controls.ts`. `shared/physics_fixtures.json` pins the client reference and the server port together (both test suites replay it; regenerate with `UPDATE_PHYSICS_FIXTURES=1`).
+
+### Rationale
+
+- **Measured** on the live server through the client's own code with 40 ms one-way latency: steering response 16 ms predicted versus 266 ms interpolated (32 ms versus 399 ms at 100 ms latency); the worst 1% of frame-to-frame motion changes at 15 px/unit fell from 1.5 px (straight lines) to 0.5 px, the physical curvature of the turn. 5–7 of 600 snapshots corrected the prediction (each when a late command made the server reuse the previous one). A kill frame dropped from 80–100 ms to ~3 ms of main-thread time.
+- **Extensible.** New event kinds need a decode case and a handler. New vehicles are predicted with no extra code, provided their physics stays in the shared fixture. A new prediction input (e.g. weapons) goes through the same command stream.
+- **Testable.** Each module is pure and tested by behaviour: curves pass through every snapshot without corners; events wait for their tick; commands keep the server's pace; prediction follows the server exactly when nothing unforeseen happens, glides out of a push and jumps to a respawn.
+
+### Costs accepted
+
+- **Own vehicle in the present, everything else ~100 ms in the past.** Collisions and hits involving the player's vehicle look slightly early, and anything the client doesn't simulate (collisions, grounding, damage, flooding, empty-tanker handling) shows as a correction.
+- **A tick of input delay on the server.** Commands wait about one tick so jitter doesn't starve the queue; others see the player's input that much later.
+- **Two implementations to keep in step.** Physics and controls changes need the fixture regenerated, and the server tests then show any port that wasn't updated.
