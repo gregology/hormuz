@@ -58,6 +58,7 @@ def _run_scenario(scn: dict) -> list[list[dict]]:
                     target=c["target"],
                     waypoint_index=c["waypoint_index"],
                     stamina=c["stamina"],
+                    group=c["group"],
                 )
         ticks.append(controls)
     return ticks
@@ -75,5 +76,6 @@ def test_contract_scenario(scn: dict) -> None:
             assert a["id"] == e["id"], where
             assert a["target"] == e["target"], where
             assert a["waypoint_index"] == e["waypoint_index"], where
+            assert a["group"] == e["group"], where
             for key in ("throttle", "rudder", "stamina"):
                 assert abs(a[key] - e[key]) <= TOLERANCE, f"{where} {key}: {a[key]} vs {e[key]}"

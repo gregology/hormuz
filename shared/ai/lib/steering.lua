@@ -31,6 +31,32 @@ function M.steer_toward(e, tx, ty)
 	return M.clamp01(diff * 2.0)
 end
 
+--- Rudder to turn entity e directly away from a point. Negating
+--- steer_toward is not the same: it gives no turn at all when the point is
+--- dead ahead.
+function M.steer_away(e, x, y)
+	return M.steer_toward(e, 2.0 * e.x - x, 2.0 * e.y - y)
+end
+
+--- Rudder and throttle to stay near (x, y). A ship at rest still moves
+--- (slope forces, collisions), so drift while inside the hold radius and
+--- motor gently back once outside it.
+function M.hold_at(e, x, y)
+	local cfg = config.nav
+	if (x - e.x) ^ 2 + (y - e.y) ^ 2 < cfg.hold_radius ^ 2 then
+		return 0.0, 0.0
+	end
+	return M.steer_toward(e, x, y), cfg.hold_throttle
+end
+
+--- Throttle that settles a ship at `speed`: thrust is throttle x engine
+--- power against drag that grows with speed squared, so top speed scales
+--- with the square root of throttle.
+function M.throttle_for_speed(speed, max_speed)
+	local fraction = math.max(0.0, math.min(1.0, speed / max_speed))
+	return fraction * fraction
+end
+
 --- Return nearest shipping lane waypoint that makes progress toward the target.
 function M.find_lane_waypoint(x, y, tx, ty)
 	local lane
@@ -135,19 +161,6 @@ function M.repulsion(e, swarm, range)
 	return adjust
 end
 
---- Count threats (from ctx.threats) within radius of a point.
-local function count_threats_near(ctx, x, y, radius_sq)
-	local count = 0
-	for _, t in ipairs(ctx.threats) do
-		local dx = t.x - x
-		local dy = t.y - y
-		if dx * dx + dy * dy < radius_sq then
-			count = count + 1
-		end
-	end
-	return count
-end
-
 --- Score all valid targets by distance and pressure, pick the best.
 --- Re-evaluates every tick; current target gets a stickiness bonus.
 --- Updates opts.counts in-place so later bots this tick see accurate pressure.
@@ -156,11 +169,6 @@ end
 ---   factions = { civilian = true, ... },  -- target faction filter
 ---   max_range_sq = number,
 ---   counts = table,                       -- per-group pressure counts (entity_id -> n)
----   pressure_power = 1,                   -- exponent on (1+pressure)
----   linear_distance = false,              -- score with d instead of d^2
----   threat_boost = false,                 -- prioritize endangered targets (escort)
----   frigate_penalty = nil | entity array, -- penalize targets near these (speedboat)
----   coverage = nil | entity array,        -- count nearby entities as soft pressure (escort)
 --- }
 --- Returns the chosen target entity or nil.
 function M.pick_target(ctx, e, opts)
@@ -168,10 +176,6 @@ function M.pick_target(ctx, e, opts)
 	local best_score = -1.0
 	local best_id = 0
 	local best_target = nil
-	local threat_radius_sq = config.escort.threat_radius * config.escort.threat_radius
-	local frigate_proximity_sq = config.speedboat.frigate_proximity * config.speedboat.frigate_proximity
-	local coverage_radius_sq = config.escort.coverage_radius * config.escort.coverage_radius
-	local pressure_power = opts.pressure_power or 1
 
 	for _, t in ipairs(ctx.world.entities) do
 		if t.hp > 0 and opts.factions[t.faction] then
@@ -180,40 +184,13 @@ function M.pick_target(ctx, e, opts)
 			local d_sq = dx * dx + dy * dy
 			if d_sq <= opts.max_range_sq then
 				d_sq = math.max(d_sq, 1.0)
-				local dist_term = opts.linear_distance and math.sqrt(d_sq) or d_sq
 				local pressure = opts.counts[t.id] or 0
 				-- Our own claim on the current target isn't crowding: counting it
 				-- made the current target look busier than every alternative.
 				if t.id == old_target then
 					pressure = math.max(pressure - 1, 0)
 				end
-				if opts.coverage then
-					local coverage = 0.0
-					for _, c in ipairs(opts.coverage) do
-						local cx = c.x - t.x
-						local cy = c.y - t.y
-						local c_sq = cx * cx + cy * cy
-						if c_sq < coverage_radius_sq then
-							coverage = coverage + 1.0 - math.sqrt(c_sq) / config.escort.coverage_radius
-						end
-					end
-					pressure = math.max(pressure, coverage)
-				end
-				local score = 1.0 / (dist_term * (1 + pressure) ^ pressure_power)
-				if opts.threat_boost then
-					local nearby = count_threats_near(ctx, t.x, t.y, threat_radius_sq)
-					score = score * (1.0 + config.escort.threat_weight * nearby)
-				end
-				if opts.frigate_penalty then
-					for _, f in ipairs(opts.frigate_penalty) do
-						local fx = f.x - t.x
-						local fy = f.y - t.y
-						if fx * fx + fy * fy < frigate_proximity_sq then
-							score = score * 0.05
-							break
-						end
-					end
-				end
+				local score = 1.0 / (d_sq * (1 + pressure))
 				if t.id == e.bot.target then
 					score = score * (1.0 + config.drones.target_stickiness)
 				end

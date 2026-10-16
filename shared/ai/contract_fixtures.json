@@ -1,16 +1,16 @@
 [
   {
-    "name": "tanker convoy: follower brakes behind leader",
+    "name": "convoy: anchored tankers wait while their escort is assigned",
     "dt": 0.05,
     "ticks": 3,
     "entities": [
       {
         "type": "oil_tanker",
         "faction": "civilian",
-        "x": 60000,
-        "y": 43000,
-        "heading": 0,
-        "speed": 10,
+        "x": 74000,
+        "y": 53800,
+        "heading": 5.5,
+        "speed": 0,
         "hp": 100,
         "airborne": false,
         "size": 220,
@@ -22,16 +22,17 @@
           "stamina": 1,
           "waypoint_index": 0,
           "target": 0,
-          "destination": "oman"
+          "destination": "oman",
+          "group": 0
         }
       },
       {
         "type": "oil_tanker",
         "faction": "civilian",
-        "x": 60200,
-        "y": 43000,
-        "heading": 0,
-        "speed": 5,
+        "x": 74700,
+        "y": 53300,
+        "heading": 5.5,
+        "speed": 0,
         "hp": 100,
         "airborne": false,
         "size": 220,
@@ -43,8 +44,53 @@
           "stamina": 1,
           "waypoint_index": 0,
           "target": 0,
-          "destination": "oman"
+          "destination": "oman",
+          "group": 0
         }
+      },
+      {
+        "type": "oil_tanker",
+        "faction": "civilian",
+        "x": 73400,
+        "y": 54300,
+        "heading": 5.5,
+        "speed": 0,
+        "hp": 100,
+        "airborne": false,
+        "size": 220,
+        "id": 3,
+        "behavior": "tanker_transit",
+        "bot": {
+          "throttle": 0,
+          "rudder": 0,
+          "stamina": 1,
+          "waypoint_index": 0,
+          "target": 0,
+          "destination": "oman",
+          "group": 0
+        }
+      },
+      {
+        "type": "frigate",
+        "faction": "us",
+        "x": 77880,
+        "y": 51086,
+        "heading": 0,
+        "speed": 0,
+        "hp": 100,
+        "airborne": false,
+        "size": 100,
+        "behavior": "escort",
+        "bot": {
+          "throttle": 0,
+          "rudder": 0,
+          "stamina": 1,
+          "waypoint_index": 0,
+          "target": 0,
+          "destination": "oman",
+          "group": 0
+        },
+        "id": 4
       }
     ],
     "scents": [],
@@ -52,96 +98,200 @@
       [
         {
           "id": 1,
-          "throttle": 0.7,
-          "rudder": 0.7840909090909092,
+          "throttle": 0,
+          "rudder": 0.04857889710922591,
           "target": 0,
           "waypoint_index": 0,
-          "stamina": 1
+          "stamina": 1,
+          "group": 1
         },
         {
           "id": 2,
-          "throttle": 1,
-          "rudder": 1,
+          "throttle": 0,
+          "rudder": 0.06777072730052904,
           "target": 0,
           "waypoint_index": 0,
-          "stamina": 1
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 3,
+          "throttle": 0,
+          "rudder": 0.0401240217422506,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 4,
+          "throttle": 1,
+          "rudder": 0.47917952260374763,
+          "target": 1,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
         }
       ],
       [
         {
           "id": 1,
-          "throttle": 0.7,
-          "rudder": 0.7840909090909092,
+          "throttle": 0,
+          "rudder": 0.04857889710922591,
           "target": 0,
           "waypoint_index": 0,
-          "stamina": 1
+          "stamina": 1,
+          "group": 1
         },
         {
           "id": 2,
-          "throttle": 1,
-          "rudder": 1,
+          "throttle": 0,
+          "rudder": 0.06777072730052904,
           "target": 0,
           "waypoint_index": 0,
-          "stamina": 1
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 3,
+          "throttle": 0,
+          "rudder": 0.0401240217422506,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 4,
+          "throttle": 1,
+          "rudder": 0.47917952260374763,
+          "target": 1,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
         }
       ],
       [
         {
           "id": 1,
-          "throttle": 0.7,
-          "rudder": 0.7840909090909092,
+          "throttle": 0,
+          "rudder": 0.04857889710922591,
           "target": 0,
           "waypoint_index": 0,
-          "stamina": 1
+          "stamina": 1,
+          "group": 1
         },
         {
           "id": 2,
-          "throttle": 1,
-          "rudder": 1,
+          "throttle": 0,
+          "rudder": 0.06777072730052904,
           "target": 0,
           "waypoint_index": 0,
-          "stamina": 1
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 3,
+          "throttle": 0,
+          "rudder": 0.0401240217422506,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 4,
+          "throttle": 1,
+          "rudder": 0.47917952260374763,
+          "target": 1,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
         }
       ]
     ]
   },
   {
-    "name": "escort: two frigates split across two tankers",
+    "name": "convoy: sails in column once its escort is on station",
     "dt": 0.05,
-    "ticks": 3,
+    "ticks": 24,
     "entities": [
       {
-        "type": "frigate",
-        "faction": "us",
-        "x": 60000,
-        "y": 43000,
-        "heading": 0,
-        "speed": 10,
+        "type": "oil_tanker",
+        "faction": "civilian",
+        "x": 74000,
+        "y": 53800,
+        "heading": 5.5,
+        "speed": 0,
         "hp": 100,
         "airborne": false,
-        "size": 100,
+        "size": 220,
         "id": 1,
-        "behavior": "escort",
+        "behavior": "tanker_transit",
         "bot": {
           "throttle": 0,
           "rudder": 0,
           "stamina": 1,
           "waypoint_index": 0,
           "target": 0,
-          "destination": "oman"
+          "destination": "oman",
+          "group": 0
+        }
+      },
+      {
+        "type": "oil_tanker",
+        "faction": "civilian",
+        "x": 74700,
+        "y": 53300,
+        "heading": 5.5,
+        "speed": 0,
+        "hp": 100,
+        "airborne": false,
+        "size": 220,
+        "id": 2,
+        "behavior": "tanker_transit",
+        "bot": {
+          "throttle": 0,
+          "rudder": 0,
+          "stamina": 1,
+          "waypoint_index": 0,
+          "target": 0,
+          "destination": "oman",
+          "group": 0
+        }
+      },
+      {
+        "type": "oil_tanker",
+        "faction": "civilian",
+        "x": 73400,
+        "y": 54300,
+        "heading": 5.5,
+        "speed": 0,
+        "hp": 100,
+        "airborne": false,
+        "size": 220,
+        "id": 3,
+        "behavior": "tanker_transit",
+        "bot": {
+          "throttle": 0,
+          "rudder": 0,
+          "stamina": 1,
+          "waypoint_index": 0,
+          "target": 0,
+          "destination": "oman",
+          "group": 0
         }
       },
       {
         "type": "frigate",
         "faction": "us",
-        "x": 60000,
-        "y": 43500,
-        "heading": 0,
+        "x": 75500,
+        "y": 53000,
+        "heading": 5.5,
         "speed": 10,
         "hp": 100,
         "airborne": false,
         "size": 100,
-        "id": 2,
         "behavior": "escort",
         "bot": {
           "throttle": 0,
@@ -149,32 +299,10 @@
           "stamina": 1,
           "waypoint_index": 0,
           "target": 0,
-          "destination": "oman"
-        }
-      },
-      {
-        "type": "oil_tanker",
-        "faction": "civilian",
-        "x": 63000,
-        "y": 42500,
-        "heading": 0,
-        "speed": 10,
-        "hp": 100,
-        "airborne": false,
-        "size": 220,
-        "id": 10
-      },
-      {
-        "type": "oil_tanker",
-        "faction": "civilian",
-        "x": 63000,
-        "y": 43500,
-        "heading": 0,
-        "speed": 10,
-        "hp": 100,
-        "airborne": false,
-        "size": 220,
-        "id": 11
+          "destination": "oman",
+          "group": 0
+        },
+        "id": 4
       }
     ],
     "scents": [],
@@ -182,55 +310,1221 @@
       [
         {
           "id": 1,
-          "throttle": 1,
-          "rudder": -0.5731784128975523,
-          "target": 10,
+          "throttle": 0,
+          "rudder": 0.04857889710922591,
+          "target": 0,
           "waypoint_index": 0,
-          "stamina": 1
+          "stamina": 1,
+          "group": 1
         },
         {
           "id": 2,
-          "throttle": 1,
-          "rudder": 0.375,
-          "target": 11,
+          "throttle": 0,
+          "rudder": 0.06777072730052904,
+          "target": 0,
           "waypoint_index": 0,
-          "stamina": 1
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 3,
+          "throttle": 0,
+          "rudder": 0.0401240217422506,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 4,
+          "throttle": 1,
+          "rudder": -0.7485438759793258,
+          "target": 1,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
         }
       ],
       [
         {
           "id": 1,
-          "throttle": 1,
-          "rudder": -0.5731784128975523,
-          "target": 10,
+          "throttle": 0,
+          "rudder": 0.04857889710922591,
+          "target": 0,
           "waypoint_index": 0,
-          "stamina": 1
+          "stamina": 1,
+          "group": 1
         },
         {
           "id": 2,
-          "throttle": 1,
-          "rudder": 0.375,
-          "target": 11,
+          "throttle": 0,
+          "rudder": 0.06777072730052904,
+          "target": 0,
           "waypoint_index": 0,
-          "stamina": 1
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 3,
+          "throttle": 0,
+          "rudder": 0.0401240217422506,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 4,
+          "throttle": 1,
+          "rudder": -0.7485438759793258,
+          "target": 1,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
         }
       ],
       [
         {
           "id": 1,
-          "throttle": 1,
-          "rudder": -0.5731784128975523,
-          "target": 10,
+          "throttle": 0,
+          "rudder": 0.04857889710922591,
+          "target": 0,
           "waypoint_index": 0,
-          "stamina": 1
+          "stamina": 1,
+          "group": 1
         },
         {
           "id": 2,
-          "throttle": 1,
-          "rudder": 0.375,
-          "target": 11,
+          "throttle": 0,
+          "rudder": 0.06777072730052904,
+          "target": 0,
           "waypoint_index": 0,
-          "stamina": 1
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 3,
+          "throttle": 0,
+          "rudder": 0.0401240217422506,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 4,
+          "throttle": 1,
+          "rudder": -0.7485438759793258,
+          "target": 1,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        }
+      ],
+      [
+        {
+          "id": 1,
+          "throttle": 0,
+          "rudder": 0.04857889710922591,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 2,
+          "throttle": 0,
+          "rudder": 0.06777072730052904,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 3,
+          "throttle": 0,
+          "rudder": 0.0401240217422506,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 4,
+          "throttle": 1,
+          "rudder": -0.7485438759793258,
+          "target": 1,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        }
+      ],
+      [
+        {
+          "id": 1,
+          "throttle": 0,
+          "rudder": 0.04857889710922591,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 2,
+          "throttle": 0,
+          "rudder": 0.06777072730052904,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 3,
+          "throttle": 0,
+          "rudder": 0.0401240217422506,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 4,
+          "throttle": 1,
+          "rudder": -0.7485438759793258,
+          "target": 1,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        }
+      ],
+      [
+        {
+          "id": 1,
+          "throttle": 0,
+          "rudder": 0.04857889710922591,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 2,
+          "throttle": 0,
+          "rudder": 0.06777072730052904,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 3,
+          "throttle": 0,
+          "rudder": 0.0401240217422506,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 4,
+          "throttle": 1,
+          "rudder": -0.7485438759793258,
+          "target": 1,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        }
+      ],
+      [
+        {
+          "id": 1,
+          "throttle": 0,
+          "rudder": 0.04857889710922591,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 2,
+          "throttle": 0,
+          "rudder": 0.06777072730052904,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 3,
+          "throttle": 0,
+          "rudder": 0.0401240217422506,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 4,
+          "throttle": 1,
+          "rudder": -0.7485438759793258,
+          "target": 1,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        }
+      ],
+      [
+        {
+          "id": 1,
+          "throttle": 0,
+          "rudder": 0.04857889710922591,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 2,
+          "throttle": 0,
+          "rudder": 0.06777072730052904,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 3,
+          "throttle": 0,
+          "rudder": 0.0401240217422506,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 4,
+          "throttle": 1,
+          "rudder": -0.7485438759793258,
+          "target": 1,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        }
+      ],
+      [
+        {
+          "id": 1,
+          "throttle": 0,
+          "rudder": 0.04857889710922591,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 2,
+          "throttle": 0,
+          "rudder": 0.06777072730052904,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 3,
+          "throttle": 0,
+          "rudder": 0.0401240217422506,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 4,
+          "throttle": 1,
+          "rudder": -0.7485438759793258,
+          "target": 1,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        }
+      ],
+      [
+        {
+          "id": 1,
+          "throttle": 0,
+          "rudder": 0.04857889710922591,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 2,
+          "throttle": 0,
+          "rudder": 0.06777072730052904,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 3,
+          "throttle": 0,
+          "rudder": 0.0401240217422506,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 4,
+          "throttle": 1,
+          "rudder": -0.7485438759793258,
+          "target": 1,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        }
+      ],
+      [
+        {
+          "id": 1,
+          "throttle": 0,
+          "rudder": 0.04857889710922591,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 2,
+          "throttle": 0,
+          "rudder": 0.06777072730052904,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 3,
+          "throttle": 0,
+          "rudder": 0.0401240217422506,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 4,
+          "throttle": 1,
+          "rudder": -0.7485438759793258,
+          "target": 1,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        }
+      ],
+      [
+        {
+          "id": 1,
+          "throttle": 0,
+          "rudder": 0.04857889710922591,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 2,
+          "throttle": 0,
+          "rudder": 0.06777072730052904,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 3,
+          "throttle": 0,
+          "rudder": 0.0401240217422506,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 4,
+          "throttle": 1,
+          "rudder": -0.7485438759793258,
+          "target": 1,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        }
+      ],
+      [
+        {
+          "id": 1,
+          "throttle": 0,
+          "rudder": 0.04857889710922591,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 2,
+          "throttle": 0,
+          "rudder": 0.06777072730052904,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 3,
+          "throttle": 0,
+          "rudder": 0.0401240217422506,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 4,
+          "throttle": 1,
+          "rudder": -0.7485438759793258,
+          "target": 1,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        }
+      ],
+      [
+        {
+          "id": 1,
+          "throttle": 0,
+          "rudder": 0.04857889710922591,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 2,
+          "throttle": 0,
+          "rudder": 0.06777072730052904,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 3,
+          "throttle": 0,
+          "rudder": 0.0401240217422506,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 4,
+          "throttle": 1,
+          "rudder": -0.7485438759793258,
+          "target": 1,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        }
+      ],
+      [
+        {
+          "id": 1,
+          "throttle": 0,
+          "rudder": 0.04857889710922591,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 2,
+          "throttle": 0,
+          "rudder": 0.06777072730052904,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 3,
+          "throttle": 0,
+          "rudder": 0.0401240217422506,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 4,
+          "throttle": 1,
+          "rudder": -0.7485438759793258,
+          "target": 1,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        }
+      ],
+      [
+        {
+          "id": 1,
+          "throttle": 0,
+          "rudder": 0.04857889710922591,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 2,
+          "throttle": 0,
+          "rudder": 0.06777072730052904,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 3,
+          "throttle": 0,
+          "rudder": 0.0401240217422506,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 4,
+          "throttle": 1,
+          "rudder": -0.7485438759793258,
+          "target": 1,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        }
+      ],
+      [
+        {
+          "id": 1,
+          "throttle": 0,
+          "rudder": 0.04857889710922591,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 2,
+          "throttle": 0,
+          "rudder": 0.06777072730052904,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 3,
+          "throttle": 0,
+          "rudder": 0.0401240217422506,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 4,
+          "throttle": 1,
+          "rudder": -0.7485438759793258,
+          "target": 1,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        }
+      ],
+      [
+        {
+          "id": 1,
+          "throttle": 0,
+          "rudder": 0.04857889710922591,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 2,
+          "throttle": 0,
+          "rudder": 0.06777072730052904,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 3,
+          "throttle": 0,
+          "rudder": 0.0401240217422506,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 4,
+          "throttle": 1,
+          "rudder": -0.7485438759793258,
+          "target": 1,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        }
+      ],
+      [
+        {
+          "id": 1,
+          "throttle": 0,
+          "rudder": 0.04857889710922591,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 2,
+          "throttle": 0,
+          "rudder": 0.06777072730052904,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 3,
+          "throttle": 0,
+          "rudder": 0.0401240217422506,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 4,
+          "throttle": 1,
+          "rudder": -0.7485438759793258,
+          "target": 1,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        }
+      ],
+      [
+        {
+          "id": 1,
+          "throttle": 0,
+          "rudder": 0.04857889710922591,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 2,
+          "throttle": 0,
+          "rudder": 0.06777072730052904,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 3,
+          "throttle": 0,
+          "rudder": 0.0401240217422506,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 4,
+          "throttle": 1,
+          "rudder": -0.7485438759793258,
+          "target": 1,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        }
+      ],
+      [
+        {
+          "id": 1,
+          "throttle": 0.0456434890916129,
+          "rudder": 0.4916178612384883,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 2,
+          "throttle": 0.81,
+          "rudder": 0.5736516924982897,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 3,
+          "throttle": 0.011671191774343809,
+          "rudder": 0.41887604280789326,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 4,
+          "throttle": 1,
+          "rudder": -0.7485438759793258,
+          "target": 1,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        }
+      ],
+      [
+        {
+          "id": 1,
+          "throttle": 0.0456434890916129,
+          "rudder": 0.4916178612384883,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 2,
+          "throttle": 0.81,
+          "rudder": 0.5736516924982897,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 3,
+          "throttle": 0.011671191774343809,
+          "rudder": 0.41887604280789326,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 4,
+          "throttle": 1,
+          "rudder": -0.7485438759793258,
+          "target": 1,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        }
+      ],
+      [
+        {
+          "id": 1,
+          "throttle": 0.0456434890916129,
+          "rudder": 0.4916178612384883,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 2,
+          "throttle": 0.81,
+          "rudder": 0.5736516924982897,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 3,
+          "throttle": 0.011671191774343809,
+          "rudder": 0.41887604280789326,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 4,
+          "throttle": 1,
+          "rudder": -0.7485438759793258,
+          "target": 1,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        }
+      ],
+      [
+        {
+          "id": 1,
+          "throttle": 0.0456434890916129,
+          "rudder": 0.4916178612384883,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 2,
+          "throttle": 0.81,
+          "rudder": 0.5736516924982897,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 3,
+          "throttle": 0.011671191774343809,
+          "rudder": 0.41887604280789326,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 4,
+          "throttle": 1,
+          "rudder": -0.7485438759793258,
+          "target": 1,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        }
+      ]
+    ]
+  },
+  {
+    "name": "escort: two frigates split across two convoys",
+    "dt": 0.05,
+    "ticks": 2,
+    "entities": [
+      {
+        "type": "oil_tanker",
+        "faction": "civilian",
+        "x": 74000,
+        "y": 53800,
+        "heading": 5.5,
+        "speed": 0,
+        "hp": 100,
+        "airborne": false,
+        "size": 220,
+        "id": 1,
+        "behavior": "tanker_transit",
+        "bot": {
+          "throttle": 0,
+          "rudder": 0,
+          "stamina": 1,
+          "waypoint_index": 0,
+          "target": 0,
+          "destination": "oman",
+          "group": 0
+        }
+      },
+      {
+        "type": "oil_tanker",
+        "faction": "civilian",
+        "x": 74700,
+        "y": 53300,
+        "heading": 5.5,
+        "speed": 0,
+        "hp": 100,
+        "airborne": false,
+        "size": 220,
+        "id": 2,
+        "behavior": "tanker_transit",
+        "bot": {
+          "throttle": 0,
+          "rudder": 0,
+          "stamina": 1,
+          "waypoint_index": 0,
+          "target": 0,
+          "destination": "oman",
+          "group": 0
+        }
+      },
+      {
+        "type": "oil_tanker",
+        "faction": "civilian",
+        "x": 73400,
+        "y": 54300,
+        "heading": 5.5,
+        "speed": 0,
+        "hp": 100,
+        "airborne": false,
+        "size": 220,
+        "id": 3,
+        "behavior": "tanker_transit",
+        "bot": {
+          "throttle": 0,
+          "rudder": 0,
+          "stamina": 1,
+          "waypoint_index": 0,
+          "target": 0,
+          "destination": "oman",
+          "group": 0
+        }
+      },
+      {
+        "type": "oil_tanker",
+        "faction": "civilian",
+        "x": 92900,
+        "y": 61200,
+        "heading": 4.2,
+        "speed": 0,
+        "hp": 100,
+        "airborne": false,
+        "size": 220,
+        "id": 5,
+        "behavior": "tanker_transit",
+        "bot": {
+          "throttle": 0,
+          "rudder": 0,
+          "stamina": 1,
+          "waypoint_index": 0,
+          "target": 0,
+          "destination": "gulf",
+          "group": 0
+        }
+      },
+      {
+        "type": "frigate",
+        "faction": "us",
+        "x": 77880,
+        "y": 51086,
+        "heading": 0,
+        "speed": 0,
+        "hp": 100,
+        "airborne": false,
+        "size": 100,
+        "behavior": "escort",
+        "bot": {
+          "throttle": 0,
+          "rudder": 0,
+          "stamina": 1,
+          "waypoint_index": 0,
+          "target": 0,
+          "destination": "oman",
+          "group": 0
+        },
+        "id": 8
+      },
+      {
+        "type": "frigate",
+        "faction": "us",
+        "x": 78180,
+        "y": 51086,
+        "heading": 0,
+        "speed": 0,
+        "hp": 100,
+        "airborne": false,
+        "size": 100,
+        "behavior": "escort",
+        "bot": {
+          "throttle": 0,
+          "rudder": 0,
+          "stamina": 1,
+          "waypoint_index": 0,
+          "target": 0,
+          "destination": "oman",
+          "group": 0
+        },
+        "id": 9
+      }
+    ],
+    "scents": [],
+    "expected": [
+      [
+        {
+          "id": 1,
+          "throttle": 0,
+          "rudder": 0.04857889710922591,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 2,
+          "throttle": 0,
+          "rudder": 0.06777072730052904,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 3,
+          "throttle": 0,
+          "rudder": 0.0401240217422506,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 5,
+          "throttle": 0,
+          "rudder": 0,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 2
+        },
+        {
+          "id": 8,
+          "throttle": 1,
+          "rudder": 0.47917952260374763,
+          "target": 1,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 9,
+          "throttle": 1,
+          "rudder": -1,
+          "target": 5,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 2
+        }
+      ],
+      [
+        {
+          "id": 1,
+          "throttle": 0,
+          "rudder": 0.04857889710922591,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 2,
+          "throttle": 0,
+          "rudder": 0.06777072730052904,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 3,
+          "throttle": 0,
+          "rudder": 0.0401240217422506,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 5,
+          "throttle": 0,
+          "rudder": 0,
+          "target": 0,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 2
+        },
+        {
+          "id": 8,
+          "throttle": 1,
+          "rudder": 0.47917952260374763,
+          "target": 1,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 9,
+          "throttle": 1,
+          "rudder": -1,
+          "target": 5,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 2
+        }
+      ]
+    ]
+  },
+  {
+    "name": "tanker under way advances waypoint",
+    "dt": 0.05,
+    "ticks": 2,
+    "entities": [
+      {
+        "type": "oil_tanker",
+        "faction": "civilian",
+        "x": 77977,
+        "y": 50890,
+        "heading": -0.7457056743631268,
+        "speed": 10,
+        "hp": 100,
+        "airborne": false,
+        "size": 220,
+        "id": 1,
+        "behavior": "tanker_transit",
+        "bot": {
+          "throttle": 0,
+          "rudder": 0,
+          "stamina": 1,
+          "waypoint_index": 1,
+          "target": 0,
+          "destination": "oman",
+          "group": 0
+        }
+      }
+    ],
+    "scents": [],
+    "expected": [
+      [
+        {
+          "id": 1,
+          "throttle": 0.81,
+          "rudder": -0.05907173383011077,
+          "target": 0,
+          "waypoint_index": 2,
+          "stamina": 1,
+          "group": 1
+        }
+      ],
+      [
+        {
+          "id": 1,
+          "throttle": 0.81,
+          "rudder": -0.05907173383011077,
+          "target": 0,
+          "waypoint_index": 2,
+          "stamina": 1,
+          "group": 1
         }
       ]
     ]
@@ -258,7 +1552,8 @@
           "stamina": 1,
           "waypoint_index": 0,
           "target": 0,
-          "destination": "oman"
+          "destination": "oman",
+          "group": 0
         }
       },
       {
@@ -279,7 +1574,8 @@
           "stamina": 1,
           "waypoint_index": 0,
           "target": 0,
-          "destination": "oman"
+          "destination": "oman",
+          "group": 0
         }
       },
       {
@@ -328,7 +1624,8 @@
           "rudder": 0,
           "target": 0,
           "waypoint_index": 0,
-          "stamina": 1
+          "stamina": 1,
+          "group": 0
         },
         {
           "id": 2,
@@ -336,7 +1633,8 @@
           "rudder": -0.9272952180016123,
           "target": 11,
           "waypoint_index": 0,
-          "stamina": 1
+          "stamina": 1,
+          "group": 0
         }
       ],
       [
@@ -346,7 +1644,8 @@
           "rudder": 0,
           "target": 0,
           "waypoint_index": 0,
-          "stamina": 1
+          "stamina": 1,
+          "group": 0
         },
         {
           "id": 2,
@@ -354,7 +1653,8 @@
           "rudder": -0.9272952180016123,
           "target": 11,
           "waypoint_index": 0,
-          "stamina": 1
+          "stamina": 1,
+          "group": 0
         }
       ],
       [
@@ -364,7 +1664,8 @@
           "rudder": 0,
           "target": 0,
           "waypoint_index": 0,
-          "stamina": 1
+          "stamina": 1,
+          "group": 0
         },
         {
           "id": 2,
@@ -372,13 +1673,140 @@
           "rudder": -0.9272952180016123,
           "target": 11,
           "waypoint_index": 0,
-          "stamina": 1
+          "stamina": 1,
+          "group": 0
         }
       ]
     ]
   },
   {
-    "name": "speedboat: frigate evasion overrides hunting",
+    "name": "speedboats: rested pair musters against an unescorted tanker",
+    "dt": 0.05,
+    "ticks": 3,
+    "entities": [
+      {
+        "type": "speedboat",
+        "faction": "iran",
+        "x": 76313,
+        "y": 45778,
+        "heading": 0.8,
+        "speed": 0,
+        "hp": 100,
+        "airborne": false,
+        "size": 13,
+        "behavior": "swarm_attack",
+        "bot": {
+          "throttle": 0,
+          "rudder": 0,
+          "stamina": 1,
+          "waypoint_index": 0,
+          "target": 0,
+          "destination": "oman",
+          "group": 0
+        },
+        "id": 1
+      },
+      {
+        "type": "speedboat",
+        "faction": "iran",
+        "x": 76463,
+        "y": 45778,
+        "heading": 0.8,
+        "speed": 0,
+        "hp": 100,
+        "airborne": false,
+        "size": 13,
+        "behavior": "swarm_attack",
+        "bot": {
+          "throttle": 0,
+          "rudder": 0,
+          "stamina": 1,
+          "waypoint_index": 0,
+          "target": 0,
+          "destination": "oman",
+          "group": 0
+        },
+        "id": 2
+      },
+      {
+        "type": "oil_tanker",
+        "faction": "civilian",
+        "x": 77813,
+        "y": 48376,
+        "heading": 0,
+        "speed": 10,
+        "hp": 100,
+        "airborne": false,
+        "size": 220,
+        "id": 10
+      }
+    ],
+    "scents": [],
+    "expected": [
+      [
+        {
+          "id": 1,
+          "throttle": 0,
+          "rudder": 0,
+          "target": 10,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 2,
+          "throttle": 0,
+          "rudder": 0,
+          "target": 10,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        }
+      ],
+      [
+        {
+          "id": 1,
+          "throttle": 0,
+          "rudder": 0,
+          "target": 10,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 2,
+          "throttle": 0,
+          "rudder": 0,
+          "target": 10,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        }
+      ],
+      [
+        {
+          "id": 1,
+          "throttle": 0,
+          "rudder": 0,
+          "target": 10,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        },
+        {
+          "id": 2,
+          "throttle": 0,
+          "rudder": 0,
+          "target": 10,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 1
+        }
+      ]
+    ]
+  },
+  {
+    "name": "speedboat: frigate evasion overrides everything",
     "dt": 0.05,
     "ticks": 3,
     "entities": [
@@ -388,11 +1816,10 @@
         "x": 60000,
         "y": 43000,
         "heading": 0,
-        "speed": 10,
+        "speed": 30,
         "hp": 100,
         "airborne": false,
-        "size": 20,
-        "id": 1,
+        "size": 13,
         "behavior": "swarm_attack",
         "bot": {
           "throttle": 0,
@@ -400,8 +1827,10 @@
           "stamina": 0.5,
           "waypoint_index": 0,
           "target": 0,
-          "destination": "oman"
-        }
+          "destination": "oman",
+          "group": 0
+        },
+        "id": 1
       },
       {
         "type": "frigate",
@@ -434,36 +1863,39 @@
         {
           "id": 1,
           "throttle": 1,
-          "rudder": -0.39088191723541965,
+          "rudder": -1,
           "target": 0,
           "waypoint_index": 0,
-          "stamina": 0.49925
+          "stamina": 0.49985,
+          "group": 0
         }
       ],
       [
         {
           "id": 1,
           "throttle": 1,
-          "rudder": -0.39088191723541965,
+          "rudder": -1,
           "target": 0,
           "waypoint_index": 0,
-          "stamina": 0.49850000000000005
+          "stamina": 0.49970000000000003,
+          "group": 0
         }
       ],
       [
         {
           "id": 1,
           "throttle": 1,
-          "rudder": -0.39088191723541965,
+          "rudder": -1,
           "target": 0,
           "waypoint_index": 0,
-          "stamina": 0.4977500000000001
+          "stamina": 0.49955000000000005,
+          "group": 0
         }
       ]
     ]
   },
   {
-    "name": "danger scent: frigate rushes, tanker drifts away",
+    "name": "danger scent: tanker under way drifts away while escorted",
     "dt": 0.05,
     "ticks": 4,
     "entities": [
@@ -477,7 +1909,6 @@
         "hp": 100,
         "airborne": false,
         "size": 100,
-        "id": 1,
         "behavior": "escort",
         "bot": {
           "throttle": 0,
@@ -485,8 +1916,10 @@
           "stamina": 1,
           "waypoint_index": 0,
           "target": 0,
-          "destination": "oman"
-        }
+          "destination": "oman",
+          "group": 0
+        },
+        "id": 1
       },
       {
         "type": "oil_tanker",
@@ -504,9 +1937,10 @@
           "throttle": 0,
           "rudder": 0,
           "stamina": 1,
-          "waypoint_index": 0,
+          "waypoint_index": 3,
           "target": 0,
-          "destination": "oman"
+          "destination": "oman",
+          "group": 0
         }
       }
     ],
@@ -522,72 +1956,80 @@
         {
           "id": 1,
           "throttle": 1,
-          "rudder": 0.5563771308009674,
+          "rudder": 1,
           "target": 10,
           "waypoint_index": 0,
-          "stamina": 1
+          "stamina": 1,
+          "group": 1
         },
         {
           "id": 10,
-          "throttle": 1,
+          "throttle": 0.81,
           "rudder": 0.8,
           "target": 0,
-          "waypoint_index": 0,
-          "stamina": 1
+          "waypoint_index": 3,
+          "stamina": 1,
+          "group": 1
         }
       ],
       [
         {
           "id": 1,
           "throttle": 1,
-          "rudder": 0.5563771308009674,
+          "rudder": 1,
           "target": 10,
           "waypoint_index": 0,
-          "stamina": 1
+          "stamina": 1,
+          "group": 1
         },
         {
           "id": 10,
-          "throttle": 1,
+          "throttle": 0.81,
           "rudder": 0.8,
           "target": 0,
-          "waypoint_index": 0,
-          "stamina": 1
+          "waypoint_index": 3,
+          "stamina": 1,
+          "group": 1
         }
       ],
       [
         {
           "id": 1,
           "throttle": 1,
-          "rudder": 0.5563771308009674,
+          "rudder": 1,
           "target": 10,
           "waypoint_index": 0,
-          "stamina": 1
+          "stamina": 1,
+          "group": 1
         },
         {
           "id": 10,
-          "throttle": 1,
+          "throttle": 0.81,
           "rudder": 0.8,
           "target": 0,
-          "waypoint_index": 0,
-          "stamina": 1
+          "waypoint_index": 3,
+          "stamina": 1,
+          "group": 1
         }
       ],
       [
         {
           "id": 1,
           "throttle": 1,
-          "rudder": 0.5563771308009674,
+          "rudder": 1,
           "target": 10,
           "waypoint_index": 0,
-          "stamina": 1
+          "stamina": 1,
+          "group": 1
         },
         {
           "id": 10,
-          "throttle": 1,
+          "throttle": 0.81,
           "rudder": 0.8,
           "target": 0,
-          "waypoint_index": 0,
-          "stamina": 1
+          "waypoint_index": 3,
+          "stamina": 1,
+          "group": 1
         }
       ]
     ]
@@ -615,7 +2057,8 @@
           "stamina": 1,
           "waypoint_index": 0,
           "target": 0,
-          "destination": "oman"
+          "destination": "oman",
+          "group": 0
         }
       },
       {
@@ -636,7 +2079,8 @@
           "stamina": 1,
           "waypoint_index": 0,
           "target": 0,
-          "destination": "oman"
+          "destination": "oman",
+          "group": 0
         }
       },
       {
@@ -673,102 +2117,57 @@
           "rudder": -0.5377798952189943,
           "target": 10,
           "waypoint_index": 0,
-          "stamina": 1
-        },
-        {
-          "id": 2,
-          "throttle": 1,
-          "rudder": 0.33991679144388587,
-          "target": 11,
-          "waypoint_index": 0,
-          "stamina": 1
-        }
-      ],
-      [
-        {
-          "id": 1,
-          "throttle": 1,
-          "rudder": -0.5377798952189943,
-          "target": 10,
-          "waypoint_index": 0,
-          "stamina": 1
-        },
-        {
-          "id": 2,
-          "throttle": 1,
-          "rudder": 0.33991679144388587,
-          "target": 11,
-          "waypoint_index": 0,
-          "stamina": 1
-        }
-      ],
-      [
-        {
-          "id": 1,
-          "throttle": 1,
-          "rudder": -0.5377798952189943,
-          "target": 10,
-          "waypoint_index": 0,
-          "stamina": 1
-        },
-        {
-          "id": 2,
-          "throttle": 1,
-          "rudder": 0.33991679144388587,
-          "target": 11,
-          "waypoint_index": 0,
-          "stamina": 1
-        }
-      ]
-    ]
-  },
-  {
-    "name": "tanker at lane start advances waypoint",
-    "dt": 0.05,
-    "ticks": 2,
-    "entities": [
-      {
-        "type": "oil_tanker",
-        "faction": "civilian",
-        "x": 76227,
-        "y": 52473,
-        "heading": 0,
-        "speed": 10,
-        "hp": 100,
-        "airborne": false,
-        "size": 220,
-        "id": 1,
-        "behavior": "tanker_transit",
-        "bot": {
-          "throttle": 0,
-          "rudder": 0,
           "stamina": 1,
-          "waypoint_index": 0,
-          "target": 0,
-          "destination": "oman"
-        }
-      }
-    ],
-    "scents": [],
-    "expected": [
-      [
+          "group": 0
+        },
         {
-          "id": 1,
+          "id": 2,
           "throttle": 1,
-          "rudder": -1,
-          "target": 0,
-          "waypoint_index": 1,
-          "stamina": 1
+          "rudder": 0.33991679144388587,
+          "target": 11,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 0
         }
       ],
       [
         {
           "id": 1,
           "throttle": 1,
-          "rudder": -1,
-          "target": 0,
-          "waypoint_index": 1,
-          "stamina": 1
+          "rudder": -0.5377798952189943,
+          "target": 10,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 0
+        },
+        {
+          "id": 2,
+          "throttle": 1,
+          "rudder": 0.33991679144388587,
+          "target": 11,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 0
+        }
+      ],
+      [
+        {
+          "id": 1,
+          "throttle": 1,
+          "rudder": -0.5377798952189943,
+          "target": 10,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 0
+        },
+        {
+          "id": 2,
+          "throttle": 1,
+          "rudder": 0.33991679144388587,
+          "target": 11,
+          "waypoint_index": 0,
+          "stamina": 1,
+          "group": 0
         }
       ]
     ]

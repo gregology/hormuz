@@ -212,3 +212,39 @@ A and B, plus sharing the oil-patch material and building effect shaders during 
 - **Own vehicle in the present, everything else ~100 ms in the past.** Collisions and hits involving the player's vehicle look slightly early, and anything the client doesn't simulate (collisions, grounding, damage, flooding, empty-tanker handling) shows as a correction.
 - **A tick of input delay on the server.** Commands wait about one tick so jitter doesn't starve the queue; others see the player's input that much later.
 - **Two implementations to keep in step.** Physics and controls changes need the fixture regenerated, and the server tests then show any port that wasn't updated.
+
+---
+
+## 007: Group layer for bot AI — convoys, escort assignment and speedboat packs
+
+**Date:** 2026-10-16
+**Status:** Complete
+
+### Context
+
+The colony-insect AI (003) never produced convoys. Two 40-minute headless runs of the server world measured why. Speedboats retreated below 0.3 stamina and resumed hunting above it, recharging only within 1,500u of home, so they looped at the edge of their home radius (70–77% of 30 s windows were loops, 0% of the time within 300u of a tanker); three of their four homes were also inside exclusion zones that pushed them out. Frigates re-scored every tanker each tick, counted themselves as coverage, and switched target about once a minute, often mid-voyage, so a third of their time was spent in transit and 60% of them sat within 6 km of the strait centre (against 36% of tankers). Tankers had no group rule at all: the clumps were the start-up spawn waves, and lone tankers had a frigate nearby 14–33% of the time. Options considered: (1) fix and extend the local rules (cheapest, but "never sail unescorted" and "hunt together" stay probabilistic, and tuning interacting forces is how the bugs arose); (2) a group layer over the existing steering; (3) a rewrite as utility AI over influence maps (largest change, and coordination would still only be a preference).
+
+### Decision
+
+Option 2. Each tick in `main.lua`, coordinators (`shared/ai/coordination/`) run about once a second and decide groups, then every bot's behavior carries out its part and ships get the existing avoidance post-pass.
+
+- **Convoys.** Tankers at the start of their route form a convoy and wait at anchor until it has enough ships and an escort on station, with timeouts so a frigate shortage can't stop traffic for good. At sea they keep station in a column: each ship sets its speed from the gaps to the ships ahead and behind.
+- **Escorts.** Each convoy wants one frigate per three ships (at most two). Vacancies are filled nearest-first, convoys at sea before convoys at anchor, and a frigate stays with its convoy until it arrives or sinks. Escorts hold stations abeam the column (threat side first, never on land) by matching the ship's velocity plus a correction toward the station, and drive at surface threats near the convoy.
+- **Packs.** Speedboats rest at home until nearly fully recharged. Rested boats muster into packs of two to four, but only when there is prey: the tanker in reach with the most frigate-free distance per unit of travel, ignoring any with a frigate within 3 km. Packs close from several bearings, then withdraw together when a frigate comes, the prey sinks or stamina runs low. Evasion now turns a boat directly away (negating a steer-toward rudder gave no turn with the frigate dead ahead).
+- **State.** Membership is one integer per bot (`bot.group`), persisted by both hosts with the rest of the bot state; records live in the VM and are restored from their members after a reload.
+- **Map data.** Speedboats are no longer listed in the north-of-Qeshm and northern-coast exclusion zones, which contain their bases. Ships near (not inside) a zone are no longer forced to half throttle, so a convoy anchored beside one stays put.
+
+### Rationale
+
+- **Measured** over two 60-minute runs of the server world per version (same seeds, first two minutes excluded), before → after: frigates within 6 km of the strait centre 64–67% → 36–37%; frigate target changes 1.0–1.1 → 0.3 a minute; tankers under way with a frigate within 3 km 75–79% → 91–98%, and alone without one 4% → 0–1%; speedboat 30-second windows spent looping 71–78% → 8%; tankers sunk by speedboats 0 → 3–7 an hour; time aground 0 → 0. AI time per server tick fell from 3.8 ms to 3.1–3.3 ms on average.
+- **Guarantees, not tendencies.** "No convoy sails unescorted" and "packs attack together" are rules a test can check directly (`client/src/ai/groups.test.ts` runs the AI over the real map with the client physics).
+- **Extensible.** A new group kind is one coordinator file plus the behaviors that read it; a new vehicle joins an existing group kind through its behavior.
+- **Cheap.** Group decisions run once a second; the per-tick behaviors stay local.
+
+### Costs accepted
+
+- **More machinery.** Three coordinators and a group store (~600 lines of Lua) replace a handful of weighted forces.
+- **Fewer deliveries.** Convoys wait at anchor (7–12% of tanker time) and sail at 90% of top speed so the column can close up: 2–5 deliveries an hour against 3–9 in the same runs.
+- **Less emergence.** Convoys and packs behave as designed rather than surprising anyone; local rules still shape the details.
+- **Timers restart on reload.** A rebuilt VM keeps every group but forgets how long a convoy has waited.
+- **Slow browser tests.** fengari costs a few milliseconds per tick, so the group tests start near the moment they test and still take about 30 s.

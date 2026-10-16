@@ -33,6 +33,7 @@ export interface AIGameData {
 	speedboat_homes: [number, number][];
 	detection_ranges: Record<string, Record<string, number>>;
 	jam_radius: number;
+	max_speeds: Record<string, number>;
 }
 
 export interface AIBotState {
@@ -42,6 +43,8 @@ export interface AIBotState {
 	waypoint_index: number;
 	target: number;
 	destination: string;
+	/** Convoy, escorted convoy or pack id from the AI's coordinators (0 = none). */
+	group: number;
 }
 
 export interface AIEntitySnapshot {
@@ -68,6 +71,7 @@ export interface AIControlOutput {
 	target: number;
 	waypoint_index: number;
 	stamina: number;
+	group: number;
 }
 
 export interface AIFrameResult {

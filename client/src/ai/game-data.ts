@@ -12,7 +12,11 @@ import {
 	SPEEDBOAT_SPAWNS,
 	STRAIT_CENTER,
 } from "../generated/map_data";
-import { DETECTION_RANGE, JAM_RADIUS } from "../generated/vehicles";
+import {
+	DETECTION_RANGE,
+	JAM_RADIUS,
+	VEHICLE_PHYSICS,
+} from "../generated/vehicles";
 import type { AIGameData } from "./lua-host";
 
 type Point = [number, number];
@@ -59,5 +63,8 @@ export function buildClientGameData(): AIGameData {
 		]),
 		detection_ranges: detectionRanges,
 		jam_radius: JAM_RADIUS,
+		max_speeds: Object.fromEntries(
+			Object.entries(VEHICLE_PHYSICS).map(([type, p]) => [type, p.maxSpeed]),
+		),
 	};
 }

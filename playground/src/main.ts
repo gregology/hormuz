@@ -252,6 +252,7 @@ async function init() {
 						waypoint_index: 0,
 						target: 0,
 						destination: opts?.destination ?? "oman",
+						group: 0,
 					}
 				: null,
 		};
@@ -1258,6 +1259,7 @@ async function init() {
 						rp.bot.stamina = 1;
 						rp.bot.waypoint_index = 0;
 						rp.bot.target = 0;
+						rp.bot.group = 0;
 					}
 				}
 			}
@@ -1298,6 +1300,7 @@ async function init() {
 				ep.bot.target = c.target;
 				ep.bot.waypoint_index = c.waypoint_index;
 				ep.bot.stamina = c.stamina;
+				ep.bot.group = c.group;
 			}
 		}
 
@@ -1515,7 +1518,7 @@ async function init() {
 				: "WASD";
 			const aiStr =
 				pv.aiEnabled && pv.bot
-					? `  AI:${BEHAVIOR_BY_TYPE[v.vehicleType]}${pv.bot.target !== 0 ? ` tgt:${pv.bot.target}` : ""}${v.vehicleType === "speedboat" ? ` stam:${pv.bot.stamina.toFixed(2)}` : ""}`
+					? `  AI:${BEHAVIOR_BY_TYPE[v.vehicleType]}${pv.bot.group !== 0 ? ` grp:${pv.bot.group}` : ""}${pv.bot.target !== 0 ? ` tgt:${pv.bot.target}` : ""}${v.vehicleType === "speedboat" ? ` stam:${pv.bot.stamina.toFixed(2)}` : ""}`
 					: "";
 			boatEl.textContent = `${pv.label} [${pv.faction}]: ${hpStr}  Speed: ${v.speed.toFixed(1)} kn (max ${eqSpd.toFixed(0)})  Heading: ${((v.heading * 180) / Math.PI).toFixed(0)}°${floodStr}${aiStr}  (${vehicles.size} vehicles, [ ] cycle, ${controlHint})`;
 		} else {

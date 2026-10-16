@@ -4,7 +4,8 @@ All behavior logic lives in shared/ai/*.lua (see systems/ai_bridge.py) and is
 identical to what runs in the playground. This adapter builds the per-tick
 world view from esper components and applies the returned controls to
 BotControl components. Bot state (target, waypoint, stamina) persists in
-BotControl, so the Lua VM can be hot-reloaded without losing it.
+BotControl, so the Lua VM can be hot-reloaded without losing it; group
+membership (convoy, escort assignment, pack) is part of that state.
 """
 
 import logging
@@ -65,6 +66,7 @@ class BotAIProcessor(esper.Processor):
                     "waypoint_index": bot.waypoint_index,
                     "target": bot.target_entity,
                     "destination": cargo.destination if cargo else "oman",
+                    "group": bot.group,
                 }
             entities.append(view)
 
@@ -82,3 +84,4 @@ class BotAIProcessor(esper.Processor):
             bot.target_entity = c["target"]
             bot.waypoint_index = c["waypoint_index"]
             bot.stamina = c["stamina"]
+            bot.group = c["group"]

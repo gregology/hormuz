@@ -6,17 +6,23 @@
 --   entities = { -- array sorted by id, ALL alive entities (bots and players)
 --     { id, type, faction, x, y, heading, speed, hp, airborne, size,
 --       behavior = string|nil,       -- only for AI-controlled entities
---       bot = { throttle, rudder, stamina, waypoint_index, target, destination } },
+--       bot = { throttle, rudder, stamina, waypoint_index, target, destination, group } },
 --     ...
 --   },
 -- }
 --
 -- Returns (controls, errors):
---   controls = { { id, throttle, rudder, target, waypoint_index, stamina }, ... }
+--   controls = { { id, throttle, rudder, target, waypoint_index, stamina, group }, ... }
 --   errors   = { "entity 7: ...", ... }  (behavior errors are isolated per entity)
+--
+-- Each tick runs in two layers. About once a second the coordinators decide
+-- groups (convoys, escort assignments, speedboat packs) and write each bot's
+-- part in them to bot.group / bot.target. Then every bot's behavior carries
+-- out its part, and ships get the collision-avoidance post-pass.
 
 local config = require("ai.config")
 local gamedata = require("ai.gamedata")
+local groups = require("ai.lib.groups")
 local steering = require("ai.lib.steering")
 
 local behaviors = {
@@ -26,6 +32,14 @@ local behaviors = {
 	shahed_intercept = require("ai.behaviors.shahed_intercept"),
 	quadcopter_intercept = require("ai.behaviors.quadcopter_intercept"),
 }
+
+-- Run in order: escort assignment reads the convoys formed just before it.
+local coordinators = {
+	{ name = "convoys", coordinate = require("ai.coordination.convoys").coordinate },
+	{ name = "escorts", coordinate = require("ai.coordination.escorts").coordinate },
+	{ name = "packs", coordinate = require("ai.coordination.packs").coordinate },
+}
+local last_coordination = nil
 
 -- ---------------------------------------------------------------------------
 -- Danger scent — spatial memory of recent attack locations, decays linearly
@@ -99,7 +113,7 @@ local function build_threats(world)
 							local dy = tgt.y - obs.y
 							if dx * dx + dy * dy <= range * range then
 								seen[tgt.id] = true
-								threats[#threats + 1] = { x = tgt.x, y = tgt.y, type = tgt.type }
+								threats[#threats + 1] = { x = tgt.x, y = tgt.y, type = tgt.type, airborne = tgt.airborne }
 							end
 						end
 					end
@@ -252,7 +266,11 @@ local function apply_avoidance(e, ctx)
 	local zone_rudder, zone_strength = calc_exclusion_zone_steering(e)
 	if zone_rudder then
 		best_rudder = best_rudder * (1.0 - zone_strength) + zone_rudder * zone_strength
-		best_throttle = math.max(e.bot.throttle, 0.5 * zone_strength)
+		-- Only a ship inside a zone is driven out. Near one, steering is
+		-- enough: a convoy at anchor beside a zone must stay at anchor.
+		if zone_strength >= 1.0 then
+			best_throttle = math.max(e.bot.throttle, 0.5)
+		end
 	end
 
 	e.bot.rudder = best_rudder
@@ -282,10 +300,13 @@ local function compute_controls(world)
 		speedboats = {},
 		ships = {},
 		by_id = {},
+		-- AI-controlled entities by behavior name, in id order.
+		bots = {},
 		drone_counts = {},
-		escort_counts = {},
-		speedboat_counts = {},
 	}
+	for name in pairs(behaviors) do
+		ctx.bots[name] = {}
+	end
 
 	for _, e in ipairs(world.entities) do
 		if e.hp > 0 then
@@ -299,6 +320,9 @@ local function compute_controls(world)
 				ctx.ships[#ctx.ships + 1] = e
 			end
 			if e.behavior then
+				if ctx.bots[e.behavior] then
+					table.insert(ctx.bots[e.behavior], e)
+				end
 				if e.type == "shahed" then
 					ctx.shaheds[#ctx.shaheds + 1] = e
 				elseif e.type == "quadcopter" then
@@ -306,16 +330,10 @@ local function compute_controls(world)
 				elseif e.type == "speedboat" then
 					ctx.speedboats[#ctx.speedboats + 1] = e
 				end
-				-- Seed per-group target pressure counts from current assignments
+				-- Seed drone target pressure counts from current assignments
 				local target = e.bot.target
-				if target ~= 0 then
-					if e.behavior == "shahed_intercept" or e.behavior == "quadcopter_intercept" then
-						ctx.drone_counts[target] = (ctx.drone_counts[target] or 0) + 1
-					elseif e.behavior == "escort" then
-						ctx.escort_counts[target] = (ctx.escort_counts[target] or 0) + 1
-					elseif e.behavior == "swarm_attack" then
-						ctx.speedboat_counts[target] = (ctx.speedboat_counts[target] or 0) + 1
-					end
+				if target ~= 0 and (e.behavior == "shahed_intercept" or e.behavior == "quadcopter_intercept") then
+					ctx.drone_counts[target] = (ctx.drone_counts[target] or 0) + 1
 				end
 			end
 		end
@@ -323,6 +341,22 @@ local function compute_controls(world)
 
 	local controls = {}
 	local errors = {}
+
+	-- Hosts restart time at zero when they rebuild their world.
+	if
+		not last_coordination
+		or world.time < last_coordination
+		or world.time - last_coordination >= config.coordination.interval
+	then
+		last_coordination = world.time
+		groups.reserve_ids(world.entities)
+		for _, c in ipairs(coordinators) do
+			local ok, err = pcall(c.coordinate, ctx)
+			if not ok then
+				errors[#errors + 1] = "coordinator " .. c.name .. ": " .. tostring(err)
+			end
+		end
+	end
 
 	for _, e in ipairs(world.entities) do
 		if e.behavior and e.hp > 0 then
@@ -348,6 +382,7 @@ local function compute_controls(world)
 				target = e.bot.target,
 				waypoint_index = e.bot.waypoint_index,
 				stamina = e.bot.stamina,
+				group = e.bot.group,
 			}
 		end
 	end
