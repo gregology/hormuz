@@ -179,4 +179,4 @@ Fast vehicles looked jittery, most visibly with the camera locked to a shahed or
 
 - **Latency follows the connection:** ~65 ms behind the newest snapshot on a clean link (previously a fixed ~75 ms), ~130 ms on a jittery one. Input still takes a round trip plus this buffer to show on screen; prediction would remove that.
 - **Slow recovery after outages.** After an outage longer than ~0.25 s, playback stays up to ~0.28 s behind for ~10 s while the burst of late snapshots ages out of the window.
-- **Server-side jitter remains.** The relative-sleep tick loop, input sent every frame and a broadcast that waits on slow clients still cause gaps; the clock hides them only up to the size of its buffer.
+- **The clock can only hide gaps up to its buffer.** The server-side causes measured alongside it were fixed separately: the tick loop now runs on fixed deadlines (it fell to 18.4 Hz under load), clients no longer send input every frame, and broadcasting queues per client instead of awaiting each socket in turn (one stalled client had frozen the game for 36.6 s).

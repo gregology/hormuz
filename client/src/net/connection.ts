@@ -2,6 +2,7 @@
  * WebSocket connection manager.
  */
 
+import { InputThrottle } from "./input-throttle";
 import {
 	type AssignVehicle,
 	type FullSnapshot,
@@ -26,6 +27,7 @@ export class GameConnection {
 	private onAssignCb: AssignHandler | null = null;
 	private onWarCostCb: WarCostHandler | null = null;
 	private onEventCb: EventHandler | null = null;
+	private inputThrottle = new InputThrottle();
 
 	connect(url: string): void {
 		this.ws = new WebSocket(url);
@@ -63,9 +65,11 @@ export class GameConnection {
 		this.onEventCb = cb;
 	}
 
+	/** Call every frame; only changes and a once-per-tick repeat reach the server. */
 	sendInput(keys: number, throttleFloat: number, autopilot: boolean): void {
-		if (this.ws?.readyState === WebSocket.OPEN) {
-			this.ws.send(encodeInput(keys, 0, 0, 0, throttleFloat, autopilot));
-		}
+		if (this.ws?.readyState !== WebSocket.OPEN) return;
+		const input = { keys, throttle: throttleFloat, autopilot };
+		if (!this.inputThrottle.shouldSend(input, performance.now() / 1000)) return;
+		this.ws.send(encodeInput(keys, 0, 0, 0, throttleFloat, autopilot));
 	}
 }

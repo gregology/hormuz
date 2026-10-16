@@ -9,6 +9,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from hormuz.client_sender import ClientSender
 from hormuz.components import (
     Battery,
     BotControl,
@@ -54,16 +55,19 @@ from hormuz.systems.combat import CombatProcessor
 from hormuz.systems.grounding import GroundingProcessor
 from hormuz.systems.physics import PhysicsProcessor
 from hormuz.systems.spawn import SpawnProcessor
+from hormuz.tick_schedule import TickSchedule
 
 logger = logging.getLogger("hormuz")
 
 app = FastAPI(title="Hormuz", version="0.0.1")
 
 TICK_INTERVAL = 1.0 / TICK_RATE
+# Ticks run back to back to catch up at most this far behind (seconds).
+MAX_TICK_LAG = 5 * TICK_INTERVAL
 
 # --- Player connection tracking ---
 
-connections: dict[int, WebSocket] = {}  # connection_id -> websocket
+connections: dict[int, ClientSender] = {}  # connection_id -> outbound queue
 player_entities: dict[int, int] = {}  # connection_id -> entity_id
 _next_conn_id = 0
 
@@ -390,6 +394,12 @@ def release_vehicle(conn_id: int) -> None:
         esper.add_component(ent, BotControl(behavior, waypoint_index=waypoint_index))
 
 
+def disconnect_player(conn_id: int) -> None:
+    """Forget a connection and hand its vehicle back to the bots. Safe to repeat."""
+    connections.pop(conn_id, None)
+    release_vehicle(conn_id)
+
+
 def apply_input(conn_id: int, msg: dict) -> None:
     """Decode input message and update player's vehicle input."""
     ent = player_entities.get(conn_id)
@@ -438,22 +448,16 @@ def apply_input(conn_id: int, msg: dict) -> None:
         pc.autopilot = autopilot if phys.vehicle_type == "oil_tanker" else False
 
 
-async def broadcast(data: bytes) -> None:
-    """Send data to all connected clients, removing dead connections."""
-    if not connections:
-        return
-    dead: list[int] = []
-    tasks = []
-    for conn_id, ws in connections.items():
-        tasks.append((conn_id, ws.send_bytes(data)))
-    for conn_id, coro in tasks:
-        try:
-            await coro
-        except Exception:
-            dead.append(conn_id)
-    for conn_id in dead:
-        connections.pop(conn_id, None)
-        release_vehicle(conn_id)
+def broadcast(data: bytes) -> None:
+    """Queue a message for every client; never waits on a slow connection."""
+    for sender in connections.values():
+        sender.send(data)
+
+
+def broadcast_snapshot(data: bytes) -> None:
+    """Queue a snapshot for every client, superseding any they haven't received yet."""
+    for sender in connections.values():
+        sender.send_snapshot(data)
 
 
 # --- Game loop ---
@@ -461,9 +465,8 @@ async def broadcast(data: bytes) -> None:
 
 async def game_loop() -> None:
     """Main server game loop running at TICK_RATE Hz."""
+    schedule = TickSchedule(TICK_INTERVAL, time.monotonic(), MAX_TICK_LAG)
     while True:
-        t0 = time.monotonic()
-
         game_state["tick"] += 1
         game_state["uptime_seconds"] = round(time.monotonic() - start_time, 1)
 
@@ -518,21 +521,17 @@ async def game_loop() -> None:
                     new_ent = assign_vehicle_to_player(conn_id, teleport=True)
                     if new_ent is not None:
                         new_phys = esper.component_for_entity(new_ent, VehiclePhysics)
-                        try:
-                            await connections[conn_id].send_bytes(
-                                encode_assign_vehicle(new_ent, new_phys.vehicle_type)
-                            )
-                        except Exception:
-                            pass
+                        connections[conn_id].send(
+                            encode_assign_vehicle(new_ent, new_phys.vehicle_type)
+                        )
 
         # Broadcast snapshot to all clients
-        snapshot = build_snapshot()
-        await broadcast(snapshot)
+        broadcast_snapshot(build_snapshot())
 
         # Broadcast events (explosions, deliveries, projectiles)
         for event in combat_proc.events:
             if event["type"] == "projectile":
-                await broadcast(
+                broadcast(
                     encode_event(
                         "projectile",
                         event["x"],
@@ -542,13 +541,13 @@ async def game_loop() -> None:
                     )
                 )
             else:
-                await broadcast(encode_event(event["type"], event["x"], event["y"]))
+                broadcast(encode_event(event["type"], event["x"], event["y"]))
         for event in spawn_proc.events:
-            await broadcast(encode_event(event["type"], event["x"], event["y"]))
+            broadcast(encode_event(event["type"], event["x"], event["y"]))
 
         # Broadcast stats every second (every 20 ticks)
         if game_state["tick"] % TICK_RATE == 0:
-            await broadcast(
+            broadcast(
                 encode_war_cost(
                     game_state["war_cost_usd"],
                     game_state["tankers_delivered"],
@@ -561,8 +560,7 @@ async def game_loop() -> None:
                 )
             )
 
-        elapsed = time.monotonic() - t0
-        await asyncio.sleep(max(0, TICK_INTERVAL - elapsed))
+        await asyncio.sleep(schedule.wait(time.monotonic()))
 
 
 # --- FastAPI endpoints ---
@@ -621,19 +619,20 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
     conn_id = _next_conn_id
     _next_conn_id += 1
-    connections[conn_id] = websocket
+    sender = ClientSender(websocket, on_stalled=lambda: disconnect_player(conn_id))
+    connections[conn_id] = sender
 
     # Assign a vehicle to this player
     assigned = assign_vehicle_to_player(conn_id)
     if assigned is not None:
         phys = esper.component_for_entity(assigned, VehiclePhysics)
-        await websocket.send_bytes(encode_assign_vehicle(assigned, phys.vehicle_type))
+        sender.send(encode_assign_vehicle(assigned, phys.vehicle_type))
 
     # Send full snapshot
-    await websocket.send_bytes(build_snapshot())
+    sender.send_snapshot(build_snapshot())
 
     # Send current stats
-    await websocket.send_bytes(
+    sender.send(
         encode_war_cost(
             game_state["war_cost_usd"],
             game_state["tankers_delivered"],
@@ -653,8 +652,10 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             if msg["type"] == MSG_INPUT:
                 apply_input(conn_id, msg)
     except WebSocketDisconnect:
-        connections.pop(conn_id, None)
-        release_vehicle(conn_id)
+        pass
+    finally:
+        disconnect_player(conn_id)
+        sender.stop()
 
 
 # --- Static file serving (production: serve built client) ---
