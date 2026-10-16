@@ -1,131 +1,113 @@
--- Speedboat wolf pack: stamina-based hit-and-run cycles.
--- Stamina drains while hunting, recharges near spawn; frigate evasion
--- overrides everything. Ported from bot_ai.py _speedboat_ai.
+-- Speedboat: carry out its pack's plan (coordination/packs.lua). Muster at a
+-- home, close in on the prey from this boat's own side of the pack, then run
+-- alongside it with the bow gun. Without a pack, or once the pack withdraws,
+-- go home and wait there, recharging stamina. Evading a frigate inside its
+-- gun range overrides everything.
 
 local config = require("ai.config")
-local gamedata = require("ai.gamedata")
+local groups = require("ai.lib.groups")
+local packs = require("ai.coordination.packs")
 local steering = require("ai.lib.steering")
+
+local function distance_sq(ax, ay, bx, by)
+	return (ax - bx) ^ 2 + (ay - by) ^ 2
+end
+
+local function update_stamina(e, ctx, home_sq)
+	local cfg = config.speedboat
+	if home_sq < cfg.home_radius ^ 2 then
+		e.bot.stamina = math.min(1.0, e.bot.stamina + cfg.stamina_recharge * ctx.dt)
+		return
+	end
+	local drain = cfg.stamina_drain
+	local target = ctx.by_id[e.bot.target]
+	if target and distance_sq(target.x, target.y, e.x, e.y) < cfg.attack_range ^ 2 then
+		drain = cfg.stamina_drain_attack
+	end
+	e.bot.stamina = math.max(0.0, e.bot.stamina - drain * ctx.dt)
+end
+
+local function nearest_frigate(e, ctx)
+	local best, best_sq = nil, math.huge
+	for _, f in ipairs(ctx.frigates) do
+		local d_sq = distance_sq(f.x, f.y, e.x, e.y)
+		if d_sq < best_sq then
+			best, best_sq = f, d_sq
+		end
+	end
+	return best, best_sq
+end
+
+--- Approach from this boat's own bearing around the prey, so a pack arrives
+--- from several sides at once; inside strike range, run straight in.
+local function hunt(e, ctx, pack, prey)
+	local cfg = config.speedboat
+	local pack_cfg = config.pack
+	local d_sq = distance_sq(prey.x, prey.y, e.x, e.y)
+	if d_sq <= cfg.attack_range ^ 2 then
+		-- Run alongside, aiming ahead of the bow to keep it in the gun arc.
+		local ahead_x = prey.x + math.cos(prey.heading) * 200.0
+		local ahead_y = prey.y + math.sin(prey.heading) * 200.0
+		return steering.steer_toward(e, ahead_x, ahead_y), 0.5 + 0.5 * (math.sqrt(d_sq) / cfg.attack_range)
+	end
+	if d_sq <= pack_cfg.strike_range ^ 2 then
+		return steering.steer_toward(e, prey.x, prey.y), 1.0
+	end
+
+	local boats = groups.alive_members(pack, ctx)
+	if #boats == 0 then
+		boats = { e }
+	end
+	local index, count = 1, #boats
+	for i, b in ipairs(boats) do
+		if b.id == e.id then
+			index = i
+		end
+	end
+	local cx, cy = groups.centre(boats)
+	local bearing = steering.atan2(cy - prey.y, cx - prey.x)
+	local angle = bearing + (index - (count + 1) / 2) * pack_cfg.spread_angle
+	local x = prey.x + math.cos(angle) * pack_cfg.approach_radius
+	local y = prey.y + math.sin(angle) * pack_cfg.approach_radius
+	if is_land(x, y) then
+		x, y = prey.x, prey.y
+	end
+	return steering.steer_toward(e, x, y), 1.0
+end
 
 return function(e, ctx)
 	local cfg = config.speedboat
+	local home, home_sq = packs.nearest_home(e)
+	update_stamina(e, ctx, home_sq)
 
-	-- Stamina: recharge near home, drain while out (faster in attack range)
-	local near_home = false
-	local home_radius_sq = cfg.home_radius * cfg.home_radius
-	for _, home in ipairs(gamedata.speedboat_homes) do
-		local dx = home[1] - e.x
-		local dy = home[2] - e.y
-		if dx * dx + dy * dy < home_radius_sq then
-			near_home = true
-			break
-		end
-	end
-
-	if near_home then
-		e.bot.stamina = math.min(1.0, e.bot.stamina + cfg.stamina_recharge * ctx.dt)
-	else
-		local drain = cfg.stamina_drain
-		if e.bot.target ~= 0 then
-			local target = ctx.by_id[e.bot.target]
-			if target then
-				local dx = target.x - e.x
-				local dy = target.y - e.y
-				if dx * dx + dy * dy < cfg.attack_range * cfg.attack_range then
-					drain = cfg.stamina_drain_attack
-				end
-			end
-		end
-		e.bot.stamina = math.max(0.0, e.bot.stamina - drain * ctx.dt)
-	end
-
-	-- Frigate evasion: highest priority, always active
-	local nearest_frigate = nil
-	local nearest_frigate_sq = math.huge
-	for _, f in ipairs(ctx.frigates) do
-		local dx = f.x - e.x
-		local dy = f.y - e.y
-		local d_sq = dx * dx + dy * dy
-		if d_sq < nearest_frigate_sq then
-			nearest_frigate_sq = d_sq
-			nearest_frigate = f
-		end
-	end
-
-	local function release_target()
-		if e.bot.target ~= 0 then
-			ctx.speedboat_counts[e.bot.target] = math.max(0, (ctx.speedboat_counts[e.bot.target] or 1) - 1)
-			e.bot.target = 0
-		end
-	end
-
-	if nearest_frigate and nearest_frigate_sq < cfg.evasion_range * cfg.evasion_range then
-		local dist = math.sqrt(nearest_frigate_sq)
-		local proximity = 1.0 - dist / cfg.evasion_range
-		local evasion_rudder = -steering.steer_toward(e, nearest_frigate.x, nearest_frigate.y)
-		local evasion_strength = math.min(1.0, proximity * cfg.evasion_weight)
-		e.bot.rudder = steering.clamp01(evasion_rudder * evasion_strength)
+	local frigate, frigate_sq = nearest_frigate(e, ctx)
+	if frigate and frigate_sq < cfg.evasion_range ^ 2 then
+		e.bot.rudder = steering.steer_away(e, frigate.x, frigate.y)
 		e.bot.throttle = 1.0
-		release_target()
 		return
 	end
 
-	-- Retreat: stamina depleted, head to nearest spawn
-	if e.bot.stamina <= cfg.stamina_threshold and not near_home then
-		local best_home = gamedata.speedboat_homes[1]
-		local best_dist_sq = math.huge
-		for _, home in ipairs(gamedata.speedboat_homes) do
-			local dx = home[1] - e.x
-			local dy = home[2] - e.y
-			local d_sq = dx * dx + dy * dy
-			if d_sq < best_dist_sq then
-				best_dist_sq = d_sq
-				best_home = home
-			end
-		end
-		e.bot.rudder = steering.steer_toward(e, best_home[1], best_home[2])
-		e.bot.throttle = 1.0
-		release_target()
-		return
-	end
-
-	-- Hunt: attack tankers, avoiding escorted ones
-	local target = steering.pick_target(ctx, e, {
-		factions = { civilian = true },
-		max_range_sq = cfg.visual_range * cfg.visual_range,
-		counts = ctx.speedboat_counts,
-		frigate_penalty = ctx.frigates,
-	})
-
-	local rudder = 0.0
-	local throttle = 1.0
-
-	if target then
-		local dx = target.x - e.x
-		local dy = target.y - e.y
-		local dist = math.sqrt(dx * dx + dy * dy)
-		if dist > cfg.attack_range then
-			rudder = steering.steer_toward(e, target.x, target.y)
+	local pack = groups.get(e.bot.group)
+	local prey = pack and ctx.by_id[pack.target]
+	local rudder, throttle
+	if pack and pack.phase == "gathering" then
+		local mx, my = pack.muster[1], pack.muster[2]
+		if distance_sq(mx, my, e.x, e.y) < config.pack.gather_radius ^ 2 then
+			rudder, throttle = steering.hold_at(e, mx, my)
 		else
-			local ahead_x = target.x + math.cos(target.heading) * 200.0
-			local ahead_y = target.y + math.sin(target.heading) * 200.0
-			rudder = steering.steer_toward(e, ahead_x, ahead_y)
-			throttle = 0.5 + 0.5 * (dist / cfg.attack_range)
+			rudder, throttle = steering.steer_toward(e, mx, my), 1.0
 		end
+	elseif pack and pack.phase == "hunting" and prey then
+		rudder, throttle = hunt(e, ctx, pack, prey)
+	elseif home_sq < cfg.home_radius ^ 2 then
+		rudder, throttle = steering.hold_at(e, home[1], home[2])
 	else
-		rudder = steering.steer_toward(e, gamedata.strait_center[1], gamedata.strait_center[2])
-		throttle = 0.7
+		rudder, throttle = steering.steer_toward(e, home[1], home[2]), 1.0
 	end
 
-	-- Danger attraction: rush toward active attacks (only while hunting)
-	local danger = steering.nearest_danger(ctx, e.x, e.y, cfg.danger_range * cfg.danger_range)
-	if danger then
-		rudder = rudder
-			+ steering.steer_toward(e, e.x + danger[1], e.y + danger[2]) * cfg.weight_danger * danger[3]
+	if throttle > 0 then
+		rudder = rudder + steering.repulsion(e, ctx.speedboats, cfg.repel_range)
 	end
-
-	-- Pack repulsion
-	rudder = rudder + steering.repulsion(e, ctx.speedboats, cfg.repel_range)
-
 	e.bot.rudder = steering.clamp01(rudder)
 	e.bot.throttle = throttle
 end

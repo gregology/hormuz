@@ -30,7 +30,7 @@ from hormuz.generated.map_data import (
     STRAIT_CENTER,
 )
 from hormuz.generated.terrain_grid import is_land
-from hormuz.generated.vehicles import DETECTION_RANGE, JAM_RADIUS
+from hormuz.generated.vehicles import DETECTION_RANGE, JAM_RADIUS, VEHICLE_PHYSICS
 
 log = logging.getLogger(__name__)
 
@@ -68,6 +68,7 @@ def _build_game_data() -> dict:
         "speedboat_homes": [[s["position"][0], s["position"][1]] for s in SPEEDBOAT_SPAWNS],
         "detection_ranges": detection_ranges,
         "jam_radius": JAM_RADIUS,
+        "max_speeds": {vehicle: p["max_speed"] for vehicle, p in VEHICLE_PHYSICS.items()},
     }
 
 
@@ -151,6 +152,7 @@ class AIBridge:
                     "target": int(c["target"]),
                     "waypoint_index": int(c["waypoint_index"]),
                     "stamina": float(c["stamina"]),
+                    "group": int(c["group"]),
                 }
                 for c in controls.values()
             ]

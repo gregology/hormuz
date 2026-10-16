@@ -151,6 +151,7 @@ class BotControl:
         "waypoint_index",
         "target_entity",
         "stamina",
+        "group",
     )
 
     def __init__(
@@ -161,6 +162,7 @@ class BotControl:
         waypoint_index: int = 0,
         target_entity: int = 0,
         stamina: float = 1.0,
+        group: int = 0,
     ) -> None:
         self.behavior = behavior
         self.throttle = throttle
@@ -168,6 +170,8 @@ class BotControl:
         self.waypoint_index = waypoint_index
         self.target_entity = target_entity
         self.stamina = stamina
+        # Convoy, escorted convoy or pack id from the AI's coordinators (0 = none).
+        self.group = group
 
 
 class PlayerControl:

@@ -11,8 +11,9 @@
  *   UPDATE_AI_FIXTURES=1 pnpm --filter @hormuz/client test -- contract
  * …then run the server tests to confirm the hosts still agree.
  *
- * Scenarios use open-water coordinates (60km, 43km) so both hosts' is_land
- * implementations agree (polygon ray-cast client-side, terrain grid server-side).
+ * Scenarios keep to open water (around 60 km, 43 km, or well clear of the
+ * coast at the lane ends) so both hosts' is_land implementations agree
+ * (polygon ray-cast client-side, terrain grid server-side).
  */
 
 import { readFileSync, writeFileSync } from "node:fs";
@@ -60,6 +61,7 @@ function bot(overrides: Partial<AIBotState> = {}): AIBotState {
 		waypoint_index: 0,
 		target: 0,
 		destination: "oman",
+		group: 0,
 		...overrides,
 	};
 }
@@ -81,49 +83,115 @@ function ent(
 	};
 }
 
+// Outbound lane waypoints 1 and 2 (0-based), between which tankers are under way.
+const WP1 = { x: 77877, y: 50890 };
+const WP2 = { x: 79618, y: 49282 };
+const LANE_HEADING = Math.atan2(WP2.y - WP1.y, WP2.x - WP1.x);
+
+/** Tankers at the Gulf end of the outbound route, as they spawn there. */
+function anchored(ids: number[]): AIEntitySnapshot[] {
+	const spots = [
+		{ x: 74000, y: 53800 },
+		{ x: 74700, y: 53300 },
+		{ x: 73400, y: 54300 },
+	];
+	return ids.map((id, i) =>
+		ent({
+			id,
+			behavior: "tanker_transit",
+			bot: bot(),
+			...spots[i],
+			heading: 5.5,
+			speed: 0,
+		}),
+	);
+}
+
+function frigate(
+	overrides: Partial<AIEntitySnapshot> & { id: number },
+): AIEntitySnapshot {
+	return ent({
+		type: "frigate",
+		faction: "us",
+		behavior: "escort",
+		bot: bot(),
+		size: 100,
+		...overrides,
+	});
+}
+
+function speedboat(
+	overrides: Partial<AIEntitySnapshot> & { id: number },
+): AIEntitySnapshot {
+	return ent({
+		type: "speedboat",
+		faction: "iran",
+		behavior: "swarm_attack",
+		bot: bot(),
+		size: 13,
+		speed: 0,
+		...overrides,
+	});
+}
+
+/** The Bandar Abbas speedboat base, and open water 3 km from it. */
+const BASE = { x: 76313, y: 45778 };
+const PREY = { x: 77813, y: 48376 };
+
 const SCENARIOS: Scenario[] = [
 	{
-		name: "tanker convoy: follower brakes behind leader",
+		name: "convoy: anchored tankers wait while their escort is assigned",
 		dt: 0.05,
 		ticks: 3,
 		entities: [
-			ent({ id: 1, behavior: "tanker_transit", bot: bot(), x: WX, speed: 10 }),
-			ent({
-				id: 2,
-				behavior: "tanker_transit",
-				bot: bot(),
-				x: WX + 200,
-				speed: 5,
-			}),
+			...anchored([1, 2, 3]),
+			frigate({ id: 4, x: 77880, y: 51086, speed: 0 }),
 		],
 		scents: [],
 	},
 	{
-		name: "escort: two frigates split across two tankers",
+		name: "convoy: sails in column once its escort is on station",
 		dt: 0.05,
-		ticks: 3,
+		ticks: 24,
+		entities: [
+			...anchored([1, 2, 3]),
+			frigate({ id: 4, x: 75500, y: 53000, heading: 5.5, speed: 10 }),
+		],
+		scents: [],
+	},
+	{
+		name: "escort: two frigates split across two convoys",
+		dt: 0.05,
+		ticks: 2,
+		entities: [
+			...anchored([1, 2, 3]),
+			ent({
+				id: 5,
+				behavior: "tanker_transit",
+				bot: bot({ destination: "gulf" }),
+				x: 92900,
+				y: 61200,
+				heading: 4.2,
+				speed: 0,
+			}),
+			frigate({ id: 8, x: 77880, y: 51086, speed: 0 }),
+			frigate({ id: 9, x: 78180, y: 51086, speed: 0 }),
+		],
+		scents: [],
+	},
+	{
+		name: "tanker under way advances waypoint",
+		dt: 0.05,
+		ticks: 2,
 		entities: [
 			ent({
 				id: 1,
-				type: "frigate",
-				faction: "us",
-				behavior: "escort",
-				bot: bot(),
-				x: WX,
-				size: 100,
+				behavior: "tanker_transit",
+				bot: bot({ waypoint_index: 1 }),
+				x: WP1.x + 100,
+				y: WP1.y,
+				heading: LANE_HEADING,
 			}),
-			ent({
-				id: 2,
-				type: "frigate",
-				faction: "us",
-				behavior: "escort",
-				bot: bot(),
-				x: WX,
-				y: WY + 500,
-				size: 100,
-			}),
-			ent({ id: 10, x: WX + 3000, y: WY - 500 }),
-			ent({ id: 11, x: WX + 3000, y: WY + 500 }),
 		],
 		scents: [],
 	},
@@ -170,19 +238,22 @@ const SCENARIOS: Scenario[] = [
 		scents: [],
 	},
 	{
-		name: "speedboat: frigate evasion overrides hunting",
+		name: "speedboats: rested pair musters against an unescorted tanker",
 		dt: 0.05,
 		ticks: 3,
 		entities: [
-			ent({
-				id: 1,
-				type: "speedboat",
-				faction: "iran",
-				behavior: "swarm_attack",
-				bot: bot({ stamina: 0.5 }),
-				x: WX,
-				size: 20,
-			}),
+			speedboat({ id: 1, x: BASE.x, y: BASE.y, heading: 0.8 }),
+			speedboat({ id: 2, x: BASE.x + 150, y: BASE.y, heading: 0.8 }),
+			ent({ id: 10, x: PREY.x, y: PREY.y }),
+		],
+		scents: [],
+	},
+	{
+		name: "speedboat: frigate evasion overrides everything",
+		dt: 0.05,
+		ticks: 3,
+		entities: [
+			speedboat({ id: 1, x: WX, speed: 30, bot: bot({ stamina: 0.5 }) }),
 			ent({
 				id: 3,
 				type: "frigate",
@@ -196,23 +267,15 @@ const SCENARIOS: Scenario[] = [
 		scents: [],
 	},
 	{
-		name: "danger scent: frigate rushes, tanker drifts away",
+		name: "danger scent: tanker under way drifts away while escorted",
 		dt: 0.05,
 		ticks: 4,
 		entities: [
-			ent({
-				id: 1,
-				type: "frigate",
-				faction: "us",
-				behavior: "escort",
-				bot: bot(),
-				x: WX,
-				size: 100,
-			}),
+			frigate({ id: 1, x: WX }),
 			ent({
 				id: 10,
 				behavior: "tanker_transit",
-				bot: bot(),
+				bot: bot({ waypoint_index: 3 }),
 				x: WX + 2000,
 				y: WY + 1000,
 			}),
@@ -255,21 +318,6 @@ const SCENARIOS: Scenario[] = [
 				x: WX + 2000,
 				y: WY + 300,
 				size: 100,
-			}),
-		],
-		scents: [],
-	},
-	{
-		name: "tanker at lane start advances waypoint",
-		dt: 0.05,
-		ticks: 2,
-		entities: [
-			ent({
-				id: 1,
-				behavior: "tanker_transit",
-				bot: bot(),
-				x: 76227,
-				y: 52473,
 			}),
 		],
 		scents: [],
@@ -323,6 +371,7 @@ function runScenario(host: AIHost, scn: Scenario): AIControlOutput[][] {
 					target: c.target,
 					waypoint_index: c.waypoint_index,
 					stamina: c.stamina,
+					group: c.group,
 				});
 			}
 		}
@@ -348,6 +397,7 @@ function expectControlsClose(
 			expect(a.id, where).toBe(e.id);
 			expect(a.target, where).toBe(e.target);
 			expect(a.waypoint_index, where).toBe(e.waypoint_index);
+			expect(a.group, where).toBe(e.group);
 			for (const key of ["throttle", "rudder", "stamina"] as const) {
 				expect(
 					Math.abs(a[key] - e[key]),

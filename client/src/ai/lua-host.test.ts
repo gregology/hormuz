@@ -15,6 +15,7 @@ function botState(overrides: Partial<AIBotState> = {}): AIBotState {
 		waypoint_index: 0,
 		target: 0,
 		destination: "oman",
+		group: 0,
 		...overrides,
 	};
 }
@@ -40,7 +41,7 @@ describe("LuaAIHost", () => {
 		const host = createHost();
 		const config = host.getConfigFlat();
 		expect(config["tanker.brake_range"]).toBe(400);
-		expect(config["escort.weight_presence"]).toBeCloseTo(0.6);
+		expect(config["convoy.spacing"]).toBe(700);
 	});
 
 	it("config writes take effect", () => {
@@ -50,22 +51,25 @@ describe("LuaAIHost", () => {
 	});
 });
 
+// Outbound lane waypoints 1 and 2 (0-based): a tanker between them is under way.
+const WP1 = { x: 77877, y: 50890 };
+const WP2 = { x: 79618, y: 49282 };
+
 describe("tanker_transit behavior", () => {
-	it("steers toward the next lane waypoint at full throttle", () => {
+	it("steers for its next waypoint when under way on its own", () => {
 		const host = createHost();
-		// At outbound lane start, heading exactly toward waypoint 2
 		const tanker = entity({
 			id: 1,
 			behavior: "tanker_transit",
-			bot: botState(),
-			x: 76227,
-			y: 52473,
-			heading: Math.atan2(50890 - 52473, 77877 - 76227),
+			bot: botState({ waypoint_index: 2 }),
+			x: WP1.x,
+			y: WP1.y,
+			heading: Math.atan2(WP2.y - WP1.y, WP2.x - WP1.x),
 		});
 		const { controls, errors } = host.compute([tanker], 0.05, 0);
 		expect(errors).toEqual([]);
 		expect(controls).toHaveLength(1);
-		expect(controls[0].throttle).toBe(1);
+		expect(controls[0].throttle).toBeGreaterThan(0.5);
 		expect(Math.abs(controls[0].rudder)).toBeLessThan(0.01);
 	});
 
@@ -74,34 +78,40 @@ describe("tanker_transit behavior", () => {
 		const tanker = entity({
 			id: 1,
 			behavior: "tanker_transit",
-			bot: botState({ waypoint_index: 0 }),
-			x: 76300,
-			y: 52450,
+			bot: botState({ waypoint_index: 1 }),
+			x: WP1.x + 100,
+			y: WP1.y,
 		});
 		const { controls } = host.compute([tanker], 0.05, 0);
-		expect(controls[0].waypoint_index).toBe(1);
+		expect(controls[0].waypoint_index).toBe(2);
 	});
 
 	it("brakes behind a slower tanker ahead", () => {
 		const host = createHost();
-		const leader = entity({
-			id: 2,
-			x: 76427,
-			y: 52473,
-			behavior: undefined,
-			bot: undefined,
-		});
-		const follower = entity({
-			id: 1,
-			behavior: "tanker_transit",
-			bot: botState(),
-			x: 76227,
-			y: 52473,
-			heading: 0,
-		});
-		const { controls } = host.compute([follower, leader], 0.05, 0);
-		expect(controls[0].throttle).toBeLessThan(1);
-		expect(controls[0].throttle).toBeGreaterThan(0.4);
+		const heading = Math.atan2(WP2.y - WP1.y, WP2.x - WP1.x);
+		const under = (id: number, ahead: number, bot: AIBotState | undefined) =>
+			entity({
+				id,
+				behavior: bot ? "tanker_transit" : undefined,
+				bot,
+				x: WP1.x + Math.cos(heading) * ahead,
+				y: WP1.y + Math.sin(heading) * ahead,
+				heading,
+			});
+		const alone = host.compute(
+			[under(1, 0, botState({ waypoint_index: 2 }))],
+			0.05,
+			0,
+		);
+		const behind = createHost().compute(
+			[under(1, 0, botState({ waypoint_index: 2 })), under(2, 200, undefined)],
+			0.05,
+			0,
+		);
+		expect(behind.controls[0].throttle).toBeLessThan(
+			alone.controls[0].throttle,
+		);
+		expect(behind.controls[0].throttle).toBeGreaterThan(0.4);
 	});
 });
 
@@ -193,44 +203,7 @@ describe("quadcopter_intercept behavior", () => {
 });
 
 describe("escort behavior", () => {
-	it("two frigates split between two distant tankers (pressure scoring)", () => {
-		const host = createHost();
-		// Frigates far apart, one tanker near each — the second frigate must
-		// not dogpile the first frigate's tanker.
-		const frigateA = entity({
-			id: 1,
-			type: "frigate",
-			faction: "us",
-			behavior: "escort",
-			bot: botState(),
-			x: 0,
-			y: 0,
-			size: 120,
-		});
-		const frigateB = entity({
-			id: 2,
-			type: "frigate",
-			faction: "us",
-			behavior: "escort",
-			bot: botState(),
-			x: 100000,
-			y: 60000,
-			size: 120,
-		});
-		const tanker1 = entity({ id: 10, x: 3000, y: 0 });
-		const tanker2 = entity({ id: 11, x: 97000, y: 60000 });
-		const { controls } = host.compute(
-			[frigateA, frigateB, tanker1, tanker2],
-			0.05,
-			0,
-		);
-		// First frigate claims one tanker; second must pick the other
-		expect(controls[0].target).not.toBe(0);
-		expect(controls[1].target).not.toBe(0);
-		expect(controls[0].target).not.toBe(controls[1].target);
-	});
-
-	it("patrols toward a lane anchor when no tankers exist", () => {
+	it("patrols toward a lane anchor when no convoy needs it", () => {
 		const host = createHost();
 		const frigate = entity({
 			id: 1,
@@ -278,7 +251,7 @@ describe("swarm_attack behavior", () => {
 		expect(controls[0].rudder).toBeLessThan(0);
 	});
 
-	it("retreats home when stamina is depleted", () => {
+	it("heads home when not in a pack", () => {
 		const host = createHost();
 		const speedboat = entity({
 			id: 1,
@@ -292,14 +265,14 @@ describe("swarm_attack behavior", () => {
 			size: 20,
 		});
 		const { controls } = host.compute([speedboat], 0.05, 0);
-		// Heading south, homes are north-east — rudder should turn left (negative)
+		// Heading south, the nearest home is east — rudder should turn left (negative)
 		expect(controls[0].rudder).toBeLessThan(0);
 		expect(controls[0].throttle).toBe(1);
 	});
 });
 
 describe("danger scent", () => {
-	it("attracts frigates toward emitted scents", () => {
+	it("attracts spare frigates toward emitted scents", () => {
 		const host = createHost();
 		host.addScent(5000, 0);
 		const frigate = entity({
@@ -329,15 +302,15 @@ describe("danger scent", () => {
 		const tanker = entity({
 			id: 2,
 			behavior: "tanker_transit",
-			bot: botState(),
-			x: 76227,
-			y: 52473,
+			bot: botState({ waypoint_index: 2 }),
+			x: WP1.x,
+			y: WP1.y,
 		});
 		const { controls, errors } = host.compute([broken, tanker], 0.05, 0);
 		expect(errors).toHaveLength(1);
 		expect(errors[0]).toContain("unknown behavior");
 		expect(controls).toHaveLength(2);
-		expect(controls[1].throttle).toBe(1);
+		expect(controls[1].throttle).toBeGreaterThan(0);
 	});
 });
 
