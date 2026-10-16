@@ -1,19 +1,17 @@
 /**
- * Snapshot interpolation — smooth rendering between server ticks.
+ * Snapshot interpolation — entity state at any moment between two snapshots.
  *
- * Buffers recent snapshots and renders with a fixed delay so we're always
- * interpolating between two known states (never extrapolating). This
- * eliminates jitter from network variance at the cost of ~100ms visual
- * latency — unnoticeable at 20Hz tick rate.
+ * Snapshots are keyed by server time (tick / TICK_RATE), not by when they
+ * arrived, so states one tick apart on the server stay one tick apart here.
+ * `PlaybackClock` decides which moment to render; this only interpolates
+ * between known states, never extrapolates.
  */
 
+import { TICK_RATE } from "../generated/vehicles";
 import type { EntityState } from "./entities";
 
-/** How many snapshots to keep (~500ms at 20Hz). */
-const BUFFER_SIZE = 10;
-
-/** Render this far behind real-time (seconds). 2 server ticks. */
-const RENDER_DELAY = 0.1;
+/** How many snapshots to keep: one second, more than the playback clock ever buffers. */
+const BUFFER_SIZE = TICK_RATE;
 
 interface Snapshot {
 	time: number;
@@ -23,9 +21,15 @@ interface Snapshot {
 export class SnapshotInterpolator {
 	private buffer: Snapshot[] = [];
 
-	pushSnapshot(entities: Map<number, EntityState>, time: number): void {
+	pushSnapshot(entities: Map<number, EntityState>, serverTime: number): void {
+		const newest = this.buffer.at(-1);
+		// The snapshot sent on connect can repeat the last broadcast tick.
+		if (newest && serverTime === newest.time) return;
+		// Server time going backwards means the server restarted.
+		if (newest && serverTime < newest.time) this.buffer = [];
+
 		this.buffer.push({
-			time,
+			time: serverTime,
 			entities: new Map([...entities].map(([id, e]) => [id, { ...e }])),
 		});
 		if (this.buffer.length > BUFFER_SIZE) {
@@ -41,11 +45,10 @@ export class SnapshotInterpolator {
 		return 0;
 	}
 
-	getInterpolated(entityId: number, renderTime: number): EntityState | null {
+	getInterpolated(entityId: number, serverTime: number): EntityState | null {
 		if (this.buffer.length === 0) return null;
 
-		const t0 = renderTime - RENDER_DELAY;
-		const i = this.findIndex(t0);
+		const i = this.findIndex(serverTime);
 		const before = this.buffer[i];
 		const after = this.buffer[i + 1];
 
@@ -60,7 +63,7 @@ export class SnapshotInterpolator {
 		if (elapsed <= 0) return eAfter;
 
 		// Clamp to [0,1] — pure interpolation, no extrapolation
-		const t = Math.max(0, Math.min((t0 - before.time) / elapsed, 1));
+		const t = Math.max(0, Math.min((serverTime - before.time) / elapsed, 1));
 
 		return {
 			...eAfter,
@@ -75,16 +78,15 @@ export class SnapshotInterpolator {
 		};
 	}
 
-	getAllInterpolated(renderTime: number): EntityState[] {
+	getAllInterpolated(serverTime: number): EntityState[] {
 		if (this.buffer.length === 0) return [];
 
-		const t0 = renderTime - RENDER_DELAY;
-		const i = this.findIndex(t0);
+		const i = this.findIndex(serverTime);
 		const source = this.buffer[i + 1] ?? this.buffer[i];
 
 		const result: EntityState[] = [];
 		for (const id of source.entities.keys()) {
-			const e = this.getInterpolated(id, renderTime);
+			const e = this.getInterpolated(id, serverTime);
 			if (e) result.push(e);
 		}
 		return result;

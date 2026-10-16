@@ -199,9 +199,10 @@ def generate_python_vehicles(vehicles: dict, combat: dict, world: dict) -> str:
     lines.append(f"QUADCOPTER_TANKER_BREACHES = {qd['tanker_breaches']}")
     lines.append(f"QUADCOPTER_FRIGATE_BREACHES = {qd['frigate_breaches']}")
 
-    # --- World spawns ---
+    # --- World ---
     lines.append("")
     lines.append("")
+    lines.append(f"TICK_RATE = {world['tick_rate']}")
     lines.append(f"WORLD_SPAWNS: dict = {world['spawns']!r}")
     lines.append("")
     return "\n".join(lines)
@@ -388,8 +389,9 @@ def generate_ts_vehicles(vehicles: dict, combat: dict, world: dict) -> str:
     lines.append(f"  frigateBreaches: {qd['frigate_breaches']},")
     lines.append("} as const;")
 
-    # --- World spawns ---
+    # --- World ---
     lines.append("")
+    lines.append(f"export const TICK_RATE = {world['tick_rate']};")
     lines.append(f"export const WORLD_SPAWNS = {json.dumps(world['spawns'])} as const;")
 
     lines.append("")

@@ -7,6 +7,8 @@
 import { ThreeEffectManager } from "./effects/manager";
 import { EntityStore } from "./game/entities";
 import { SnapshotInterpolator } from "./game/interpolation";
+import { PlaybackClock } from "./game/playback-clock";
+import { TICK_RATE } from "./generated/vehicles";
 import { InputManager } from "./input/input-manager";
 import type { CameraMode } from "./input/keyboard";
 import { MouseLook } from "./input/mouse-look";
@@ -90,6 +92,7 @@ async function init() {
 	// --- Game state ---
 	const entityStore = new EntityStore();
 	const interpolator = new SnapshotInterpolator();
+	const playbackClock = new PlaybackClock();
 	const input = new InputManager(container);
 	const conn = new GameConnection();
 
@@ -134,8 +137,9 @@ async function init() {
 	// --- Connection handlers ---
 	conn.onSnapshot((snapshot) => {
 		entityStore.applySnapshot(snapshot);
-		const now = performance.now() / 1000;
-		interpolator.pushSnapshot(entityStore.entities, now);
+		const serverTime = snapshot.tick / TICK_RATE;
+		interpolator.pushSnapshot(entityStore.entities, serverTime);
+		playbackClock.observe(serverTime, performance.now() / 1000);
 	});
 
 	conn.onAssign((msg) => {
@@ -166,8 +170,7 @@ async function init() {
 		input.updateVehicleType(vehicleType);
 
 		// Snap camera to the new vehicle
-		const now = performance.now() / 1000;
-		const snap = interpolator.getAllInterpolated(now);
+		const snap = interpolator.getAllInterpolated(playbackClock.time);
 		const target = snap.find((e) => e.id === entityId);
 		if (target) {
 			cam.worldX = target.x;
@@ -249,7 +252,6 @@ async function init() {
 
 		const dt = (now - lastTime) / 1000;
 		lastTime = now;
-		const renderTime = now / 1000;
 
 		// --- Autopilot logic (tankers only) ---
 		if (assignedVehicleType === "oil_tanker" && !spectating) {
@@ -279,7 +281,9 @@ async function init() {
 		);
 
 		// Get interpolated entities
-		const entities = interpolator.getAllInterpolated(renderTime);
+		const entities = interpolator.getAllInterpolated(
+			playbackClock.advance(now / 1000),
+		);
 
 		// Detect player death: assigned entity's HP drops to zero
 		if (assignedEntityId !== null && !spectating) {
