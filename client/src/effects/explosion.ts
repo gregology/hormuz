@@ -38,6 +38,83 @@ interface Particle {
 	life: number;
 }
 
+const LAND_SHOCKWAVE = new THREE.Color(0xc9b48a);
+const WATER_SHOCKWAVE = new THREE.Color(0xe8f0f0);
+
+interface SharedLook {
+	fireball: THREE.SpriteNodeMaterial;
+	shockwave: THREE.MeshBasicNodeMaterial;
+	ring: THREE.BufferGeometry;
+}
+
+let sharedLook: SharedLook | null = null;
+
+/**
+ * One fireball and one shockwave material for every explosion. Building a
+ * node material's shader takes ~25 ms on the main thread, and a fight
+ * spawns several explosions a second, so per-explosion materials made the
+ * frame rate collapse. Each object's progress, opacity and colour come from
+ * its userData instead.
+ */
+function look(): SharedLook {
+	if (sharedLook) return sharedLook;
+
+	const t = uniform(0).onObjectUpdate(
+		({ object }) => object?.userData.progress as number,
+	);
+
+	// --- Fireball: turbulent, white-hot core cooling to dark smoke ---
+	const centre = uv().sub(0.5);
+	const distance = centre.length().mul(2);
+	const turbulence = mx_noise_float(vec3(centre.mul(5.5), t.mul(2.5)));
+	const extent = mix(float(0.35), float(1), pow(t, 0.4));
+	const body = float(1).sub(
+		smoothstep(extent.mul(0.55), extent, distance.add(turbulence.mul(0.2))),
+	);
+	const heat = float(1)
+		.sub(smoothstep(0, extent.mul(0.75), distance.add(turbulence.mul(0.12))))
+		.mul(float(1).sub(t));
+	const flame = mix(vec3(0.85, 0.2, 0.03), vec3(1, 0.85, 0.5), heat);
+	const intensity = pow(float(1).sub(t), 2).mul(6).add(0.8);
+	const smoky = smoothstep(0.3, 0.85, t);
+	const fireball = new THREE.SpriteNodeMaterial({
+		transparent: true,
+		depthWrite: false,
+	});
+	fireball.colorNode = mix(
+		flame.mul(intensity),
+		vec3(0.05, 0.045, 0.04),
+		smoky,
+	);
+	fireball.opacityNode = body.mul(float(1).sub(smoothstep(0.75, 1, t)));
+
+	// --- Shockwave across the water / ground ---
+	const ring = new THREE.RingGeometry(0.9, 1, 64);
+	ring.rotateX(-Math.PI / 2);
+	const shockwave = new THREE.MeshBasicNodeMaterial({
+		transparent: true,
+		depthWrite: false,
+	});
+	shockwave.colorNode = uniform(new THREE.Color()).onObjectUpdate(
+		({ object }) => object?.userData.color as THREE.Color,
+	);
+	// Feathered on both edges, broken up like a ring of spray.
+	const across = uv().sub(0.5).length().mul(2).sub(0.95).abs().mul(20);
+	const ragged = mx_noise_float(vec3(uv().mul(14), t.mul(3)))
+		.mul(0.5)
+		.add(0.5);
+	const opacity = uniform(0).onObjectUpdate(
+		({ object }) => object?.userData.opacity as number,
+	);
+	shockwave.opacityNode = float(1)
+		.sub(across.clamp(0, 1))
+		.mul(ragged)
+		.mul(opacity);
+
+	sharedLook = { fireball, shockwave, ring };
+	return sharedLook;
+}
+
 export class Explosion implements ThreeEffect {
 	alive = true;
 	readonly root: THREE.Group;
@@ -45,11 +122,8 @@ export class Explosion implements ThreeEffect {
 	private age = 0;
 	private readonly surface: number;
 	private readonly radius: number;
-	private readonly progress = uniform(0);
-	private readonly fireballMaterial: THREE.SpriteNodeMaterial;
+	private readonly fireball: THREE.Sprite;
 	private readonly shockwave: THREE.Mesh;
-	private readonly shockwaveMaterial: THREE.MeshBasicNodeMaterial;
-	private readonly shockwaveOpacity = uniform(0);
 	private readonly fragments: Particle[] = [];
 	private readonly spray: Particle[] = [];
 	private readonly smoke: Particle[] = [];
@@ -59,59 +133,22 @@ export class Explosion implements ThreeEffect {
 		this.radius = radius;
 		const onLand = isLand(x, y);
 		this.surface = onLand ? terrainSurfaceHeight(x, y) : 0;
+		const { fireball, shockwave, ring } = look();
 
-		// --- Fireball: turbulent, white-hot core cooling to dark smoke ---
-		const t = this.progress;
-		const centre = uv().sub(0.5);
-		const distance = centre.length().mul(2);
-		const turbulence = mx_noise_float(vec3(centre.mul(5.5), t.mul(2.5)));
-		const extent = mix(float(0.35), float(1), pow(t, 0.4));
-		const body = float(1).sub(
-			smoothstep(extent.mul(0.55), extent, distance.add(turbulence.mul(0.2))),
-		);
-		const heat = float(1)
-			.sub(smoothstep(0, extent.mul(0.75), distance.add(turbulence.mul(0.12))))
-			.mul(float(1).sub(t));
-		const flame = mix(vec3(0.85, 0.2, 0.03), vec3(1, 0.85, 0.5), heat);
-		const intensity = pow(float(1).sub(t), 2).mul(6).add(0.8);
-		const smoky = smoothstep(0.3, 0.85, t);
-		this.fireballMaterial = new THREE.SpriteNodeMaterial({
-			transparent: true,
-			depthWrite: false,
-		});
-		this.fireballMaterial.colorNode = mix(
-			flame.mul(intensity),
-			vec3(0.05, 0.045, 0.04),
-			smoky,
-		);
-		this.fireballMaterial.opacityNode = body.mul(
-			float(1).sub(smoothstep(0.75, 1, t)),
-		);
-		const fireball = new THREE.Sprite(this.fireballMaterial);
-		fireball.scale.setScalar(radius * 2.6);
+		this.fireball = new THREE.Sprite(fireball);
+		this.fireball.userData.progress = 0;
+		this.fireball.scale.setScalar(radius * 2.6);
 		// Lifted so the sea surface doesn't slice off the bottom of the sprite.
-		fireball.position.set(x, this.surface + radius * 1.2, y);
-		fireball.renderOrder = 9;
-		this.root.add(fireball);
+		this.fireball.position.set(x, this.surface + radius * 1.2, y);
+		this.fireball.renderOrder = 9;
+		this.root.add(this.fireball);
 
-		// --- Shockwave across the water / ground ---
-		const ring = new THREE.RingGeometry(0.9, 1, 64);
-		ring.rotateX(-Math.PI / 2);
-		this.shockwaveMaterial = new THREE.MeshBasicNodeMaterial({
-			color: onLand ? 0xc9b48a : 0xe8f0f0,
-			transparent: true,
-			depthWrite: false,
-		});
-		// Feathered on both edges, broken up like a ring of spray.
-		const across = uv().sub(0.5).length().mul(2).sub(0.95).abs().mul(20);
-		const ragged = mx_noise_float(vec3(uv().mul(14), t.mul(3)))
-			.mul(0.5)
-			.add(0.5);
-		this.shockwaveMaterial.opacityNode = float(1)
-			.sub(across.clamp(0, 1))
-			.mul(ragged)
-			.mul(this.shockwaveOpacity);
-		this.shockwave = new THREE.Mesh(ring, this.shockwaveMaterial);
+		this.shockwave = new THREE.Mesh(ring, shockwave);
+		this.shockwave.userData = {
+			progress: 0,
+			opacity: 0,
+			color: onLand ? LAND_SHOCKWAVE : WATER_SHOCKWAVE,
+		};
 		this.shockwave.position.set(x, this.surface + 0.4, y);
 		this.root.add(this.shockwave);
 
@@ -172,11 +209,13 @@ export class Explosion implements ThreeEffect {
 
 	update(dt: number, _zoom: number): void {
 		this.age += dt;
-		this.progress.value = Math.min(this.age / FIREBALL_DURATION, 1);
+		const progress = Math.min(this.age / FIREBALL_DURATION, 1);
+		this.fireball.userData.progress = progress;
+		this.shockwave.userData.progress = progress;
 
 		const wave = Math.min(this.age / SHOCKWAVE_DURATION, 1);
 		this.shockwave.scale.setScalar(this.radius * (0.4 + 3.2 * wave ** 0.6));
-		this.shockwaveOpacity.value = (1 - wave) * 0.5;
+		this.shockwave.userData.opacity = (1 - wave) * 0.5;
 		this.shockwave.visible = wave < 1;
 
 		const gravity = this.radius * 3;
@@ -253,8 +292,6 @@ export class Explosion implements ThreeEffect {
 	}
 
 	dispose(): void {
-		this.fireballMaterial.dispose();
-		this.shockwaveMaterial.dispose();
-		this.shockwave.geometry.dispose();
+		// The materials and ring geometry are shared by every explosion.
 	}
 }
