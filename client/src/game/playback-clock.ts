@@ -44,6 +44,18 @@ const SKIP_THRESHOLD = 0.3;
 /** Arrivals must span this long (seconds) before the server's pace is measured from them. */
 const MIN_PACE_SPAN = 1;
 
+/**
+ * A snapshot that JS handles more than this many frame intervals after the
+ * current frame began was held up by the main thread (a long frame, a
+ * hidden tab), not by the network. Its data is used, but its timestamp is
+ * left out of the lateness measurement: nothing renders during a long
+ * frame, so buffering for it would only add delay.
+ */
+const MAX_HANDLING_FRAMES = 2;
+
+/** Weight of each frame in the smoothed frame interval. */
+const FRAME_SMOOTHING = 0.1;
+
 interface Arrival {
 	serverTime: number;
 	clientTime: number;
@@ -52,6 +64,11 @@ interface Arrival {
 export class PlaybackClock {
 	private playback = 0;
 	private lastAdvance = 0;
+	private frameInterval = 1 / 60;
+	/** Server time of the newest snapshot, and the client time it was handled. */
+	private newest: number | null = null;
+	private lastArrival = 0;
+	/** Recent arrivals whose timestamps reflect the network. */
 	private arrivals: Arrival[] = [];
 	/** Server seconds per client second. */
 	private pace = 1;
@@ -65,14 +82,20 @@ export class PlaybackClock {
 
 	/** Record a snapshot's server time and the client time it arrived (both seconds). */
 	observe(serverTime: number, arrival: number): void {
-		const newest = this.arrivals.at(-1);
-		// The snapshot sent on connect can repeat the last broadcast tick.
-		if (newest && serverTime === newest.serverTime) return;
-		if (!newest || serverTime < newest.serverTime) {
+		if (this.newest === null || serverTime < this.newest) {
 			this.start(serverTime, arrival);
 			return;
 		}
-		if (arrival - newest.clientTime > TICK_INTERVAL + MAX_JITTER) {
+		// The snapshot sent on connect can repeat the last broadcast tick.
+		if (serverTime === this.newest) return;
+		this.newest = serverTime;
+		const gap = arrival - this.lastArrival;
+		this.lastArrival = arrival;
+		if (arrival - this.lastAdvance > MAX_HANDLING_FRAMES * this.frameInterval) {
+			return;
+		}
+
+		if (gap > TICK_INTERVAL + MAX_JITTER) {
 			this.arrivals = [];
 		}
 		this.arrivals.push({ serverTime, clientTime: arrival });
@@ -85,11 +108,11 @@ export class PlaybackClock {
 
 	/** Move playback to this frame's client time (seconds) and return the server time to render. */
 	advance(now: number): number {
-		const newest = this.arrivals.at(-1);
-		if (!newest) return this.playback;
+		if (this.newest === null) return this.playback;
 
 		const elapsed = Math.max(0, now - this.lastAdvance);
 		this.lastAdvance = Math.max(this.lastAdvance, now);
+		this.frameInterval += (elapsed - this.frameInterval) * FRAME_SMOOTHING;
 		const target = this.targetOrigin + this.pace * now;
 		const error = target - this.playback;
 		if (error > SKIP_THRESHOLD) {
@@ -101,12 +124,14 @@ export class PlaybackClock {
 			);
 			this.playback += elapsed * this.pace * (1 + adjust);
 		}
-		this.playback = Math.min(this.playback, newest.serverTime);
+		this.playback = Math.min(this.playback, this.newest);
 		return this.playback;
 	}
 
 	/** First snapshot, or the server restarted: begin a new timeline. */
 	private start(serverTime: number, arrival: number): void {
+		this.newest = serverTime;
+		this.lastArrival = arrival;
 		this.arrivals = [{ serverTime, clientTime: arrival }];
 		this.pace = 1;
 		this.aim();
