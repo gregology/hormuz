@@ -45,8 +45,17 @@ function vehicleAt(serverTime: number): Map<number, EntityState> {
 	return new Map([[1, vehicle]]);
 }
 
-/** Stream a vehicle flying at constant speed through a network and render it at 60 fps. */
-function play(seconds: number, network: Network): Frame[] {
+/**
+ * Stream a vehicle flying at constant speed through a network and render it.
+ * Frames are 60 fps unless `frameLength` says otherwise; a longer frame keeps
+ * the main thread busy, so snapshots arriving during it are handled (and
+ * timestamped) only when it ends.
+ */
+function play(
+	seconds: number,
+	network: Network,
+	frameLength: (now: number) => number = () => FRAME,
+): Frame[] {
 	const tickRate = network.tickRate ?? TICK_RATE;
 	const tick = network.tick ?? ((index: number) => index);
 	// TCP delivers in order, so a late snapshot holds back the ones behind it.
@@ -62,17 +71,20 @@ function play(seconds: number, network: Network): Frame[] {
 	const frames: Frame[] = [];
 	let next = 0;
 	let newest = 0;
-	for (let k = 0; k < seconds / FRAME; k++) {
-		const now = k * FRAME;
+	let previousFrameBusy = false;
+	for (let now = 0; now < seconds; ) {
 		while (next < arrivals.length && arrivals[next] <= now) {
 			newest = tick(next) / TICK_RATE;
 			interpolator.pushSnapshot(vehicleAt(newest), newest);
-			clock.observe(newest, arrivals[next]);
+			clock.observe(newest, previousFrameBusy ? now : arrivals[next]);
 			next++;
 		}
 		const time = clock.advance(now);
 		const vehicle = interpolator.getInterpolated(1, time);
 		if (vehicle) frames.push({ now, x: vehicle.x, time, newest });
+		const length = frameLength(now);
+		previousFrameBusy = length > FRAME;
+		now += length;
 	}
 	return frames;
 }
@@ -153,6 +165,15 @@ describe("snapshot playback", () => {
 		expect(Math.min(...steps)).toBeGreaterThan(0.9);
 		expect(Math.max(...steps)).toBeLessThan(1.1);
 		expect(meanLag(frames, outage.end + 15)).toBeLessThan(0.15);
+	});
+
+	it("doesn't fall further behind when long frames hold up snapshots", () => {
+		// A fight: a 120 ms frame every half second from 12 s to 20 s.
+		const fight = (now: number) =>
+			now >= 12 && now < 20 && now % 0.5 < FRAME ? 0.12 : FRAME;
+		const smooth = meanLag(play(30, { delay: () => 0.04 }), 12, 26);
+		const hitchy = meanLag(play(30, { delay: () => 0.04 }, fight), 12, 26);
+		expect(hitchy).toBeLessThan(smooth + 0.02);
 	});
 
 	it("follows the server's timeline after its tick counter restarts", () => {
