@@ -182,6 +182,11 @@ function M.pick_target(ctx, e, opts)
 				d_sq = math.max(d_sq, 1.0)
 				local dist_term = opts.linear_distance and math.sqrt(d_sq) or d_sq
 				local pressure = opts.counts[t.id] or 0
+				-- Our own claim on the current target isn't crowding: counting it
+				-- made the current target look busier than every alternative.
+				if t.id == old_target then
+					pressure = math.max(pressure - 1, 0)
+				end
 				if opts.coverage then
 					local coverage = 0.0
 					for _, c in ipairs(opts.coverage) do

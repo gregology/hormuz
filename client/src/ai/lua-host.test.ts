@@ -155,6 +155,43 @@ describe("shahed_intercept behavior", () => {
 	});
 });
 
+describe("quadcopter_intercept behavior", () => {
+	it("sticks with a target it shares with a swarm-mate instead of flip-flopping", () => {
+		const host = createHost();
+		const quad = (id: number, x: number) =>
+			entity({
+				id,
+				type: "quadcopter",
+				faction: "iran",
+				behavior: "quadcopter_intercept",
+				bot: botState({ target: 10 }),
+				x,
+				y: 0,
+				airborne: true,
+				size: 2,
+			});
+		const quads = [quad(1, 0), quad(2, 340)];
+		const near = entity({ id: 10, x: 4600, y: 0 });
+		const far = entity({ id: 11, x: 0, y: 6200 });
+
+		const targets = new Map<number, number[]>([
+			[1, [10]],
+			[2, [10]],
+		]);
+		for (let tick = 0; tick < 40; tick++) {
+			const { controls } = host.compute([...quads, near, far], 0.05, tick);
+			quads.forEach((q, i) => {
+				if (q.bot) q.bot.target = controls[i].target;
+				targets.get(q.id)?.push(controls[i].target);
+			});
+		}
+		for (const history of targets.values()) {
+			const switches = history.filter((t, i) => i > 0 && t !== history[i - 1]);
+			expect(switches.length).toBeLessThanOrEqual(1);
+		}
+	});
+});
+
 describe("escort behavior", () => {
 	it("two frigates split between two distant tankers (pressure scoring)", () => {
 		const host = createHost();
