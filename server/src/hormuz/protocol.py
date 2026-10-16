@@ -45,14 +45,17 @@ def encode_full_snapshot(
             list_angle,
             battery_pct,
         ) = entry
+        # Positions and headings go out at full precision. MessagePack spends
+        # 8 bytes on every float regardless, so rounding saved nothing, and
+        # its 0.1-unit steps showed as jitter on small drones seen up close.
         packed.append(
             [
                 eid,
                 VEHICLE_TYPE_INDEX.get(vtype, 0),
                 FACTION_INDEX.get(faction, 0),
-                round(x, 1),
-                round(y, 1),
-                round(heading, 3),
+                x,
+                y,
+                heading,
                 round(speed, 2),
                 round(drift, 2),
                 hp,
